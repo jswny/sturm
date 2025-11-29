@@ -11,7 +11,7 @@ defmodule Sturm.Discord.Responder do
   def respond(message, %{token: token, bot_id: bot_id, shard: shard}) do
     channel_id = message["channel_id"]
 
-    with true <- should_reply?(message),
+    with true <- should_reply?(message, bot_id),
          :ok <- maybe_typing(token, channel_id),
          {:ok, content} <- generate_reply(message, shard),
          :ok <- post_reply(token, channel_id, content, bot_id) do
@@ -85,11 +85,11 @@ defmodule Sturm.Discord.Responder do
     end
   end
 
-  defp should_reply?(message) do
+  defp should_reply?(message, bot_id) do
     channel_id = message["channel_id"]
     history = ChannelBuffer.fetch(channel_id, limit: judge_context_limit())
 
-    payload = judge_messages(history)
+    payload = judge_messages(history, bot_id)
 
     case Responses.chat(payload, model: judge_model(), reasoning: nil) do
       {:ok, text} ->
@@ -101,23 +101,31 @@ defmodule Sturm.Discord.Responder do
     end
   end
 
-  defp judge_messages(history) do
-    summary =
-      history
-      |> Enum.map(&prefix_content/1)
-      |> Enum.join("\n")
+  defp judge_messages(history, bot_id) do
+    base = [%{role: "system", content: judge_prompt()}]
 
-    [
-      %{role: "system", content: judge_prompt()},
-      %{
-        role: "user",
-        content:
-          "Conversation context:\n" <>
-            summary <>
-            "\nShould SturmBot answer the most recent user message? Reply with YES or NO only."
-      }
-    ]
+    mention_hint =
+      if bot_id do
+        %{
+          role: "system",
+          content: "Bot user id: #{bot_id}. Mentions may appear as <@#{bot_id}> or <@!#{bot_id}>."
+        }
+      else
+        nil
+      end
+
+    history_messages =
+      Enum.map(history, fn item ->
+        %{role: item.role, content: prefix_content(item)}
+      end)
+
+    base
+    |> maybe_prepend_hint(mention_hint)
+    |> Kernel.++(history_messages)
   end
+
+  defp maybe_prepend_hint(messages, nil), do: messages
+  defp maybe_prepend_hint(messages, hint), do: [hint | messages]
 
   defp judge_positive?(text) do
     text

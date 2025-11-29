@@ -63,6 +63,7 @@ if openai_api_key do
     api_key: openai_api_key,
     base_url: System.get_env("OPENAI_BASE_URL", "https://api.openai.com"),
     model: System.get_env("OPENAI_MODEL", "gpt-5-mini"),
+    judge_model: System.get_env("OPENAI_JUDGE_MODEL", "gpt-5-nano"),
     reasoning: %{effort: System.get_env("OPENAI_REASONING_EFFORT", "low")},
     timeout_ms: timeout_ms,
     system_prompt:
@@ -71,9 +72,9 @@ if openai_api_key do
     judge_prompt:
       System.get_env("OPENAI_JUDGE_PROMPT") ||
         """
-        You are a gatekeeper. Decide if Sturm should reply in a Discord channel. Say YES when the
-        latest message asks a question, requests help/info, seeks the bot's opinion, or clearly addresses
-        the bot. Otherwise say NO. Respond with YES or NO only.
+        You are a gatekeeper. Return YES only if the latest message explicitly mentions the bot by
+        name (e.g., contains "Sturm" or "sturmbot") or via a Discord mention and is seeking a reply.
+        Otherwise return NO. Respond with YES or NO only.
         """
 end
 
