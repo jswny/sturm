@@ -261,15 +261,18 @@ defmodule Sturm.Discord.Shard do
       channel_id: channel_id
     }
 
-    ChannelBuffer.append(channel_id, buffer_item)
+    # Append synchronously to preserve order, then snapshot history for this message
+    :ok = ChannelBuffer.append(channel_id, buffer_item)
 
     if not is_bot? do
+      history = ChannelBuffer.fetch(channel_id)
+
       Logger.info(
         "Discord message shard=#{inspect(state.shard)} channel=#{channel_id} author=#{author_name}"
       )
 
       Task.start(fn ->
-        Responder.respond(data, %{token: state.token, bot_id: state.bot_id, shard: state.shard})
+        Responder.respond(data, %{token: state.token, bot_id: state.bot_id, shard: state.shard}, history)
       end)
     end
 

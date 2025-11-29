@@ -17,14 +17,33 @@ defmodule Sturm.Discord.Rest do
     |> normalize_response()
   end
 
-  def create_message(token, channel_id, content) do
+  def create_message(token, channel_id, content, opts \\ []) do
+    json =
+      %{content: content}
+      |> maybe_put_message_reference(opts, channel_id)
+      |> maybe_put_allowed_mentions(opts)
+
     req()
     |> Req.post(
       url: "#{@api_base}/channels/#{channel_id}/messages",
       headers: auth(token),
-      json: %{content: content}
+      json: json
     )
     |> normalize_response()
+  end
+
+  defp maybe_put_message_reference(json, opts, channel_id) do
+    case Keyword.get(opts, :reply_to) do
+      nil -> json
+      message_id -> Map.put(json, :message_reference, %{message_id: message_id, channel_id: channel_id})
+    end
+  end
+
+  defp maybe_put_allowed_mentions(json, opts) do
+    case Keyword.get(opts, :allowed_mentions) do
+      nil -> Map.put_new(json, :allowed_mentions, %{replied_user: false})
+      allowed -> Map.put(json, :allowed_mentions, allowed)
+    end
   end
 
   defp auth(token), do: [{"authorization", "Bot #{token}"}]

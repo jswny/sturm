@@ -50,19 +50,24 @@ defmodule Sturm.OpenAI.Responses do
 
   defp normalize_response({:error, reason}), do: {:error, reason}
 
-  defp extract_text(%{"output_text" => text}) when is_binary(text) and byte_size(text) > 0,
-    do: text
-
-  defp extract_text(%{"output" => outputs}) when is_list(outputs) do
+  defp extract_text(%{"output" => outputs} = body) when is_list(outputs) do
     outputs
-    |> Enum.find_value(fn
-      %{"type" => "message", "content" => content} -> content
-      _ -> nil
-    end)
-    |> text_from_content()
+    |> Enum.find_value(&message_text/1)
+    |> case do
+      nil -> extract_top_level_text(body)
+      text -> text
+    end
   end
 
-  defp extract_text(_), do: nil
+  defp extract_text(body), do: extract_top_level_text(body)
+
+  defp message_text(%{"type" => "message", "content" => content}), do: text_from_content(content)
+  defp message_text(_), do: nil
+
+  defp extract_top_level_text(%{"output_text" => text}) when is_binary(text) and byte_size(text) > 0,
+    do: text
+
+  defp extract_top_level_text(_), do: nil
 
   defp text_from_content(nil), do: nil
 
@@ -79,6 +84,8 @@ defmodule Sturm.OpenAI.Responses do
         nil
     end)
   end
+
+  defp text_from_content(_), do: nil
 
   defp config do
     config = Application.get_env(:sturm, :openai, [])

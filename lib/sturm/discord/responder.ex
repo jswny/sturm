@@ -8,13 +8,15 @@ defmodule Sturm.Discord.Responder do
   alias Sturm.Discord.{ChannelBuffer, Rest}
   alias Sturm.OpenAI.Responses
 
-  def respond(message, %{token: token, bot_id: bot_id, shard: shard}) do
+  def respond(message, %{token: token, bot_id: bot_id, shard: shard}, history \\ nil) do
     channel_id = message["channel_id"]
+    message_id = message["id"]
+    history = history || ChannelBuffer.fetch(channel_id)
 
-    with true <- should_reply?(message, bot_id),
+    with true <- should_reply?(history, bot_id),
          :ok <- maybe_typing(token, channel_id),
-         {:ok, content} <- generate_reply(message, shard),
-         :ok <- post_reply(token, channel_id, content, bot_id) do
+         {:ok, content} <- generate_reply(history, shard),
+         :ok <- post_reply(token, channel_id, content, bot_id, reply_to: message_id) do
       :ok
     else
       false ->
@@ -26,20 +28,17 @@ defmodule Sturm.Discord.Responder do
     end
   end
 
-  defp generate_reply(message, shard) do
-    channel_id = message["channel_id"]
-    history = ChannelBuffer.fetch(channel_id)
-
+  defp generate_reply(history, shard) do
     payload = build_messages(history)
 
-    Logger.debug("Responder sending to OpenAI shard=#{inspect(shard)} channel=#{channel_id}")
+    Logger.debug("Responder sending to OpenAI shard=#{inspect(shard)}")
 
     case Responses.chat(payload) do
       {:ok, content} ->
         {:ok, content}
 
       {:error, {:empty_output, _body}} ->
-        Logger.debug("Responder retrying with fallback model channel=#{channel_id}")
+        Logger.debug("Responder retrying with fallback model")
 
         Responses.chat(payload, model: fallback_model(), reasoning: nil)
         |> case do
@@ -67,10 +66,10 @@ defmodule Sturm.Discord.Responder do
       end)
   end
 
-  defp post_reply(token, channel_id, content, bot_id) do
+  defp post_reply(token, channel_id, content, bot_id, opts) do
     clean = strip_assistant_prefix(content)
 
-    case Rest.create_message(token, channel_id, clean) do
+    case Rest.create_message(token, channel_id, clean, opts) do
       {:ok, body} ->
         message_id = Map.get(body, "id", "")
         append_assistant(channel_id, bot_id, clean, message_id)
@@ -85,18 +84,18 @@ defmodule Sturm.Discord.Responder do
     end
   end
 
-  defp should_reply?(message, bot_id) do
-    channel_id = message["channel_id"]
-    history = ChannelBuffer.fetch(channel_id, limit: judge_context_limit())
-
-    payload = judge_messages(history, bot_id)
+  defp should_reply?(history, bot_id) do
+    payload =
+      history
+      |> limit_history(judge_context_limit())
+      |> judge_messages(bot_id)
 
     case Responses.chat(payload, model: judge_model(), reasoning: nil) do
       {:ok, text} ->
         judge_positive?(text)
 
       {:error, reason} ->
-        Logger.debug("Responder judge skipped channel=#{channel_id}: #{inspect(reason)}")
+        Logger.debug("Responder judge skipped: #{inspect(reason)}")
         false
     end
   end
@@ -122,6 +121,16 @@ defmodule Sturm.Discord.Responder do
     base
     |> maybe_prepend_hint(mention_hint)
     |> Kernel.++(history_messages)
+  end
+
+  defp limit_history(history, limit) when is_list(history) and is_integer(limit) and limit > 0 do
+    count = length(history)
+
+    if count <= limit do
+      history
+    else
+      Enum.slice(history, count - limit, limit)
+    end
   end
 
   defp maybe_prepend_hint(messages, nil), do: messages

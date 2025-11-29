@@ -23,7 +23,7 @@ defmodule Sturm.Discord.ChannelBuffer do
 
   def append(channel_id, item) do
     ensure_started(channel_id)
-    GenServer.cast(via(channel_id), {:append, item})
+    GenServer.call(via(channel_id), {:append, item})
   end
 
   def fetch(channel_id, opts \\ []) do
@@ -45,13 +45,12 @@ defmodule Sturm.Discord.ChannelBuffer do
   end
 
   @impl true
-  def handle_cast({:append, item}, state) do
-    # drop oldest if over capacity after push
+  def handle_call({:append, item}, _from, state) do
     queue = :queue.in(item, state.queue)
     size = state.size + 1
 
     {queue, size} = maybe_trim(queue, size, state.capacity)
-    {:noreply, %{state | queue: queue, size: size}}
+    {:reply, :ok, %{state | queue: queue, size: size}}
   end
 
   @impl true
