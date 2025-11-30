@@ -90,7 +90,7 @@ defmodule Sturm.Discord.Responder do
       |> limit_history(judge_context_limit())
       |> judge_messages(bot_id)
 
-    case Responses.chat(payload, model: judge_model(), reasoning: nil) do
+    case Responses.chat(payload, model: judge_model(), reasoning: nil, tools: []) do
       {:ok, text} ->
         judge_positive?(text)
 

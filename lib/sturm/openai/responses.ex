@@ -14,7 +14,8 @@ defmodule Sturm.OpenAI.Responses do
       %{
         model: Keyword.get(opts, :model, config.model),
         input: messages,
-        reasoning: Keyword.get(opts, :reasoning, config.reasoning)
+        reasoning: Keyword.get(opts, :reasoning, config.reasoning),
+        tools: tools(config, opts)
       }
       |> Enum.reject(fn {_k, v} -> is_nil(v) end)
       |> Map.new()
@@ -22,6 +23,14 @@ defmodule Sturm.OpenAI.Responses do
     req(config)
     |> Req.post(url: @endpoint, json: body)
     |> normalize_response()
+  end
+
+  defp tools(config, opts) do
+    case Keyword.get(opts, :tools, config.tools) do
+      [] -> nil
+      nil -> nil
+      tools -> Enum.map(tools, &normalize_tool/1)
+    end
   end
 
   defp req(config) do
@@ -95,7 +104,11 @@ defmodule Sturm.OpenAI.Responses do
       base_url: Keyword.get(config, :base_url, "https://api.openai.com"),
       model: Keyword.get(config, :model, "gpt-5-mini"),
       reasoning: Keyword.get(config, :reasoning, %{effort: "low"}),
+      tools: Keyword.get(config, :tools, []),
       timeout_ms: Keyword.get(config, :timeout_ms, 25_000)
     }
   end
+
+  defp normalize_tool(%{} = tool), do: tool
+  defp normalize_tool(type) when is_binary(type), do: %{"type" => type}
 end

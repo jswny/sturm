@@ -65,6 +65,11 @@ if openai_api_key do
     model: System.get_env("OPENAI_MODEL", "gpt-5-mini"),
     judge_model: System.get_env("OPENAI_JUDGE_MODEL", "gpt-5-nano"),
     reasoning: %{effort: System.get_env("OPENAI_REASONING_EFFORT", "low")},
+    tools:
+      System.get_env("OPENAI_TOOLS", "web_search")
+      |> String.split(",", trim: true)
+      |> Enum.map(&String.trim/1)
+      |> Enum.reject(&(&1 == "")),
     timeout_ms: timeout_ms,
     system_prompt:
       System.get_env("OPENAI_SYSTEM_PROMPT") ||
