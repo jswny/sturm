@@ -5,7 +5,7 @@ defmodule Sturm.Discord.Responder do
 
   require Logger
 
-  alias Sturm.Discord.{ChannelBuffer, Rest}
+  alias Sturm.Discord.{ChannelBuffer, Rest, Typing}
   alias Sturm.OpenAI.Responses
 
   def respond(message, %{token: token, bot_id: bot_id, shard: shard}, history \\ nil) do
@@ -13,25 +13,38 @@ defmodule Sturm.Discord.Responder do
     message_id = message["id"]
     history = history || ChannelBuffer.fetch(channel_id)
 
-    with true <- should_reply?(history, bot_id, channel_id, message_id),
-         :ok <- maybe_typing(token, channel_id),
-         {:ok, reply} <- generate_reply(history, shard, channel_id, message_id),
-         :ok <- post_reply(token, channel_id, reply, bot_id, reply_to: message_id) do
-      :ok
-    else
+    case should_reply?(history, bot_id, channel_id, message_id) do
+      true ->
+        typing_ref = Typing.start(token, channel_id)
+
+        result =
+          try do
+            with {:ok, reply} <- generate_reply(history, shard, channel_id, message_id),
+                 :ok <- post_reply(token, channel_id, reply, bot_id, reply_to: message_id) do
+              :ok
+            end
+          after
+            Typing.stop(typing_ref)
+          end
+
+        case result do
+          :ok ->
+            :ok
+
+          {:error, {:openai, reason}} ->
+            Logger.warning("Responder failed (openai) channel=#{channel_id}: #{inspect(reason)}")
+            :ok
+
+          {:error, {:discord, reason}} ->
+            Logger.warning("Responder failed (discord) channel=#{channel_id}: #{inspect(reason)}")
+            :ok
+
+          {:error, reason} ->
+            Logger.warning("Responder failed channel=#{channel_id}: #{inspect(reason)}")
+            :ok
+        end
+
       false ->
-        :ok
-
-      {:error, {:openai, reason}} ->
-        Logger.warning("Responder failed (openai) channel=#{channel_id}: #{inspect(reason)}")
-        :ok
-
-      {:error, {:discord, reason}} ->
-        Logger.warning("Responder failed (discord) channel=#{channel_id}: #{inspect(reason)}")
-        :ok
-
-      {:error, reason} ->
-        Logger.warning("Responder failed channel=#{channel_id}: #{inspect(reason)}")
         :ok
     end
   end
@@ -130,9 +143,7 @@ defmodule Sturm.Discord.Responder do
       {:ok, %{text: text}} when is_binary(text) ->
         decision = judge_positive?(text)
 
-        Logger.debug(
-          "Judge decision=#{decision} channel=#{channel_id} message_id=#{message_id}"
-        )
+        Logger.debug("Judge decision=#{decision} channel=#{channel_id} message_id=#{message_id}")
 
         decision
 
@@ -211,14 +222,6 @@ defmodule Sturm.Discord.Responder do
     |> Keyword.get(:judge_context_limit, 20)
   end
 
-  defp maybe_typing(token, channel_id) do
-    case Rest.trigger_typing(token, channel_id) do
-      :ok -> :ok
-      {:ok, _} -> :ok
-      {:error, _reason} -> :ok
-    end
-  end
-
   defp append_assistant(channel_id, bot_id, content, message_id) do
     ChannelBuffer.append(channel_id, %{
       role: "assistant",
@@ -280,7 +283,11 @@ defmodule Sturm.Discord.Responder do
     binaries
     |> Enum.with_index()
     |> Enum.map(fn {%{data_b64: data_b64, format: format}, idx} ->
-      %{data: Base.decode64!(data_b64), filename: "image-#{idx}.#{extension(format)}", content_type: content_type(format)}
+      %{
+        data: Base.decode64!(data_b64),
+        filename: "image-#{idx}.#{extension(format)}",
+        content_type: content_type(format)
+      }
     end)
   end
 
