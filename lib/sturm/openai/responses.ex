@@ -89,7 +89,9 @@ defmodule Sturm.OpenAI.Responses do
   defp message_text(%{"type" => "message", "content" => content}), do: text_from_content(content)
   defp message_text(_), do: nil
 
-  defp message_images(%{"type" => "message", "content" => content}), do: images_from_content(content)
+  defp message_images(%{"type" => "message", "content" => content}),
+    do: images_from_content(content)
+
   defp message_images(_), do: []
 
   defp message_image_binaries(%{"type" => "image_generation_call"} = item) do
@@ -118,8 +120,9 @@ defmodule Sturm.OpenAI.Responses do
 
   defp images_from_content(_), do: []
 
-  defp extract_top_level_text(%{"output_text" => text}) when is_binary(text) and byte_size(text) > 0,
-    do: text
+  defp extract_top_level_text(%{"output_text" => text})
+       when is_binary(text) and byte_size(text) > 0,
+       do: text
 
   defp extract_top_level_text(_), do: nil
 

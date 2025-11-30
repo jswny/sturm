@@ -47,8 +47,7 @@ defmodule Sturm.Discord.Rest do
           Enum.with_index(attachments, fn att, idx ->
             {"files[#{idx}]",
              {att.data,
-              filename: att.filename,
-              content_type: att.content_type || "application/octet-stream"}}
+              filename: att.filename, content_type: att.content_type || "application/octet-stream"}}
           end)
 
       req()
@@ -63,8 +62,11 @@ defmodule Sturm.Discord.Rest do
 
   defp maybe_put_message_reference(json, opts, channel_id) do
     case Keyword.get(opts, :reply_to) do
-      nil -> json
-      message_id -> Map.put(json, :message_reference, %{message_id: message_id, channel_id: channel_id})
+      nil ->
+        json
+
+      message_id ->
+        Map.put(json, :message_reference, %{message_id: message_id, channel_id: channel_id})
     end
   end
 

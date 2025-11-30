@@ -105,9 +105,11 @@ defmodule Sturm.Discord.Shard do
       {:done, ref}, {:noreply, st} when ref == st.ref ->
         case Mint.WebSocket.new(st.conn, ref, st.status, st.resp_headers || []) do
           {:ok, conn, socket} ->
-            Logger.info("Discord shard #{inspect(st.shard)} upgraded to WebSocket (#{st.status})")
-            st = %{st | conn: conn, socket: socket}
+            Logger.debug(
+              "Discord shard #{inspect(st.shard)} upgraded to WebSocket (#{st.status})"
+            )
 
+            st = %{st | conn: conn, socket: socket}
             # If any websocket data arrived before the upgrade completed, process it now.
             st =
               case st.pending_data do
@@ -197,7 +199,7 @@ defmodule Sturm.Discord.Shard do
   end
 
   defp handle_payload(%{"op" => @hello_op, "d" => %{"heartbeat_interval" => interval}}, state) do
-    Logger.info("Discord shard #{inspect(state.shard)} HELLO (heartbeat #{interval}ms)")
+    Logger.debug("Discord shard #{inspect(state.shard)} HELLO (heartbeat #{interval}ms)")
     timer = schedule_heartbeat(interval)
     st = %{state | heartbeat_interval: interval, heartbeat_timer: timer, awaiting_ack?: false}
     send_frame({:text, identify_payload(st)}, st)
@@ -227,7 +229,7 @@ defmodule Sturm.Discord.Shard do
         {:noreply, %{state | session_id: session_id, bot_id: bot_id}}
 
       "RESUMED" ->
-        Logger.info("Discord RESUMED shard #{inspect(state.shard)}")
+        Logger.debug("Discord RESUMED shard #{inspect(state.shard)}")
         {:noreply, state}
 
       other ->
@@ -268,7 +270,11 @@ defmodule Sturm.Discord.Shard do
       history = ChannelBuffer.fetch(channel_id)
 
       Task.start(fn ->
-        Responder.respond(data, %{token: state.token, bot_id: state.bot_id, shard: state.shard}, history)
+        Responder.respond(
+          data,
+          %{token: state.token, bot_id: state.bot_id, shard: state.shard},
+          history
+        )
       end)
     end
 
