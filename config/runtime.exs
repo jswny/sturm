@@ -50,12 +50,24 @@ if openai_api_key do
   timeout_ms =
     case System.get_env("OPENAI_TIMEOUT_MS") do
       nil ->
-        25_000
+        300_000
 
       val ->
         case Integer.parse(val) do
           {i, _} -> i
-          _ -> 25_000
+          _ -> 300_000
+        end
+    end
+
+  judge_timeout_ms =
+    case System.get_env("OPENAI_JUDGE_TIMEOUT_MS") do
+      nil ->
+        30_000
+
+      val ->
+        case Integer.parse(val) do
+          {i, _} -> i
+          _ -> 30_000
         end
     end
 
@@ -66,11 +78,12 @@ if openai_api_key do
     judge_model: System.get_env("OPENAI_JUDGE_MODEL", "gpt-5-nano"),
     reasoning: %{effort: System.get_env("OPENAI_REASONING_EFFORT", "low")},
     tools:
-      System.get_env("OPENAI_TOOLS", "web_search")
+      System.get_env("OPENAI_TOOLS", "web_search,image_generation")
       |> String.split(",", trim: true)
       |> Enum.map(&String.trim/1)
       |> Enum.reject(&(&1 == "")),
     timeout_ms: timeout_ms,
+    judge_timeout_ms: judge_timeout_ms,
     system_prompt:
       System.get_env("OPENAI_SYSTEM_PROMPT") ||
         "You are Sturm, a Discord bot participating in live channel conversations. Each message content you see is prefixed with [user NAME] for users and [assistant NAME] for the bot. Use the prefix to know who spoke. Reply only when explicitly mentioned; otherwise stay silent. When you reply, do NOT include any prefix—just the answer. Be terse like Grok in Twitter threads: short, punchy, 1–2 lines max, minimal markdown, no invented Discord commands.",

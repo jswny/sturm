@@ -20,7 +20,7 @@ defmodule Sturm.OpenAI.Responses do
       |> Enum.reject(fn {_k, v} -> is_nil(v) end)
       |> Map.new()
 
-    req(config)
+    req(config, opts)
     |> Req.post(url: @endpoint, json: body)
     |> normalize_response()
   end
@@ -33,20 +33,19 @@ defmodule Sturm.OpenAI.Responses do
     end
   end
 
-  defp req(config) do
+  defp req(config, opts) do
+    timeout = Keyword.get(opts, :timeout_ms, config.timeout_ms)
+
     Req.new(
       base_url: config.base_url,
       auth: {:bearer, config.api_key},
-      receive_timeout: config.timeout_ms,
+      receive_timeout: timeout,
       connect_options: [transport_opts: [cacerts: :public_key.cacerts_get()]]
     )
   end
 
   defp normalize_response({:ok, %{status: status, body: body}}) when status in [200, 201] do
-    case extract_text(body) do
-      nil -> {:error, {:empty_output, body}}
-      text -> {:ok, text}
-    end
+    {:ok, extract_output(body)}
   end
 
   defp normalize_response({:ok, %{status: 429, body: %{"error" => %{"message" => msg}} = body}}) do
@@ -59,19 +58,65 @@ defmodule Sturm.OpenAI.Responses do
 
   defp normalize_response({:error, reason}), do: {:error, reason}
 
-  defp extract_text(%{"output" => outputs} = body) when is_list(outputs) do
-    outputs
-    |> Enum.find_value(&message_text/1)
-    |> case do
-      nil -> extract_top_level_text(body)
-      text -> text
-    end
+  defp extract_output(%{"output" => outputs} = body) when is_list(outputs) do
+    {text, images, binaries} =
+      outputs
+      |> Enum.reduce({nil, [], []}, fn item, {t_acc, url_acc, bin_acc} ->
+        {
+          t_acc || message_text(item),
+          url_acc ++ message_images(item),
+          bin_acc ++ message_image_binaries(item)
+        }
+      end)
+
+    %{
+      text: text || extract_top_level_text(body),
+      images: images,
+      image_binaries: binaries,
+      raw: body
+    }
   end
 
-  defp extract_text(body), do: extract_top_level_text(body)
+  defp extract_output(body) do
+    %{
+      text: extract_top_level_text(body),
+      images: [],
+      image_binaries: [],
+      raw: body
+    }
+  end
 
   defp message_text(%{"type" => "message", "content" => content}), do: text_from_content(content)
   defp message_text(_), do: nil
+
+  defp message_images(%{"type" => "message", "content" => content}), do: images_from_content(content)
+  defp message_images(_), do: []
+
+  defp message_image_binaries(%{"type" => "image_generation_call"} = item) do
+    case item do
+      %{"result" => data_b64, "output_format" => format} when is_binary(data_b64) ->
+        [%{data_b64: data_b64, format: format}]
+
+      _ ->
+        []
+    end
+  end
+
+  defp message_image_binaries(_), do: []
+
+  defp images_from_content(nil), do: []
+
+  defp images_from_content(content) when is_list(content) do
+    content
+    |> Enum.flat_map(fn
+      %{"type" => "image_url", "image_url" => %{"url" => url}} when is_binary(url) -> [url]
+      %{"type" => "image_url", "url" => url} when is_binary(url) -> [url]
+      %{"type" => "image", "url" => url} when is_binary(url) -> [url]
+      _ -> []
+    end)
+  end
+
+  defp images_from_content(_), do: []
 
   defp extract_top_level_text(%{"output_text" => text}) when is_binary(text) and byte_size(text) > 0,
     do: text

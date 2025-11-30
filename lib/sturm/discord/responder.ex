@@ -13,13 +13,21 @@ defmodule Sturm.Discord.Responder do
     message_id = message["id"]
     history = history || ChannelBuffer.fetch(channel_id)
 
-    with true <- should_reply?(history, bot_id),
+    with true <- should_reply?(history, bot_id, channel_id, message_id),
          :ok <- maybe_typing(token, channel_id),
-         {:ok, content} <- generate_reply(history, shard),
-         :ok <- post_reply(token, channel_id, content, bot_id, reply_to: message_id) do
+         {:ok, reply} <- generate_reply(history, shard, channel_id, message_id),
+         :ok <- post_reply(token, channel_id, reply, bot_id, reply_to: message_id) do
       :ok
     else
       false ->
+        :ok
+
+      {:error, {:openai, reason}} ->
+        Logger.warning("Responder failed (openai) channel=#{channel_id}: #{inspect(reason)}")
+        :ok
+
+      {:error, {:discord, reason}} ->
+        Logger.warning("Responder failed (discord) channel=#{channel_id}: #{inspect(reason)}")
         :ok
 
       {:error, reason} ->
@@ -28,26 +36,20 @@ defmodule Sturm.Discord.Responder do
     end
   end
 
-  defp generate_reply(history, shard) do
+  defp generate_reply(history, shard, channel_id, message_id) do
     payload = build_messages(history)
 
-    Logger.debug("Responder sending to OpenAI shard=#{inspect(shard)}")
+    Logger.debug(
+      "Responder generating reply shard=#{inspect(shard)} channel=#{channel_id} message_id=#{message_id}"
+    )
 
     case Responses.chat(payload) do
-      {:ok, content} ->
-        {:ok, content}
+      {:ok, reply} ->
+        {:ok, reply}
 
-      {:error, {:empty_output, _body}} ->
-        Logger.debug("Responder retrying with fallback model")
-
-        Responses.chat(payload, model: fallback_model(), reasoning: nil)
-        |> case do
-          {:ok, content} -> {:ok, content}
-          other -> other
-        end
-
-      other ->
-        other
+      {:error, reason} ->
+        Logger.warning("Responder OpenAI error: #{inspect(reason)}")
+        {:error, {:openai, reason}}
     end
   end
 
@@ -66,33 +68,76 @@ defmodule Sturm.Discord.Responder do
       end)
   end
 
-  defp post_reply(token, channel_id, content, bot_id, opts) do
-    clean = strip_assistant_prefix(content)
+  defp post_reply(
+         token,
+         channel_id,
+         reply = %{text: text, images: images, image_binaries: binaries},
+         bot_id,
+         opts
+       ) do
+    attachments = build_attachments_from_binaries(binaries)
 
-    case Rest.create_message(token, channel_id, clean, opts) do
-      {:ok, body} ->
-        message_id = Map.get(body, "id", "")
-        append_assistant(channel_id, bot_id, clean, message_id)
-        :ok
+    clean =
+      text
+      |> strip_assistant_prefix()
+      |> fallback_image_text(attachments, images)
 
-      :ok ->
-        append_assistant(channel_id, bot_id, clean, "")
-        :ok
+    if attachments == [] and not present?(clean) do
+      raw =
+        case reply do
+          %{} = r -> Map.get(r, :raw) || Map.get(r, "raw")
+          _ -> nil
+        end
 
-      {:error, reason} ->
-        {:error, reason}
+      Logger.warning(
+        "Responder produced empty reply, skipping send channel=#{channel_id} payload=#{inspect(%{text: text, images: images, raw: raw})}"
+      )
+
+      :ok
+    else
+      opts = maybe_put_attachments(opts, attachments)
+
+      case Rest.create_message(token, channel_id, clean, opts) do
+        {:ok, body} ->
+          message_id = Map.get(body, "id", "")
+          buffer_content = buffer_content(clean, attachments)
+          append_assistant(channel_id, bot_id, buffer_content, message_id)
+          :ok
+
+        :ok ->
+          buffer_content = buffer_content(clean, attachments)
+          append_assistant(channel_id, bot_id, buffer_content, "")
+          :ok
+
+        {:error, reason} ->
+          {:error, {:discord, reason}}
+      end
     end
   end
 
-  defp should_reply?(history, bot_id) do
+  defp should_reply?(history, bot_id, channel_id, message_id) do
     payload =
       history
       |> limit_history(judge_context_limit())
       |> judge_messages(bot_id)
 
-    case Responses.chat(payload, model: judge_model(), reasoning: nil, tools: []) do
-      {:ok, text} ->
-        judge_positive?(text)
+    case Responses.chat(payload,
+           model: judge_model(),
+           reasoning: nil,
+           tools: [],
+           timeout_ms: judge_timeout_ms()
+         ) do
+      {:ok, %{text: text}} when is_binary(text) ->
+        decision = judge_positive?(text)
+
+        Logger.debug(
+          "Judge decision=#{decision} channel=#{channel_id} message_id=#{message_id}"
+        )
+
+        decision
+
+      {:ok, _} ->
+        false
 
       {:error, reason} ->
         Logger.debug("Responder judge skipped: #{inspect(reason)}")
@@ -136,12 +181,14 @@ defmodule Sturm.Discord.Responder do
   defp maybe_prepend_hint(messages, nil), do: messages
   defp maybe_prepend_hint(messages, hint), do: [hint | messages]
 
-  defp judge_positive?(text) do
+  defp judge_positive?(text) when is_binary(text) do
     text
     |> String.trim()
     |> String.upcase()
     |> String.starts_with?("YES")
   end
+
+  defp judge_positive?(_), do: false
 
   defp judge_prompt do
     Application.get_env(:sturm, :openai, [])
@@ -154,9 +201,9 @@ defmodule Sturm.Discord.Responder do
     |> Keyword.get(:judge_model, "gpt-4o-mini")
   end
 
-  defp fallback_model do
+  defp judge_timeout_ms do
     Application.get_env(:sturm, :openai, [])
-    |> Keyword.get(:fallback_model, "gpt-4o-mini")
+    |> Keyword.get(:judge_timeout_ms, 30_000)
   end
 
   defp judge_context_limit do
@@ -199,8 +246,59 @@ defmodule Sturm.Discord.Responder do
   end
 
   defp strip_assistant_prefix(content) do
-    content
+    (content || "")
     |> String.replace(~r/^\s*\[assistant[^\]]*\]\s*/i, "")
     |> String.trim_leading()
   end
+
+  defp maybe_put_attachments(opts, []), do: opts
+
+  defp maybe_put_attachments(opts, attachments),
+    do: Keyword.put(opts, :attachments, attachments)
+
+  defp fallback_image_text(text, [], image_urls) do
+    cond do
+      present?(text) -> text
+      present?(hd_or_nil(image_urls)) -> hd_or_nil(image_urls)
+      true -> ""
+    end
+  end
+
+  defp fallback_image_text(nil, _attachments, _images), do: ""
+  defp fallback_image_text("", _attachments, _images), do: ""
+  defp fallback_image_text(text, _attachments, _images), do: text
+
+  defp buffer_content(text, []), do: text
+
+  defp buffer_content(text, _attachments) when text in [nil, ""] do
+    "[image]"
+  end
+
+  defp buffer_content(text, _attachments), do: text
+
+  defp build_attachments_from_binaries(binaries) when is_list(binaries) do
+    binaries
+    |> Enum.with_index()
+    |> Enum.map(fn {%{data_b64: data_b64, format: format}, idx} ->
+      %{data: Base.decode64!(data_b64), filename: "image-#{idx}.#{extension(format)}", content_type: content_type(format)}
+    end)
+  end
+
+  defp extension("png"), do: "png"
+  defp extension("jpeg"), do: "jpg"
+  defp extension("jpg"), do: "jpg"
+  defp extension("webp"), do: "webp"
+  defp extension(_), do: "png"
+
+  defp content_type("png"), do: "image/png"
+  defp content_type("jpeg"), do: "image/jpeg"
+  defp content_type("jpg"), do: "image/jpeg"
+  defp content_type("webp"), do: "image/webp"
+  defp content_type(_), do: "application/octet-stream"
+
+  defp present?(val) when is_binary(val), do: String.trim(val) != ""
+  defp present?(_), do: false
+
+  defp hd_or_nil([]), do: nil
+  defp hd_or_nil([h | _]), do: h
 end

@@ -18,18 +18,47 @@ defmodule Sturm.Discord.Rest do
   end
 
   def create_message(token, channel_id, content, opts \\ []) do
-    json =
-      %{content: content}
-      |> maybe_put_message_reference(opts, channel_id)
-      |> maybe_put_allowed_mentions(opts)
+    attachments = Keyword.get(opts, :attachments, [])
 
-    req()
-    |> Req.post(
-      url: "#{@api_base}/channels/#{channel_id}/messages",
-      headers: auth(token),
-      json: json
-    )
-    |> normalize_response()
+    if attachments == [] do
+      json =
+        %{content: content}
+        |> maybe_put_message_reference(opts, channel_id)
+        |> maybe_put_allowed_mentions(opts)
+
+      req()
+      |> Req.post(
+        url: "#{@api_base}/channels/#{channel_id}/messages",
+        headers: auth(token),
+        json: json
+      )
+      |> normalize_response()
+    else
+      fields =
+        [
+          {"payload_json",
+           Jason.encode!(%{
+             content: content,
+             attachments: build_attachments(attachments),
+             allowed_mentions: Keyword.get(opts, :allowed_mentions, %{replied_user: false}),
+             message_reference: message_reference(opts, channel_id)
+           })}
+        ] ++
+          Enum.with_index(attachments, fn att, idx ->
+            {"files[#{idx}]",
+             {att.data,
+              filename: att.filename,
+              content_type: att.content_type || "application/octet-stream"}}
+          end)
+
+      req()
+      |> Req.post(
+        url: "#{@api_base}/channels/#{channel_id}/messages",
+        headers: auth(token),
+        form_multipart: fields
+      )
+      |> normalize_response()
+    end
   end
 
   defp maybe_put_message_reference(json, opts, channel_id) do
@@ -46,11 +75,30 @@ defmodule Sturm.Discord.Rest do
     end
   end
 
+  defp message_reference(opts, channel_id) do
+    case Keyword.get(opts, :reply_to) do
+      nil -> nil
+      message_id -> %{message_id: message_id, channel_id: channel_id}
+    end
+  end
+
+  defp build_attachments(attachments) do
+    attachments
+    |> Enum.with_index()
+    |> Enum.map(fn {att, idx} ->
+      %{
+        id: idx,
+        filename: att.filename
+      }
+    end)
+  end
+
   defp auth(token), do: [{"authorization", "Bot #{token}"}]
 
   defp req do
     Req.new(
       max_redirects: 3,
+      receive_timeout: 25_000,
       connect_options: [transport_opts: [cacerts: :public_key.cacerts_get()]]
     )
   end
