@@ -233,7 +233,7 @@ defmodule Sturm.Discord.Responder do
     Application.get_env(:sturm, :openai, [])
     |> Keyword.get(:judge_prompt)
     |> presence("")
-    |> format_bot_name(bot_label)
+    |> eval_template(bot_label)
   end
 
   defp judge_model do
@@ -255,14 +255,14 @@ defmodule Sturm.Discord.Responder do
     Application.get_env(:sturm, :openai, [])
     |> Keyword.get(:system_prompt)
     |> presence("")
-    |> format_bot_name(bot_label)
+    |> eval_template(bot_label)
   end
 
-  defp format_bot_name(prompt, bot_label) when is_binary(prompt) do
-    String.replace(prompt, "%{bot_name}", bot_label)
+  defp eval_template(prompt, bot_label) when is_binary(prompt) do
+    EEx.eval_string(prompt, bot_name: bot_label)
   end
 
-  defp format_bot_name(_, _), do: ""
+  defp eval_template(_, _), do: ""
 
   defp append_assistant(channel_id, bot_id, bot_label, content, message_id) do
     ChannelBuffer.append(channel_id, %{
