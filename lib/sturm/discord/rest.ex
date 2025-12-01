@@ -25,6 +25,29 @@ defmodule Sturm.Discord.Rest do
     |> normalize_response()
   end
 
+  def put_guild_commands(token, application_id, guild_id, commands) do
+    req()
+    |> Req.put(
+      url: "#{@api_base}/applications/#{application_id}/guilds/#{guild_id}/commands",
+      headers: auth(token),
+      json: commands
+    )
+    |> normalize_response()
+  end
+
+  def create_interaction_response(interaction, token, response) do
+    id = Map.get(interaction, "id")
+    interaction_token = Map.get(interaction, "token")
+
+    req()
+    |> Req.post(
+      url: "#{@api_base}/interactions/#{id}/#{interaction_token}/callback",
+      headers: auth(token),
+      json: response
+    )
+    |> normalize_response()
+  end
+
   def create_message(token, channel_id, content, opts \\ []) do
     attachments = Keyword.get(opts, :attachments, [])
 

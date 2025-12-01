@@ -31,6 +31,11 @@ defmodule Sturm.Discord.ChannelBuffer do
     GenServer.call(via(channel_id), {:fetch, opts})
   end
 
+  def reset(channel_id) do
+    ensure_started(channel_id)
+    GenServer.call(via(channel_id), :reset)
+  end
+
   # Callbacks
 
   @impl true
@@ -63,6 +68,12 @@ defmodule Sturm.Discord.ChannelBuffer do
       |> trim_from_end(limit)
 
     {:reply, items, state}
+  end
+
+  @impl true
+  def handle_call(:reset, _from, state) do
+    empty = :queue.new()
+    {:reply, :ok, %{state | queue: empty, size: 0}}
   end
 
   # Helpers

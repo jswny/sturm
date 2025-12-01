@@ -6,7 +6,7 @@ defmodule Sturm.Discord.Shard do
   use GenServer
   require Logger
 
-  alias Sturm.Discord.{ChannelBuffer, Responder}
+  alias Sturm.Discord.{ChannelAccess, ChannelBuffer, Commands, Responder}
 
   @gateway_params "v=10&encoding=json"
   @identify_op 2
@@ -38,7 +38,9 @@ defmodule Sturm.Discord.Shard do
       pending_data: [],
       heartbeat_interval: nil,
       heartbeat_timer: nil,
-      awaiting_ack?: false
+      awaiting_ack?: false,
+      application_id: nil,
+      registered_guilds: MapSet.new()
     }
 
     {:ok, state, {:continue, :connect}}
@@ -221,16 +223,28 @@ defmodule Sturm.Discord.Shard do
         session_id = Map.get(data, "session_id")
         guilds = Map.get(data, "guilds", [])
         bot_id = get_in(data, ["user", "id"])
+        application = Map.get(data, "application", %{})
+        application_id = Map.get(application, "id") || Map.get(data, "application_id")
 
         Logger.info(
           "Discord READY shard #{inspect(state.shard)} session=#{session_id} guilds=#{length(guilds)} bot_id=#{bot_id}"
         )
 
-        {:noreply, %{state | session_id: session_id, bot_id: bot_id}}
+        state =
+          %{state | session_id: session_id, bot_id: bot_id, application_id: application_id}
+          |> register_ready_guild_commands(guilds)
+
+        {:noreply, state}
 
       "RESUMED" ->
         Logger.debug("Discord RESUMED shard #{inspect(state.shard)}")
         {:noreply, state}
+
+      "GUILD_CREATE" ->
+        {:noreply, register_guild_command(data, state)}
+
+      "INTERACTION_CREATE" ->
+        handle_interaction_create(data, state)
 
       other ->
         Logger.debug("Discord event #{other} shard #{inspect(state.shard)} seq=#{seq}")
@@ -264,23 +278,67 @@ defmodule Sturm.Discord.Shard do
       channel_id: channel_id
     }
 
-    # Append synchronously to preserve order, then snapshot history for this message
-    :ok = ChannelBuffer.append(channel_id, buffer_item)
+    if ChannelAccess.enabled?(channel_id) do
+      # Append synchronously to preserve order, then snapshot history for this message
+      :ok = ChannelBuffer.append(channel_id, buffer_item)
 
-    if not is_bot? do
-      history = ChannelBuffer.fetch(channel_id)
+      if not is_bot? do
+        history = ChannelBuffer.fetch(channel_id)
 
-      Task.start(fn ->
-        Responder.respond(
-          data,
-          %{token: state.token, bot_id: state.bot_id, shard: state.shard},
-          history
-        )
-      end)
+        Task.start(fn ->
+          Responder.respond(
+            data,
+            %{token: state.token, bot_id: state.bot_id, shard: state.shard},
+            history
+          )
+        end)
+      end
     end
 
     {:noreply, state}
   end
+
+  defp handle_interaction_create(data, state) do
+    Task.start(fn ->
+      Commands.handle_interaction(data, %{token: state.token, application_id: state.application_id})
+    end)
+
+    {:noreply, state}
+  end
+
+  defp register_ready_guild_commands(state = %{application_id: nil}, _guilds), do: state
+
+  defp register_ready_guild_commands(state, guilds) when is_list(guilds) do
+    guild_ids =
+      guilds
+      |> Enum.map(& &1["id"])
+      |> Enum.reject(&is_nil/1)
+
+    register_guilds(state, guild_ids)
+  end
+
+  defp register_guild_command(%{"id" => guild_id}, state = %{application_id: app_id})
+       when is_binary(guild_id) and is_binary(app_id) do
+    register_guilds(state, [guild_id])
+  end
+
+  defp register_guild_command(_data, state), do: state
+
+  defp register_guilds(state = %{application_id: app_id, token: token}, guild_ids)
+       when is_binary(app_id) and is_binary(token) do
+    to_register =
+      guild_ids
+      |> Enum.reject(&MapSet.member?(state.registered_guilds, &1))
+
+    Enum.each(to_register, fn gid ->
+      Task.start(fn -> Commands.register_guild_commands(token, app_id, gid) end)
+    end)
+
+    new_set = MapSet.union(state.registered_guilds, MapSet.new(to_register))
+    %{state | registered_guilds: new_set}
+  end
+
+  defp register_guilds(state, _guild_ids), do: state
 
   defp message_content(%{"content" => content})
        when is_binary(content) and byte_size(content) > 0,

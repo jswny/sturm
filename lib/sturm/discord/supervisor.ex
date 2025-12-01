@@ -6,7 +6,7 @@ defmodule Sturm.Discord.Supervisor do
   use Supervisor
   require Logger
 
-  alias Sturm.Discord.{BufferSupervisor, Rest, Shard}
+  alias Sturm.Discord.{BufferSupervisor, ChannelAccess, Rest, Shard}
 
   def start_link(init_arg), do: Supervisor.start_link(__MODULE__, init_arg, name: __MODULE__)
 
@@ -34,7 +34,8 @@ defmodule Sturm.Discord.Supervisor do
       children =
         [
           {Registry, keys: :unique, name: Sturm.Discord.BufferRegistry},
-          BufferSupervisor
+          BufferSupervisor,
+          ChannelAccess
         ] ++ shard_children
 
       Supervisor.init(children, strategy: :one_for_one)
