@@ -257,7 +257,7 @@ defmodule Sturm.Discord.Shard do
     buffer_item = %{
       role: if(author_id == state.bot_id, do: "assistant", else: "user"),
       author_id: author_id,
-      author_name: sanitize_name(author_name),
+      author_name: author_name,
       content: content,
       message_id: data["id"] || "",
       timestamp: data["timestamp"] || DateTime.utc_now() |> DateTime.to_iso8601(),
@@ -297,19 +297,6 @@ defmodule Sturm.Discord.Shard do
   end
 
   defp message_content(_), do: ""
-
-  defp sanitize_name(nil), do: "user"
-
-  defp sanitize_name(name) do
-    name
-    |> String.downcase()
-    |> String.replace(~r/[^a-z0-9_\-]/, "_")
-    |> String.slice(0, 30)
-    |> case do
-      "" -> "user"
-      cleaned -> cleaned
-    end
-  end
 
   defp nickname_from_member(%{"nick" => nick}) when is_binary(nick) and byte_size(nick) > 0 do
     case String.trim(nick) do

@@ -19,6 +19,12 @@ defmodule Sturm.Discord.Rest do
     |> normalize_response()
   end
 
+  def bot_member(token, guild_id, bot_id) do
+    req()
+    |> Req.get(url: "#{@api_base}/guilds/#{guild_id}/members/#{bot_id}", headers: auth(token))
+    |> normalize_response()
+  end
+
   def create_message(token, channel_id, content, opts \\ []) do
     attachments = Keyword.get(opts, :attachments, [])
 

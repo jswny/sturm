@@ -5,22 +5,30 @@ defmodule Sturm.Discord.Responder do
 
   require Logger
 
-  alias Sturm.Discord.{ChannelBuffer, Rest, Typing}
+  alias Sturm.Discord.{BotIdentity, ChannelBuffer, Rest, Typing}
   alias Sturm.OpenAI.Responses
 
   def respond(message, %{token: token, bot_id: bot_id, shard: shard}, history \\ nil) do
     channel_id = message["channel_id"]
     message_id = message["id"]
+    guild_id = message["guild_id"]
     history = history || ChannelBuffer.fetch(channel_id)
+    bot_label =
+      case BotIdentity.label(guild_id, bot_id, token) do
+        {:ok, label} when is_binary(label) -> label
+        {:error, reason} -> raise "Bot label unavailable: #{inspect(reason)}"
+      end
 
-    case should_reply?(message, history, bot_id, channel_id, message_id) do
+    case should_reply?(message, history, bot_id, channel_id, message_id, bot_label) do
       true ->
         typing_ref = Typing.start(token, channel_id)
 
         result =
           try do
-            with {:ok, reply} <- generate_reply(history, shard, channel_id, message_id),
-                 :ok <- post_reply(token, channel_id, reply, bot_id, reply_to: message_id) do
+            with {:ok, reply} <-
+                   generate_reply(history, shard, channel_id, message_id, bot_label),
+                 :ok <-
+                   post_reply(token, channel_id, reply, bot_id, bot_label, reply_to: message_id) do
               :ok
             end
           after
@@ -49,8 +57,8 @@ defmodule Sturm.Discord.Responder do
     end
   end
 
-  defp generate_reply(history, shard, channel_id, message_id) do
-    payload = build_messages(history)
+  defp generate_reply(history, shard, channel_id, message_id, bot_label) do
+    payload = build_messages(history, bot_label)
 
     Logger.debug(
       "Responder generating reply shard=#{inspect(shard)} channel=#{channel_id} message_id=#{message_id}"
@@ -66,11 +74,8 @@ defmodule Sturm.Discord.Responder do
     end
   end
 
-  defp build_messages(history) do
-    system_prompt =
-      Application.get_env(:sturm, :openai, [])
-      |> Keyword.get(:system_prompt)
-      |> presence("")
+  defp build_messages(history, bot_label) do
+    system_prompt = formatted_system_prompt(bot_label)
 
     [%{role: "system", content: system_prompt}] ++
       Enum.map(history, fn item ->
@@ -86,6 +91,7 @@ defmodule Sturm.Discord.Responder do
          channel_id,
          reply = %{text: text, images: images, image_binaries: binaries},
          bot_id,
+         bot_label,
          opts
        ) do
     attachments = build_attachments_from_binaries(binaries)
@@ -114,12 +120,12 @@ defmodule Sturm.Discord.Responder do
         {:ok, body} ->
           message_id = Map.get(body, "id", "")
           buffer_content = buffer_content(clean, attachments)
-          append_assistant(channel_id, bot_id, buffer_content, message_id)
+          append_assistant(channel_id, bot_id, bot_label, buffer_content, message_id)
           :ok
 
         :ok ->
           buffer_content = buffer_content(clean, attachments)
-          append_assistant(channel_id, bot_id, buffer_content, "")
+          append_assistant(channel_id, bot_id, bot_label, buffer_content, "")
           :ok
 
         {:error, reason} ->
@@ -128,7 +134,7 @@ defmodule Sturm.Discord.Responder do
     end
   end
 
-  defp should_reply?(message, history, bot_id, channel_id, message_id) do
+  defp should_reply?(message, history, bot_id, channel_id, message_id, bot_label) do
     if explicit_direct?(message, bot_id) do
       Logger.debug(
         "Judge bypass: explicit mention detected channel=#{channel_id} message_id=#{message_id}"
@@ -139,7 +145,7 @@ defmodule Sturm.Discord.Responder do
       payload =
         history
         |> limit_history(judge_context_limit())
-        |> judge_messages(bot_id)
+        |> judge_messages(bot_id, bot_label)
 
       case Responses.chat(payload,
              model: judge_model(),
@@ -150,7 +156,9 @@ defmodule Sturm.Discord.Responder do
         {:ok, %{text: text}} when is_binary(text) ->
           decision = judge_positive?(text)
 
-          Logger.debug("Judge decision=#{decision} channel=#{channel_id} message_id=#{message_id}")
+          Logger.debug(
+            "Judge decision=#{decision} channel=#{channel_id} message_id=#{message_id} bot_label=#{inspect(bot_label)} judge_text=#{inspect(text)}"
+          )
 
           decision
 
@@ -176,8 +184,8 @@ defmodule Sturm.Discord.Responder do
 
   defp mentioned_in_payload?(_, _), do: false
 
-  defp judge_messages(history, bot_id) do
-    base = [%{role: "system", content: judge_prompt()}]
+  defp judge_messages(history, bot_id, bot_label) do
+    base = [%{role: "system", content: judge_prompt(bot_label)}]
 
     mention_hint =
       if bot_id do
@@ -221,10 +229,11 @@ defmodule Sturm.Discord.Responder do
 
   defp judge_positive?(_), do: false
 
-  defp judge_prompt do
+  defp judge_prompt(bot_label) do
     Application.get_env(:sturm, :openai, [])
     |> Keyword.get(:judge_prompt)
     |> presence("")
+    |> format_bot_name(bot_label)
   end
 
   defp judge_model do
@@ -242,29 +251,29 @@ defmodule Sturm.Discord.Responder do
     |> Keyword.get(:judge_context_limit, 20)
   end
 
-  defp append_assistant(channel_id, bot_id, content, message_id) do
+  defp formatted_system_prompt(bot_label) do
+    Application.get_env(:sturm, :openai, [])
+    |> Keyword.get(:system_prompt)
+    |> presence("")
+    |> format_bot_name(bot_label)
+  end
+
+  defp format_bot_name(prompt, bot_label) when is_binary(prompt) do
+    String.replace(prompt, "%{bot_name}", bot_label)
+  end
+
+  defp format_bot_name(_, _), do: ""
+
+  defp append_assistant(channel_id, bot_id, bot_label, content, message_id) do
     ChannelBuffer.append(channel_id, %{
       role: "assistant",
       author_id: bot_id || "assistant",
-      author_name: bot_display_name(),
+      author_name: bot_label,
       content: content,
       message_id: message_id,
       timestamp: DateTime.utc_now() |> DateTime.to_iso8601(),
       channel_id: channel_id
     })
-  end
-
-  defp bot_name do
-    Application.get_env(:sturm, :bot, [])
-    |> Keyword.get(:name, "sturm")
-  end
-
-  defp bot_display_name do
-    bot_name()
-    |> String.downcase()
-    |> String.replace(~r/[^a-z0-9_\-]/, "_")
-    |> String.slice(0, 30)
-    |> presence("assistant")
   end
 
   defp presence(nil, fallback), do: fallback

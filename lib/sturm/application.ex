@@ -34,7 +34,10 @@ defmodule Sturm.Application do
 
         cond do
           is_binary(token) and byte_size(token) > 0 ->
-            [Sturm.Discord.Supervisor]
+            [
+              Sturm.Discord.BotIdentity,
+              Sturm.Discord.Supervisor
+            ]
 
           true ->
             Logger.warning("Discord bot not started: missing token")
