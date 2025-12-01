@@ -249,7 +249,8 @@ defmodule Sturm.Discord.Shard do
     channel_id = data["channel_id"]
     author = data["author"] || %{}
     author_id = author["id"] || "unknown"
-    author_name = author["username"] || author_id
+    nickname = nickname_from_member(data["member"])
+    author_name = nickname || author["username"] || author_id
     content = message_content(data)
     is_bot? = author["bot"] || author_id == state.bot_id
 
@@ -309,6 +310,15 @@ defmodule Sturm.Discord.Shard do
       cleaned -> cleaned
     end
   end
+
+  defp nickname_from_member(%{"nick" => nick}) when is_binary(nick) and byte_size(nick) > 0 do
+    case String.trim(nick) do
+      "" -> nil
+      trimmed -> trimmed
+    end
+  end
+
+  defp nickname_from_member(_), do: nil
 
   defp open_socket(gateway_url) do
     uri = URI.parse(gateway_url)

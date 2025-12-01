@@ -13,7 +13,7 @@ defmodule Sturm.Discord.Responder do
     message_id = message["id"]
     history = history || ChannelBuffer.fetch(channel_id)
 
-    case should_reply?(history, bot_id, channel_id, message_id) do
+    case should_reply?(message, history, bot_id, channel_id, message_id) do
       true ->
         typing_ref = Typing.start(token, channel_id)
 
@@ -128,33 +128,53 @@ defmodule Sturm.Discord.Responder do
     end
   end
 
-  defp should_reply?(history, bot_id, channel_id, message_id) do
-    payload =
-      history
-      |> limit_history(judge_context_limit())
-      |> judge_messages(bot_id)
+  defp should_reply?(message, history, bot_id, channel_id, message_id) do
+    if explicit_direct?(message, bot_id) do
+      Logger.debug(
+        "Judge bypass: explicit mention detected channel=#{channel_id} message_id=#{message_id}"
+      )
 
-    case Responses.chat(payload,
-           model: judge_model(),
-           reasoning: nil,
-           tools: [],
-           timeout_ms: judge_timeout_ms()
-         ) do
-      {:ok, %{text: text}} when is_binary(text) ->
-        decision = judge_positive?(text)
+      true
+    else
+      payload =
+        history
+        |> limit_history(judge_context_limit())
+        |> judge_messages(bot_id)
 
-        Logger.debug("Judge decision=#{decision} channel=#{channel_id} message_id=#{message_id}")
+      case Responses.chat(payload,
+             model: judge_model(),
+             reasoning: nil,
+             tools: [],
+             timeout_ms: judge_timeout_ms()
+           ) do
+        {:ok, %{text: text}} when is_binary(text) ->
+          decision = judge_positive?(text)
 
-        decision
+          Logger.debug("Judge decision=#{decision} channel=#{channel_id} message_id=#{message_id}")
 
-      {:ok, _} ->
-        false
+          decision
 
-      {:error, reason} ->
-        Logger.debug("Responder judge skipped: #{inspect(reason)}")
-        false
+        {:ok, _} ->
+          false
+
+        {:error, reason} ->
+          Logger.debug("Responder judge skipped: #{inspect(reason)}")
+          false
+      end
     end
   end
+
+  defp explicit_direct?(message, bot_id),
+    do: bot_id && mentioned_in_payload?(message, bot_id)
+
+  defp mentioned_in_payload?(%{"mentions" => mentions}, bot_id) when is_list(mentions) do
+    Enum.any?(mentions, fn
+      %{"id" => id} when id == bot_id -> true
+      _ -> false
+    end)
+  end
+
+  defp mentioned_in_payload?(_, _), do: false
 
   defp judge_messages(history, bot_id) do
     base = [%{role: "system", content: judge_prompt()}]
@@ -226,12 +246,25 @@ defmodule Sturm.Discord.Responder do
     ChannelBuffer.append(channel_id, %{
       role: "assistant",
       author_id: bot_id || "assistant",
-      author_name: "sturmbot",
+      author_name: bot_display_name(),
       content: content,
       message_id: message_id,
       timestamp: DateTime.utc_now() |> DateTime.to_iso8601(),
       channel_id: channel_id
     })
+  end
+
+  defp bot_name do
+    Application.get_env(:sturm, :bot, [])
+    |> Keyword.get(:name, "sturm")
+  end
+
+  defp bot_display_name do
+    bot_name()
+    |> String.downcase()
+    |> String.replace(~r/[^a-z0-9_\-]/, "_")
+    |> String.slice(0, 30)
+    |> presence("assistant")
   end
 
   defp presence(nil, fallback), do: fallback

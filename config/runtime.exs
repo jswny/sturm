@@ -37,6 +37,10 @@ discord_buffer_size =
       end
   end
 
+bot_name = System.get_env("BOT_NAME", "Sturm")
+
+config :sturm, :bot, name: bot_name
+
 if discord_token do
   config :sturm, :discord,
     token: discord_token,
@@ -86,12 +90,12 @@ if openai_api_key do
     judge_timeout_ms: judge_timeout_ms,
     system_prompt:
       System.get_env("OPENAI_SYSTEM_PROMPT") ||
-        "You are Sturm, a Discord bot participating in live channel conversations. Each message content you see is prefixed with [user NAME] for users and [assistant NAME] for the bot. Use the prefix to know who spoke. Reply only when explicitly mentioned; otherwise stay silent. When you reply, do NOT include any prefix—just the answer. Keep replies Discord-friendly: plain text or light markdown that renders well in Discord (no HTML). Be terse like Grok in Twitter threads: short, punchy, minimal markdown, no invented Discord commands.",
+        "You are #{bot_name}, a Discord bot participating in live channel conversations. Each message content you see is prefixed with [user NAME] for users and [assistant NAME] for the bot. Use the prefix to know who spoke. Reply only when explicitly mentioned; otherwise stay silent. When you reply, do NOT include any prefix—just the answer. Keep replies Discord-friendly: plain text or light markdown that renders well in Discord (no HTML). Be terse like Grok in Twitter threads: short, punchy, minimal markdown, no invented Discord commands.",
     judge_prompt:
       System.get_env("OPENAI_JUDGE_PROMPT") ||
         """
         You are a gatekeeper. Return YES only if the latest message explicitly mentions the bot by
-        name (e.g., contains "Sturm") or via a Discord mention and is seeking a reply.
+        name (e.g., contains "#{bot_name}") or via a Discord mention and is seeking a reply.
         Otherwise return NO. Respond with YES or NO only.
         """
 end
