@@ -252,10 +252,30 @@ defmodule Sturm.Discord.Responder do
   end
 
   defp formatted_system_prompt(bot_label) do
-    Application.get_env(:sturm, :openai, [])
-    |> Keyword.get(:system_prompt)
+    config = Application.get_env(:sturm, :openai, [])
+
+    combined =
+      build_prompt(
+        Keyword.get(config, :responder_prompt_core),
+        Keyword.get(config, :responder_prompt_style),
+        Keyword.get(config, :system_prompt)
+      )
+
+    combined
     |> presence("")
     |> eval_template(bot_label)
+  end
+
+  defp build_prompt(core, style, legacy) do
+    core = presence(core, "")
+    style = presence(style, "")
+
+    cond do
+      core != "" and style != "" -> core <> "\n" <> style
+      core != "" -> core
+      style != "" -> style
+      true -> presence(legacy, "")
+    end
   end
 
   defp eval_template(prompt, bot_label) when is_binary(prompt) do
