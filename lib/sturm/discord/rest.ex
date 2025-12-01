@@ -3,6 +3,8 @@ defmodule Sturm.Discord.Rest do
   Minimal REST helper for Discord HTTP endpoints used during gateway setup and bot messaging.
   """
 
+  import Bitwise
+
   @api_base "https://discord.com/api/v10"
 
   def gateway_bot(token) do
@@ -22,7 +24,7 @@ defmodule Sturm.Discord.Rest do
 
     if attachments == [] do
       json =
-        %{content: content}
+        %{content: content, flags: suppress_embeds_flag()}
         |> maybe_put_message_reference(opts, channel_id)
         |> maybe_put_allowed_mentions(opts)
 
@@ -41,7 +43,8 @@ defmodule Sturm.Discord.Rest do
              content: content,
              attachments: build_attachments(attachments),
              allowed_mentions: Keyword.get(opts, :allowed_mentions, %{replied_user: false}),
-             message_reference: message_reference(opts, channel_id)
+             message_reference: message_reference(opts, channel_id),
+             flags: suppress_embeds_flag()
            })}
         ] ++
           Enum.with_index(attachments, fn att, idx ->
@@ -83,6 +86,8 @@ defmodule Sturm.Discord.Rest do
       message_id -> %{message_id: message_id, channel_id: channel_id}
     end
   end
+
+  defp suppress_embeds_flag, do: 1 <<< 2
 
   defp build_attachments(attachments) do
     attachments
