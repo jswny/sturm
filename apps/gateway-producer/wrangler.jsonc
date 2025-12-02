@@ -1,0 +1,13 @@
+{
+  "name": "gateway-producer",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-12-02",
+  "queues": {
+    "producers": [
+      {
+        "queue": "gateway-events",
+        "binding": "GATEWAY_QUEUE"
+      }
+    ]
+  }
+}

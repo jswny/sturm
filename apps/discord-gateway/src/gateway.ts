@@ -23,6 +23,7 @@ export interface GatewayOptions {
   shardCount?: number;
   identifyProperties?: GatewayIdentifyData["properties"];
   forwardMessage?: (message: GatewayMessageCreateDispatchData) => void | Promise<void>;
+  forwardEvent?: (payload: GatewayReceivePayload) => void | Promise<void>;
 }
 
 type ConnectionState = "idle" | "connecting" | "connected" | "reconnecting";
@@ -41,6 +42,7 @@ export class DiscordGatewayClient {
   private readonly shardCount: number;
   private readonly identifyProperties: GatewayIdentifyData["properties"];
   private readonly forwardMessage?: GatewayOptions["forwardMessage"];
+  private readonly forwardEvent?: GatewayOptions["forwardEvent"];
 
   private ws?: WebSocket;
   private state: ConnectionState = "idle";
@@ -60,6 +62,7 @@ export class DiscordGatewayClient {
     this.shardCount = options.shardCount ?? 1;
     this.identifyProperties = options.identifyProperties ?? DEFAULT_PROPERTIES;
     this.forwardMessage = options.forwardMessage;
+    this.forwardEvent = options.forwardEvent;
   }
 
   async start() {
@@ -142,6 +145,10 @@ export class DiscordGatewayClient {
 
   private async handleDispatch(payload: GatewayReceivePayload) {
     if (payload.op !== GatewayOpcodes.Dispatch || !payload.t) return;
+
+    if (this.forwardEvent) {
+      await this.forwardEvent(payload);
+    }
 
     if (payload.t === GatewayDispatchEvents.Ready) {
       const data = payload.d as GatewayReadyDispatchData;

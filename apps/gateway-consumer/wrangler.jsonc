@@ -1,0 +1,13 @@
+{
+  "name": "gateway-consumer",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-12-02",
+  "queues": {
+    "consumers": [
+      {
+        "queue": "gateway-events",
+        "max_batch_size": 10
+      }
+    ]
+  }
+}

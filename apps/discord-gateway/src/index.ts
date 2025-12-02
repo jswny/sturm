@@ -1,5 +1,6 @@
 import process from "node:process";
 import { config as loadEnv } from "dotenv";
+import type { GatewayReceivePayload } from "discord-api-types/v10";
 import { DiscordGatewayClient, REQUIRED_INTENTS } from "./gateway.js";
 
 const shutdownSignals = ["SIGINT", "SIGTERM"] as const;
@@ -36,6 +37,8 @@ async function main() {
   console.info("[discord-gateway] starting up");
 
   const token = requireEnv("DISCORD_TOKEN");
+  const producerUrl = requireEnv("PRODUCER_URL");
+  const producerSecret = requireEnv("PRODUCER_SECRET");
   const shardId = process.env.SHARD_ID ? Number(process.env.SHARD_ID) : undefined;
   const shardCount = process.env.SHARD_COUNT ? Number(process.env.SHARD_COUNT) : undefined;
 
@@ -44,6 +47,7 @@ async function main() {
     intents: REQUIRED_INTENTS,
     shardId,
     shardCount,
+    forwardEvent: createForwarder(producerUrl, producerSecret),
   });
 
   await client.start();
@@ -57,3 +61,21 @@ process.on("unhandledRejection", handleFatal);
 process.on("uncaughtException", handleFatal);
 
 main().catch(handleFatal);
+
+function createForwarder(url: string, secret: string) {
+  return async (payload: GatewayReceivePayload) => {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${secret}`,
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(`Failed to forward event: ${res.status} ${res.statusText} ${body}`);
+    }
+  };
+}
