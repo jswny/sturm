@@ -42,11 +42,12 @@ export class ChannelBuffer {
 
     if (request.method === "GET" && url.pathname === "/history") {
       const limit = parseInt(url.searchParams.get("limit") ?? "", 10);
-      const capped = Number.isFinite(limit) && limit > 0 ? Math.min(limit, this.capacity) : this.capacity;
+      const capped =
+        Number.isFinite(limit) && limit > 0 ? Math.min(limit, this.capacity) : this.capacity;
       const items = takeFromEnd(this.messages, capped);
       return new Response(JSON.stringify(items), {
         status: 200,
-        headers: { "content-type": "application/json" }
+        headers: { "content-type": "application/json" },
       });
     }
 
@@ -87,7 +88,7 @@ export async function append(stub: DurableObjectStub, item: BufferItem) {
   return stub.fetch("https://channel-buffer/append", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(item)
+    body: JSON.stringify(item),
   });
 }
 
@@ -121,7 +122,7 @@ export function normalizeMessageCreate(payload: unknown): BufferItem | null {
     content,
     message_id: messageId,
     timestamp,
-    channel_id: channelId
+    channel_id: channelId,
   };
 }
 
@@ -133,7 +134,9 @@ function messageContent(data: Record<string, unknown>) {
   if (attachments.length === 0) return "";
 
   const names = attachments
-    .map((att) => (isRecord(att) ? asString(att.filename) || asString(att.url) || "attachment" : null))
+    .map((att) =>
+      isRecord(att) ? asString(att.filename) || asString(att.url) || "attachment" : null,
+    )
     .filter((v): v is string => Boolean(v));
 
   if (names.length === 0) return "[attachment]";
@@ -144,7 +147,7 @@ function asString(value: unknown): string | null {
   return typeof value === "string" ? value : null;
 }
 
-function isRecord(value: unknown): value is Record<string, any> {
+function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 

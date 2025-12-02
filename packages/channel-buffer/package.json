@@ -7,5 +7,12 @@
   "types": "index.ts",
   "exports": {
     ".": "./index.ts"
+  },
+  "scripts": {
+    "lint": "biome check .",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20251202.0"
   }
 }

@@ -8,3 +8,5 @@ dist
 .turbo
 .wrangler/
 .DS_Store
+.wrangler
+**/worker-configuration.d.ts

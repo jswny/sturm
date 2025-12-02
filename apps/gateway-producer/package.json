@@ -5,10 +5,10 @@
   "type": "module",
   "scripts": {
     "deploy": "wrangler deploy",
-    "typecheck": "wrangler types && tsc --noEmit"
+    "typecheck": "wrangler types && tsc --noEmit",
+    "lint": "biome check ."
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20241205.0",
     "typescript": "^5.6.3"
   }
 }

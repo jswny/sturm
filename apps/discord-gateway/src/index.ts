@@ -1,6 +1,6 @@
 import process from "node:process";
-import { config as loadEnv } from "dotenv";
 import type { GatewayReceivePayload } from "discord-api-types/v10";
+import { config as loadEnv } from "dotenv";
 import { DiscordGatewayClient, REQUIRED_INTENTS } from "./gateway.js";
 
 const shutdownSignals = ["SIGINT", "SIGTERM"] as const;

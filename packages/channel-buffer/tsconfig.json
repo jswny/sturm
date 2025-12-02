@@ -7,7 +7,7 @@
     "strict": true,
     "isolatedModules": true,
     "noEmit": true,
-    "types": []
+    "types": ["@cloudflare/workers-types"]
   },
   "include": ["./**/*"]
 }

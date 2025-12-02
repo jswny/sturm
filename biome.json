@@ -11,6 +11,14 @@
     }
   },
   "files": {
-    "includes": ["**", "!**/node_modules", "!**/dist", "!.turbo", "!pnpm-lock.yaml"]
+    "includes": [
+      "**",
+      "!**/node_modules",
+      "!**/dist",
+      "!**/.wrangler",
+      "!**/worker-configuration.d.ts",
+      "!.turbo",
+      "!pnpm-lock.yaml"
+    ]
   }
 }

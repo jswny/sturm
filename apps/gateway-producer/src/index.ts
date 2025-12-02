@@ -23,5 +23,5 @@ export default {
 
     await env.GATEWAY_QUEUE.send(text);
     return new Response(null, { status: 204 });
-  }
+  },
 };

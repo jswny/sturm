@@ -64,23 +64,21 @@ importers:
         specifier: workspace:*
         version: link:../../packages/channel-buffer
     devDependencies:
-      '@cloudflare/workers-types':
-        specifier: ^4.20241205.0
-        version: 4.20251202.0
       typescript:
         specifier: ^5.6.3
         version: 5.9.3
 
   apps/gateway-producer:
     devDependencies:
-      '@cloudflare/workers-types':
-        specifier: ^4.20241205.0
-        version: 4.20251202.0
       typescript:
         specifier: ^5.6.3
         version: 5.9.3
 
-  packages/channel-buffer: {}
+  packages/channel-buffer:
+    devDependencies:
+      '@cloudflare/workers-types':
+        specifier: ^4.20251202.0
+        version: 4.20251202.0
 
 packages:
 

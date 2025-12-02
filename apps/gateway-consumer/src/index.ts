@@ -1,5 +1,26 @@
-import { append, history, normalizeMessageCreate, stubFor } from "channel-buffer";
-export { ChannelBuffer } from "channel-buffer";
+import {
+  ChannelBuffer as SharedChannelBuffer,
+  append,
+  history,
+  normalizeMessageCreate,
+  stubFor,
+} from "channel-buffer";
+import { DurableObject } from "cloudflare:workers";
+
+type DOEnv = Cloudflare.Env;
+
+export class ChannelBuffer extends DurableObject {
+  private readonly impl: SharedChannelBuffer;
+
+  constructor(ctx: any, env: DOEnv) {
+    super(ctx, env);
+    this.impl = new SharedChannelBuffer(ctx, env);
+  }
+
+  fetch(request: Request): Promise<Response> | Response {
+    return this.impl.fetch(request);
+  }
+}
 
 interface Env {
   CHANNEL_BUFFER: DurableObjectNamespace;
@@ -7,7 +28,7 @@ interface Env {
 }
 
 export default {
-  async queue(batch: MessageBatch<any>, env: Env): Promise<void> {
+  async queue(batch: MessageBatch<unknown>, env: Env): Promise<void> {
     for (const message of batch.messages) {
       const body = typeof message.body === "string" ? message.body : JSON.stringify(message.body);
       let parsed: unknown;
@@ -26,7 +47,7 @@ export default {
       }
 
       console.log(
-        `MESSAGE_CREATE channel=${item.channel_id} author=${item.author_id} id=${item.message_id}`
+        `MESSAGE_CREATE channel=${item.channel_id} author=${item.author_id} id=${item.message_id}`,
       );
 
       const stub = stubFor(item.channel_id, env);
@@ -38,11 +59,14 @@ export default {
         const histRes = await history(stub, 5);
         if (histRes.ok) {
           const hist = await histRes.json();
-          console.log(`history channel=${item.channel_id} size=${Array.isArray(hist) ? hist.length : 0}`, hist);
+          console.log(
+            `history channel=${item.channel_id} size=${Array.isArray(hist) ? hist.length : 0}`,
+            hist,
+          );
         }
       } catch (error) {
         console.log(`buffer append error channel=${item.channel_id} error=${error}`);
       }
     }
-  }
+  },
 };
