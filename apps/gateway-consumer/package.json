@@ -7,6 +7,9 @@
     "deploy": "wrangler deploy",
     "typecheck": "wrangler types && tsc --noEmit"
   },
+  "dependencies": {
+    "channel-buffer": "workspace:*"
+  },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20241205.0",
     "typescript": "^5.6.3"
