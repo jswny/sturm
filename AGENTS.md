@@ -31,3 +31,4 @@
 - Use explicit file extensions in relative imports (e.g., `./foo.js`) for NodeNext compatibility.
 - In CI, prefer `pnpm install --frozen-lockfile` and commit lockfile changes after `pnpm approve-builds`.
 - Default to modern Node-first patterns; avoid legacy/compat layers unless a requirement demands it.
+- Do not add any comments to code, ever.

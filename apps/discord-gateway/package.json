@@ -16,11 +16,14 @@
     "lint": "biome check src"
   },
   "dependencies": {
-    "dotenv": "^17.2.3"
+    "discord-api-types": "^0.38.36",
+    "dotenv": "^17.2.3",
+    "ws": "^8.18.3"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.3.8",
     "@types/node": "^24.10.1",
+    "@types/ws": "^8.18.1",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   }
