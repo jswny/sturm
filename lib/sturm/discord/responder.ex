@@ -13,6 +13,7 @@ defmodule Sturm.Discord.Responder do
     message_id = message["id"]
     guild_id = message["guild_id"]
     history = history || ChannelBuffer.fetch(channel_id)
+
     bot_label =
       case BotIdentity.label(guild_id, bot_id, token) do
         {:ok, label} when is_binary(label) -> label
@@ -238,7 +239,7 @@ defmodule Sturm.Discord.Responder do
 
   defp judge_model do
     Application.get_env(:sturm, :openai, [])
-    |> Keyword.get(:judge_model, "gpt-4o-mini")
+    |> Keyword.get(:judge_model)
   end
 
   defp judge_timeout_ms do

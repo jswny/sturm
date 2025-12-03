@@ -6,7 +6,7 @@ defmodule Sturm.Discord.Shard do
   use GenServer
   require Logger
 
-  alias Sturm.Discord.{ChannelAccess, ChannelBuffer, Commands, Responder}
+  alias Sturm.Discord.{BotIdentity, ChannelAccess, ChannelBuffer, Commands, Responder}
 
   @gateway_params "v=10&encoding=json"
   @identify_op 2
@@ -246,6 +246,9 @@ defmodule Sturm.Discord.Shard do
       "INTERACTION_CREATE" ->
         handle_interaction_create(data, state)
 
+      "GUILD_MEMBER_UPDATE" ->
+        handle_guild_member_update(data, state)
+
       other ->
         Logger.debug("Discord event #{other} shard #{inspect(state.shard)} seq=#{seq}")
         {:noreply, state}
@@ -258,6 +261,17 @@ defmodule Sturm.Discord.Shard do
   end
 
   defp handle_payload(_other, state), do: {:noreply, state}
+
+  defp handle_guild_member_update(
+         %{"guild_id" => guild_id, "user" => %{"id" => user_id}} = data,
+         %{bot_id: bot_id} = state
+       )
+       when is_binary(bot_id) and bot_id == user_id do
+    BotIdentity.update_label(guild_id, data)
+    {:noreply, state}
+  end
+
+  defp handle_guild_member_update(_data, state), do: {:noreply, state}
 
   defp handle_message_create(data, state) do
     channel_id = data["channel_id"]
@@ -300,7 +314,10 @@ defmodule Sturm.Discord.Shard do
 
   defp handle_interaction_create(data, state) do
     Task.start(fn ->
-      Commands.handle_interaction(data, %{token: state.token, application_id: state.application_id})
+      Commands.handle_interaction(data, %{
+        token: state.token,
+        application_id: state.application_id
+      })
     end)
 
     {:noreply, state}

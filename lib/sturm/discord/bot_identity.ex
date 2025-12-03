@@ -5,6 +5,7 @@ defmodule Sturm.Discord.BotIdentity do
   """
 
   use Agent
+  require Logger
 
   alias Sturm.Discord.Rest
 
@@ -22,6 +23,21 @@ defmodule Sturm.Discord.BotIdentity do
     case Agent.get(__MODULE__, &Map.get(&1, guild_id)) do
       nil -> fetch_and_cache(guild_id, bot_id, token)
       label -> {:ok, label}
+    end
+  end
+
+  @doc """
+  Refreshes the cached label for a guild using a Discord member payload.
+  No-op if the payload does not contain a usable nickname/username.
+  """
+  def update_label(guild_id, member_payload) when is_binary(guild_id) do
+    with label when is_binary(label) <- label_from_member(member_payload),
+         true <- present?(label) do
+      Agent.update(__MODULE__, &Map.put(&1, guild_id, label))
+      Logger.info("Bot label updated guild=#{guild_id} label=#{inspect(label)}")
+      :ok
+    else
+      _ -> :noop
     end
   end
 
