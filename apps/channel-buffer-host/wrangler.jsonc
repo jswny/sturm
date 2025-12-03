@@ -1,0 +1,22 @@
+{
+  "name": "channel-buffer-host",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-12-02",
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "CHANNEL_BUFFER",
+        "class_name": "ChannelBuffer"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "channel-buffer-v1",
+      "new_sqlite_classes": ["ChannelBuffer"]
+    }
+  ],
+  "vars": {
+    "BUFFER_SIZE": "40"
+  }
+}

@@ -6,16 +6,11 @@
     "bindings": [
       {
         "name": "CHANNEL_BUFFER",
-        "class_name": "ChannelBuffer"
+        "class_name": "ChannelBuffer",
+        "script_name": "channel-buffer-host"
       }
     ]
   },
-  "migrations": [
-    {
-      "tag": "channel-buffer-v1",
-      "new_classes": ["ChannelBuffer"]
-    }
-  ],
   "vars": {
     "BUFFER_SIZE": "40"
   },

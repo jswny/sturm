@@ -1,0 +1,17 @@
+{
+  "name": "channel-buffer-host",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "typecheck": "wrangler types && tsc --noEmit",
+    "lint": "biome check ."
+  },
+  "dependencies": {
+    "channel-buffer": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  }
+}
