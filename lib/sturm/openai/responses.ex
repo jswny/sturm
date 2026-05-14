@@ -15,7 +15,8 @@ defmodule Sturm.OpenAI.Responses do
         model: Keyword.get(opts, :model, config.model),
         input: messages,
         reasoning: Keyword.get(opts, :reasoning, config.reasoning),
-        tools: tools(config, opts)
+        tools: tools(config, opts),
+        max_output_tokens: Keyword.get(opts, :max_output_tokens, config.max_output_tokens)
       }
       |> Enum.reject(fn {_k, v} -> is_nil(v) end)
       |> Map.new()
@@ -152,6 +153,7 @@ defmodule Sturm.OpenAI.Responses do
       base_url: Keyword.get(config, :base_url, "https://api.openai.com"),
       model: Keyword.get(config, :model, "gpt-5-mini"),
       reasoning: Keyword.get(config, :reasoning, %{effort: "low"}),
+      max_output_tokens: Keyword.get(config, :max_output_tokens, 500),
       tools: Keyword.get(config, :tools, []),
       timeout_ms: Keyword.get(config, :timeout_ms, 25_000)
     }

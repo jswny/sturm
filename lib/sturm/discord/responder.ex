@@ -304,7 +304,7 @@ defmodule Sturm.Discord.Responder do
   defp prefix_content(item) do
     prefix =
       case item.role do
-        "assistant" -> "[assistant #{item.author_name || "assistant"}] "
+        "assistant" -> "[assistant] "
         _ -> "[user #{item.author_name || "user"}] "
       end
 

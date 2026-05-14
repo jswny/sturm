@@ -71,12 +71,25 @@ if openai_api_key do
         end
     end
 
+  max_output_tokens =
+    case System.get_env("OPENAI_MAX_OUTPUT_TOKENS") do
+      nil ->
+        500
+
+      val ->
+        case Integer.parse(val) do
+          {i, _} -> i
+          _ -> 500
+        end
+    end
+
   config :sturm, :openai,
     api_key: openai_api_key,
     base_url: System.get_env("OPENAI_BASE_URL", "https://api.openai.com"),
     model: System.get_env("OPENAI_MODEL", "gpt-5-mini"),
     judge_model: System.get_env("OPENAI_JUDGE_MODEL", "gpt-5-mini"),
     reasoning: %{effort: System.get_env("OPENAI_REASONING_EFFORT", "low")},
+    max_output_tokens: max_output_tokens,
     tools:
       System.get_env("OPENAI_TOOLS", "web_search,image_generation")
       |> String.split(",", trim: true)
@@ -86,10 +99,20 @@ if openai_api_key do
     judge_timeout_ms: judge_timeout_ms,
     responder_prompt_core:
       System.get_env("RESPONDER_PROMPT_CORE") ||
-        "You are <%= bot_name %>, a Discord bot participating in live channel conversations. Each message content you see is prefixed with [user NAME] for users and [assistant NAME] for the bot. Use the prefix to know who spoke. When you reply, do NOT include any prefix—just the answer. Keep replies Discord-friendly: plain text or light markdown that renders well in Discord (no HTML).",
+        """
+        You are <%= bot_name %>, a Discord bot participating in live channel conversations.
+        Each message content you see is prefixed with [user NAME] for users and [assistant] for the bot.
+        Use the prefix to know who spoke.
+        When you reply, do NOT include any prefix—just the answer.
+        Always use Discord-safe formatting: plain text or light Markdown that renders correctly in Discord; never use HTML.
+        """,
     responder_prompt_style:
       System.get_env("RESPONDER_PROMPT_STYLE") ||
-        "Be terse like Grok in Twitter threads: short, punchy, minimal markdown, no invented Discord commands.",
+        """
+        Be terse like Grok in Twitter threads: short and punchy.
+        Avoid invented Discord commands or slash commands.
+        Keep replies focused and avoid rambling.
+        """,
     judge_prompt:
       System.get_env("OPENAI_JUDGE_PROMPT") ||
         """
