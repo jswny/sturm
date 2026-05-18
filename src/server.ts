@@ -20,8 +20,20 @@ import {
 const CHAT_MODEL = "@cf/moonshotai/kimi-k2.6";
 const SYSTEM_PROMPT =
   "You are Sturm, a helpful assistant replying from a Discord slash command. Keep responses concise and Discord-friendly.";
-const COMPACTION_TOKEN_THRESHOLD = 60_000;
-const COMPACTION_TAIL_TOKEN_BUDGET = 16_000;
+const COMPACTION_TOKEN_THRESHOLD = 200_000;
+const COMPACTION_TAIL_TOKEN_BUDGET = 64_000;
+const REPLY_PROVIDER_OPTIONS = {
+  "workers-ai": {
+    reasoning_effort: "low",
+    chat_template_kwargs: { thinking: true }
+  }
+} as const;
+const COMPACTION_PROVIDER_OPTIONS = {
+  "workers-ai": {
+    reasoning_effort: null,
+    chat_template_kwargs: { thinking: false }
+  }
+} as const;
 
 /**
  * The AI SDK's downloadAssets step runs `new URL(data)` on every file
@@ -117,6 +129,7 @@ export class ChatAgent extends Agent<Env> {
             model: workersai(CHAT_MODEL, {
               sessionAffinity: this.sessionAffinity
             }),
+            providerOptions: COMPACTION_PROVIDER_OPTIONS,
             system:
               "Summarize Discord conversation history for future assistant context. Preserve factual details, user preferences, decisions, current state, and open items.",
             prompt
@@ -163,6 +176,7 @@ export class ChatAgent extends Agent<Env> {
       model: workersai(CHAT_MODEL, {
         sessionAffinity: this.sessionAffinity
       }),
+      providerOptions: REPLY_PROVIDER_OPTIONS,
       system: SYSTEM_PROMPT,
       messages: inlineDataUrls(await convertToModelMessages(history)),
       tools: createDiscordTools(),
