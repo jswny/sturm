@@ -79,8 +79,11 @@ https://<worker-host>/discord
 
 ```text
 src/
+  agent.ts    # Persistent ChatAgent and Discord conversation memory
   discord.ts  # Discord interaction verification, routing, and replies
-  server.ts   # Worker entrypoint and persistent ChatAgent
+  model.ts    # Workers AI model, prompts, compaction, and reasoning settings
+  server.ts   # Worker entrypoint and Durable Object export
+  tools.ts    # Server-side tools available to the assistant
 ```
 
 ## Notes
