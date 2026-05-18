@@ -4,8 +4,7 @@ A webhook-based Discord bot on Cloudflare Workers.
 
 Discord sends interactions to `/discord`. The Worker verifies Discord request
 signatures, handles `/c text:<message>`, and forwards the text into a
-Cloudflare `AIChatAgent` Durable Object. Conversations persist per Discord
-surface:
+Cloudflare Agent Durable Object. Conversations persist per Discord surface:
 
 - Guild channels use `discord:guild:<guild_id>:channel:<channel_id>`.
 - Bot DMs use `discord:dm:<user_id>`.
@@ -89,6 +88,10 @@ src/
 - The bot currently supports `/c text:<message>`.
 - Responses are deferred immediately, then the original interaction response is
   edited after Workers AI finishes.
+- Conversation history is stored with Cloudflare's experimental Session API in
+  Durable Object SQLite. Older turns are summarized with non-destructive
+  compaction overlays when the session grows past the configured token
+  threshold.
 - The demo `getWeather` tool still returns random weather data.
 - The `calculate` tool runs server-side and is safe for Discord because it does
   not require browser callbacks or human approval UI.

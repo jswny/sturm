@@ -1,9 +1,10 @@
-import { AIChatAgent, type OnChatMessageOptions } from "@cloudflare/ai-chat";
+import { Agent } from "agents";
+import { Session } from "agents/experimental/memory/session";
+import { createCompactFunction } from "agents/experimental/memory/utils";
 import {
   convertToModelMessages,
-  pruneMessages,
+  generateText,
   stepCountIs,
-  streamText,
   tool,
   type ModelMessage,
   type UIMessage
@@ -15,6 +16,12 @@ import {
   type DiscordChatRequest,
   type DiscordChatResponse
 } from "./discord";
+
+const CHAT_MODEL = "@cf/moonshotai/kimi-k2.6";
+const SYSTEM_PROMPT =
+  "You are Sturm, a helpful assistant replying from a Discord slash command. Keep responses concise and Discord-friendly.";
+const COMPACTION_TOKEN_THRESHOLD = 60_000;
+const COMPACTION_TAIL_TOKEN_BUDGET = 16_000;
 
 /**
  * The AI SDK's downloadAssets step runs `new URL(data)` on every file
@@ -50,10 +57,89 @@ function extractAssistantText(message: UIMessage | undefined) {
     .trim();
 }
 
-export class ChatAgent extends AIChatAgent<Env> {
-  maxPersistedMessages = 100;
+function createDiscordTools() {
+  return {
+    getWeather: tool({
+      description: "Get the current weather for a city",
+      inputSchema: z.object({
+        city: z.string().describe("City name")
+      }),
+      execute: async ({ city }) => {
+        // Replace with a real weather API in production.
+        const conditions = ["sunny", "cloudy", "rainy", "snowy"];
+        const temp = Math.floor(Math.random() * 30) + 5;
+        return {
+          city,
+          temperature: temp,
+          condition: conditions[Math.floor(Math.random() * conditions.length)],
+          unit: "celsius"
+        };
+      }
+    }),
 
-  async askFromDiscord(
+    calculate: tool({
+      description: "Perform a math calculation with two numbers.",
+      inputSchema: z.object({
+        a: z.number().describe("First number"),
+        b: z.number().describe("Second number"),
+        operator: z
+          .enum(["+", "-", "*", "/", "%"])
+          .describe("Arithmetic operator")
+      }),
+      execute: async ({ a, b, operator }) => {
+        const ops: Record<string, (x: number, y: number) => number> = {
+          "+": (x, y) => x + y,
+          "-": (x, y) => x - y,
+          "*": (x, y) => x * y,
+          "/": (x, y) => x / y,
+          "%": (x, y) => x % y
+        };
+        if (operator === "/" && b === 0) {
+          return { error: "Division by zero" };
+        }
+        return {
+          expression: `${a} ${operator} ${b}`,
+          result: ops[operator](a, b)
+        };
+      }
+    })
+  };
+}
+
+export class ChatAgent extends Agent<Env> {
+  private discordTurn = Promise.resolve();
+  private session = Session.create(this)
+    .onCompaction(
+      createCompactFunction({
+        summarize: async (prompt) => {
+          const workersai = createWorkersAI({ binding: this.env.AI });
+          const result = await generateText({
+            model: workersai(CHAT_MODEL, {
+              sessionAffinity: this.sessionAffinity
+            }),
+            system:
+              "Summarize Discord conversation history for future assistant context. Preserve factual details, user preferences, decisions, current state, and open items.",
+            prompt
+          });
+          return result.text;
+        },
+        protectHead: 2,
+        tailTokenBudget: COMPACTION_TAIL_TOKEN_BUDGET,
+        minTailMessages: 6
+      })
+    )
+    .compactAfter(COMPACTION_TOKEN_THRESHOLD);
+
+  askFromDiscord(request: DiscordChatRequest): Promise<DiscordChatResponse> {
+    const run = this.discordTurn.then(() => this.answerFromDiscord(request));
+    this.discordTurn = run.then(
+      () => undefined,
+      () => undefined
+    );
+    return run;
+  }
+
+  private async answerFromDiscord(
     request: DiscordChatRequest
   ): Promise<DiscordChatResponse> {
     const userMessage: UIMessage = {
@@ -69,89 +155,35 @@ export class ChatAgent extends AIChatAgent<Env> {
       parts: [{ type: "text", text: request.text }]
     };
 
-    const result = await this.saveMessages((messages) => [
-      ...messages,
-      userMessage
-    ]);
-    if (result.status !== "completed") {
-      return { content: `Request ${result.status}.` };
-    }
+    await this.session.appendMessage(userMessage);
 
-    const userIndex = this.messages.findIndex(
-      (message) => message.id === userMessage.id
-    );
-    const assistant = this.messages
-      .slice(userIndex + 1)
-      .find((message) => message.role === "assistant");
-
-    return { content: extractAssistantText(assistant) };
-  }
-
-  async onChatMessage(_onFinish: unknown, options?: OnChatMessageOptions) {
     const workersai = createWorkersAI({ binding: this.env.AI });
-
-    const result = streamText({
-      model: workersai("@cf/moonshotai/kimi-k2.6", {
+    const history = this.session.getHistory() as UIMessage[];
+    const result = await generateText({
+      model: workersai(CHAT_MODEL, {
         sessionAffinity: this.sessionAffinity
       }),
-      system:
-        "You are Sturm, a helpful assistant replying from a Discord slash command. Keep responses concise and Discord-friendly.",
-      messages: pruneMessages({
-        messages: inlineDataUrls(await convertToModelMessages(this.messages)),
-        toolCalls: "before-last-2-messages"
-      }),
-      tools: {
-        getWeather: tool({
-          description: "Get the current weather for a city",
-          inputSchema: z.object({
-            city: z.string().describe("City name")
-          }),
-          execute: async ({ city }) => {
-            // Replace with a real weather API in production.
-            const conditions = ["sunny", "cloudy", "rainy", "snowy"];
-            const temp = Math.floor(Math.random() * 30) + 5;
-            return {
-              city,
-              temperature: temp,
-              condition:
-                conditions[Math.floor(Math.random() * conditions.length)],
-              unit: "celsius"
-            };
-          }
-        }),
-
-        calculate: tool({
-          description: "Perform a math calculation with two numbers.",
-          inputSchema: z.object({
-            a: z.number().describe("First number"),
-            b: z.number().describe("Second number"),
-            operator: z
-              .enum(["+", "-", "*", "/", "%"])
-              .describe("Arithmetic operator")
-          }),
-          execute: async ({ a, b, operator }) => {
-            const ops: Record<string, (x: number, y: number) => number> = {
-              "+": (x, y) => x + y,
-              "-": (x, y) => x - y,
-              "*": (x, y) => x * y,
-              "/": (x, y) => x / y,
-              "%": (x, y) => x % y
-            };
-            if (operator === "/" && b === 0) {
-              return { error: "Division by zero" };
-            }
-            return {
-              expression: `${a} ${operator} ${b}`,
-              result: ops[operator](a, b)
-            };
-          }
-        })
-      },
-      stopWhen: stepCountIs(5),
-      abortSignal: options?.abortSignal
+      system: SYSTEM_PROMPT,
+      messages: inlineDataUrls(await convertToModelMessages(history)),
+      tools: createDiscordTools(),
+      stopWhen: stepCountIs(5)
     });
 
-    return result.toUIMessageStreamResponse();
+    const assistantMessage: UIMessage = {
+      id: `${userMessage.id}-assistant`,
+      role: "assistant",
+      metadata: {
+        source: "discord",
+        interactionId: request.interactionId,
+        guildId: request.guildId,
+        channelId: request.channelId,
+        userId: request.userId
+      },
+      parts: [{ type: "text", text: result.text }]
+    };
+    await this.session.appendMessage(assistantMessage);
+
+    return { content: extractAssistantText(assistantMessage) };
   }
 }
 
