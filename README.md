@@ -3,11 +3,9 @@
 A webhook-based Discord bot on Cloudflare Workers.
 
 Discord sends interactions to `/discord`. The Worker verifies Discord request
-signatures, handles `/c text:<message>`, and forwards the text into a
-Cloudflare Agent Durable Object. Conversations persist per Discord surface:
-
-- Guild channels use `discord:guild:<guild_id>:channel:<channel_id>`.
-- Bot DMs use `discord:dm:<user_id>`.
+signatures, handles slash commands, and forwards chat messages into a
+Cloudflare Agent Durable Object. Conversations persist per Discord channel or
+DM.
 
 ## Setup
 
@@ -77,18 +75,6 @@ Set the Discord Developer Portal Interactions Endpoint URL to:
 https://<worker-host>/discord
 ```
 
-## Project Structure
-
-```text
-src/
-  agent.ts    # Persistent ChatAgent and Discord conversation memory
-  discord.ts  # Discord interaction verification, routing, and replies
-  model.ts    # Workers AI model, compaction, and reasoning settings
-  prompts.ts  # Assistant system prompts
-  server.ts   # Worker entrypoint and Durable Object export
-  tools.ts    # Server-side tools available to the assistant
-```
-
 ## Notes
 
 - The bot supports `/c text:<message>` and `/reset`.
@@ -96,12 +82,7 @@ src/
   limits it by default to members with Manage Messages.
 - Responses are deferred immediately, then the original interaction response is
   edited after Workers AI finishes.
-- Conversation history is stored with Cloudflare's experimental Session API in
-  Durable Object SQLite. Older turns are summarized with non-destructive
-  compaction overlays when the session grows past the configured token
-  threshold.
-- The `webSearch` tool uses Kagi's FastGPT API. Set `KAGI_API_KEY` locally in
-  `.dev.vars` and in Cloudflare for deployed Workers.
+- Web search requires `KAGI_API_KEY`.
 
 ## License
 
