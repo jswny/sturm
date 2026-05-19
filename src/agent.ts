@@ -205,6 +205,11 @@ export class ChatAgent extends Agent<Env> {
       return;
     }
 
+    console.log("Editing Discord interaction response", {
+      sequence: job.sequence,
+      interactionId: job.interactionId,
+      attachments: response.attachments?.length ?? 0
+    });
     await editOriginalInteractionResponse(
       job.responseTarget,
       response.content,

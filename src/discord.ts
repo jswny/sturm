@@ -86,7 +86,8 @@ export const RESET_COMMAND = {
 
 export async function handleDiscordRequest(
   request: Request,
-  env: DiscordEnv
+  env: DiscordEnv,
+  ctx: ExecutionContext
 ): Promise<Response | null> {
   const url = new URL(request.url);
   if (url.pathname !== "/discord" && url.pathname !== "/discord/") return null;
@@ -140,7 +141,8 @@ export async function handleDiscordRequest(
       );
     }
 
-    await enqueueCommand(interaction, text, env);
+    const agent = await enqueueCommand(interaction, text, env);
+    ctx.waitUntil(agent.processDiscordQueue());
 
     return json({
       type: InteractionResponseType.DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE
@@ -148,7 +150,8 @@ export async function handleDiscordRequest(
   }
 
   if (interaction.data?.name === RESET_COMMAND.name) {
-    await enqueueResetCommand(interaction, env);
+    const agent = await enqueueResetCommand(interaction, env);
+    ctx.waitUntil(agent.processDiscordQueue());
 
     return json({
       type: InteractionResponseType.DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE,
@@ -186,6 +189,7 @@ async function enqueueCommand(
       user: getUserContext(interaction)
     }
   });
+  return agent;
 }
 
 async function enqueueResetCommand(interaction: DiscordInteraction, env: Env) {
@@ -199,6 +203,7 @@ async function enqueueResetCommand(interaction: DiscordInteraction, env: Env) {
     user: getUserContext(interaction),
     responseTarget: getResponseTarget(interaction)
   });
+  return agent;
 }
 
 function getConversationName(interaction: DiscordInteraction) {
