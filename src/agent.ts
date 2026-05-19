@@ -149,6 +149,7 @@ export class ChatAgent extends Agent<Env> {
     } finally {
       await this.discordQueue.markDrainFinished();
       await this.discordQueue.pruneCompletedInteractionRecords();
+      await this.discordQueue.pruneStaleDebugResults();
 
       if (await this.discordQueue.hasPendingJobs()) {
         await this.scheduleDiscordQueueDrain(1);

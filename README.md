@@ -108,6 +108,8 @@ curl -H "authorization: Bearer <debug-token>" \
   interaction response after Workers AI finishes.
 - Completed queue dedupe records are pruned after seven days; pending jobs are
   preserved.
+- Stale debug queue results are pruned after one day; normal debug requests
+  delete their result after it is returned.
 - Web search and URL summarization require `KAGI_API_KEY`.
 - Image generation uses Workers AI and returns Discord attachments.
 

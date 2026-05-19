@@ -79,6 +79,8 @@ const DISCORD_INTERACTION_PREFIX = "discord:queue:interaction:";
 const DISCORD_DEBUG_RESULT_PREFIX = "discord:queue:debug-result:";
 const INTERACTION_RECORD_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const INTERACTION_RECORD_PRUNE_BATCH_SIZE = 100;
+const DEBUG_RESULT_RETENTION_MS = 24 * 60 * 60 * 1000;
+const DEBUG_RESULT_PRUNE_BATCH_SIZE = 100;
 
 export class DiscordJobQueue {
   constructor(private storage: DurableObjectStorage) {}
@@ -212,6 +214,27 @@ export class DiscordJobQueue {
       if (record.status === "pending") continue;
 
       const updatedAtMs = Date.parse(record.updatedAt);
+      if (!Number.isFinite(updatedAtMs)) continue;
+      if (updatedAtMs < cutoffMs) keysToDelete.push(key);
+    }
+
+    if (keysToDelete.length > 0) {
+      await this.storage.delete(keysToDelete);
+    }
+
+    return keysToDelete.length;
+  }
+
+  async pruneStaleDebugResults(retentionMs = DEBUG_RESULT_RETENTION_MS) {
+    const cutoffMs = Date.now() - retentionMs;
+    const results = await this.storage.list<DiscordDebugQueuedResult>({
+      prefix: DISCORD_DEBUG_RESULT_PREFIX,
+      limit: DEBUG_RESULT_PRUNE_BATCH_SIZE
+    });
+    const keysToDelete: string[] = [];
+
+    for (const [key, result] of results) {
+      const updatedAtMs = Date.parse(result.updatedAt);
       if (!Number.isFinite(updatedAtMs)) continue;
       if (updatedAtMs < cutoffMs) keysToDelete.push(key);
     }
