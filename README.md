@@ -24,12 +24,14 @@ DISCORD_APPLICATION_ID=
 DISCORD_TOKEN=
 DISCORD_TEST_GUILD_ID=
 DISCORD_COMMAND_SCOPE=
+KAGI_API_KEY=
 ```
 
 For production, set secrets in Cloudflare:
 
 ```bash
 npx wrangler secret put DISCORD_PUBLIC_KEY
+npx wrangler secret put KAGI_API_KEY
 ```
 
 `DISCORD_TOKEN` and `DISCORD_APPLICATION_ID` are only needed locally for command
@@ -95,6 +97,8 @@ src/
   Durable Object SQLite. Older turns are summarized with non-destructive
   compaction overlays when the session grows past the configured token
   threshold.
+- The `webSearch` tool uses Kagi's FastGPT API. Set `KAGI_API_KEY` locally in
+  `.dev.vars` and in Cloudflare for deployed Workers.
 - The demo `getWeather` tool still returns random weather data.
 - The `calculate` tool runs server-side and is safe for Discord because it does
   not require browser callbacks or human approval UI.

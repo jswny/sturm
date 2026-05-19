@@ -115,7 +115,7 @@ export class ChatAgent extends Agent<Env> {
       providerOptions: REPLY_PROVIDER_OPTIONS,
       system: SYSTEM_PROMPT,
       messages: inlineDataUrls(await convertToModelMessages(history)),
-      tools: createDiscordTools(),
+      tools: createDiscordTools(this.env),
       stopWhen: stepCountIs(5)
     });
 
