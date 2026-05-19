@@ -49,6 +49,7 @@ If the application uses Durable Objects or Workflows, refer to the relevant best
 - This repo is a Discord webhook bot, not a web UI.
 - Keep Discord request verification, command routing, and interaction replies in `src/discord.ts`.
 - Keep persistent agent/session behavior in `src/agent.ts`.
+- Discord interactions should be durably queued in the per-conversation Agent before returning the deferred Discord response. Do not run model/tool work from the `/discord` route with `ctx.waitUntil`.
 - Keep Workers AI model settings, compaction settings, and provider options in `src/model.ts`.
 - Keep assistant prompt text in `src/prompts.ts`.
 - Keep tool definitions grouped by domain in `src/tools/`, with `src/tools/index.ts` as the tool registry, and provider-specific tool clients in their own modules.

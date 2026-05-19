@@ -14,6 +14,11 @@ export type DiscordChatResponse = {
   attachments?: DiscordResponseAttachment[];
 };
 
+export type DiscordResponseTarget = {
+  applicationId: string;
+  token: string;
+};
+
 export type DiscordResponseAttachment = {
   filename: string;
   mimeType: string;
@@ -101,8 +106,7 @@ export const RESET_COMMAND = {
 
 export async function handleDiscordRequest(
   request: Request,
-  env: DiscordEnv,
-  ctx: ExecutionContext
+  env: DiscordEnv
 ): Promise<Response | null> {
   const url = new URL(request.url);
   if (url.pathname !== "/discord" && url.pathname !== "/discord/") return null;
@@ -156,7 +160,7 @@ export async function handleDiscordRequest(
       );
     }
 
-    ctx.waitUntil(replyToCommand(interaction, text, env));
+    await enqueueCommand(interaction, text, env);
 
     return json({
       type: InteractionResponseType.DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE
@@ -164,7 +168,7 @@ export async function handleDiscordRequest(
   }
 
   if (interaction.data?.name === RESET_COMMAND.name) {
-    ctx.waitUntil(replyToResetCommand(interaction, env));
+    await enqueueResetCommand(interaction, env);
 
     return json({
       type: InteractionResponseType.DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE,
@@ -184,54 +188,37 @@ export async function handleDiscordRequest(
   );
 }
 
-async function replyToCommand(
+async function enqueueCommand(
   interaction: DiscordInteraction,
   text: string,
   env: Env
 ) {
-  try {
-    const conversationName = getConversationName(interaction);
-    const agent = await getAgentByName(env.ChatAgent, conversationName);
-    const result = await agent.askFromDiscord({
+  const conversationName = getConversationName(interaction);
+  const agent = await getAgentByName(env.ChatAgent, conversationName);
+  await agent.enqueueDiscordChat({
+    responseTarget: getResponseTarget(interaction),
+    request: {
       interactionId: interaction.id,
       text,
       guildId: interaction.guild_id,
       channelId: interaction.channel_id,
       userId: getUserId(interaction),
       user: getUserContext(interaction)
-    });
-
-    await editOriginalInteractionResponse(
-      interaction,
-      result.content || "I did not get a text response.",
-      result.attachments
-    );
-  } catch (error) {
-    console.error("Discord command failed", error);
-    await editOriginalInteractionResponse(
-      interaction,
-      "Sorry, I could not complete that request."
-    );
-  }
+    }
+  });
 }
 
-async function replyToResetCommand(interaction: DiscordInteraction, env: Env) {
-  try {
-    const conversationName = getConversationName(interaction);
-    const agent = await getAgentByName(env.ChatAgent, conversationName);
-    const result = await agent.resetFromDiscord();
-
-    await editOriginalInteractionResponse(
-      interaction,
-      result.content || "Reset context."
-    );
-  } catch (error) {
-    console.error("Discord reset command failed", error);
-    await editOriginalInteractionResponse(
-      interaction,
-      "Sorry, I could not reset this context."
-    );
-  }
+async function enqueueResetCommand(interaction: DiscordInteraction, env: Env) {
+  const conversationName = getConversationName(interaction);
+  const agent = await getAgentByName(env.ChatAgent, conversationName);
+  await agent.enqueueDiscordReset({
+    interactionId: interaction.id,
+    guildId: interaction.guild_id,
+    channelId: interaction.channel_id,
+    userId: getUserId(interaction),
+    user: getUserContext(interaction),
+    responseTarget: getResponseTarget(interaction)
+  });
 }
 
 function getConversationName(interaction: DiscordInteraction) {
@@ -269,14 +256,23 @@ function getStringOption(interaction: DiscordInteraction, name: string) {
   return typeof option?.value === "string" ? option.value.trim() : "";
 }
 
-async function editOriginalInteractionResponse(
-  interaction: DiscordInteraction,
+function getResponseTarget(
+  interaction: DiscordInteraction
+): DiscordResponseTarget {
+  return {
+    applicationId: interaction.application_id,
+    token: interaction.token
+  };
+}
+
+export async function editOriginalInteractionResponse(
+  target: DiscordResponseTarget,
   content: string,
   attachments: DiscordResponseAttachment[] = []
 ) {
   const body = createDiscordResponseBody(content, attachments);
   const response = await fetch(
-    `${DISCORD_API_BASE}/webhooks/${interaction.application_id}/${interaction.token}/messages/@original`,
+    `${DISCORD_API_BASE}/webhooks/${target.applicationId}/${target.token}/messages/@original`,
     {
       method: "PATCH",
       headers: body.headers,

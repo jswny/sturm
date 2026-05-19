@@ -3,9 +3,8 @@
 A webhook-based Discord bot on Cloudflare Workers.
 
 Discord sends interactions to `/discord`. The Worker verifies Discord request
-signatures, handles slash commands, and forwards chat messages into a
-Cloudflare Agent Durable Object. Conversations persist per Discord channel or
-DM.
+signatures, handles slash commands, and enqueues chat messages in a Cloudflare
+Agent Durable Object. Conversations persist per Discord channel or DM.
 
 ## Setup
 
@@ -102,8 +101,9 @@ curl -H "authorization: Bearer <debug-token>" \
 - The bot supports `/c text:<message>` and `/reset`.
 - `/reset` clears the current channel or DM context only. In guilds, Discord
   limits it by default to members with Manage Messages.
-- Responses are deferred immediately, then the original interaction response is
-  edited after Workers AI finishes.
+- Responses are deferred after the interaction is durably queued, then the
+  per-channel or per-DM Agent drains queued jobs linearly and edits the original
+  interaction response after Workers AI finishes.
 - Web search and URL summarization require `KAGI_API_KEY`.
 - Image generation uses Workers AI and returns Discord attachments.
 

@@ -9,7 +9,7 @@ type ServerEnv = Env & {
 };
 
 export default {
-  async fetch(request: Request, env: ServerEnv, ctx: ExecutionContext) {
+  async fetch(request: Request, env: ServerEnv) {
     const url = new URL(request.url);
     if (url.pathname === "/" && request.method === "GET") {
       return Response.json({
@@ -22,7 +22,7 @@ export default {
 
     return (
       (await handleDebugRequest(request, env)) ||
-      (await handleDiscordRequest(request, env, ctx)) ||
+      (await handleDiscordRequest(request, env)) ||
       new Response("Not found", { status: 404 })
     );
   }
