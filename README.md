@@ -80,7 +80,9 @@ https://<worker-host>/discord
 Debug locally without Discord:
 
 Set `STURM_DEBUG_TOKEN` in `.dev.vars`, then use that same value in the
-authorization header.
+authorization header. Debug chat and reset requests use the same durable
+per-conversation queue as real Discord interactions, then return the queued
+result.
 
 ```bash
 curl -H "authorization: Bearer <debug-token>" \

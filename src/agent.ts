@@ -68,6 +68,28 @@ export class ChatAgent extends Agent<Env> {
     await this.scheduleDiscordQueueDrain();
   }
 
+  async runDebugQueuedDiscordChat(
+    request: DiscordChatRequest
+  ): Promise<DiscordChatResponse> {
+    await this.enqueueDiscordChat({
+      responseTarget: { type: "debug", id: request.interactionId },
+      request
+    });
+    await this.processDiscordQueue();
+    return this.getDebugQueuedResponse(request.interactionId);
+  }
+
+  async runDebugQueuedDiscordReset(
+    input: Omit<DiscordQueuedResetInput, "responseTarget">
+  ): Promise<DiscordChatResponse> {
+    await this.enqueueDiscordReset({
+      ...input,
+      responseTarget: { type: "debug", id: input.interactionId }
+    });
+    await this.processDiscordQueue();
+    return this.getDebugQueuedResponse(input.interactionId);
+  }
+
   async processDiscordQueue(): Promise<void> {
     const run = this.discordTurn.then(() => this.drainDiscordQueue());
     this.discordTurn = run.then(
@@ -143,11 +165,7 @@ export class ChatAgent extends Agent<Env> {
           ? await this.answerQueuedDiscordChat(updatedJob)
           : clearDiscordSession(this.session);
 
-      await editOriginalInteractionResponse(
-        updatedJob.responseTarget,
-        response.content,
-        response.attachments
-      );
+      await this.deliverDiscordJobResponse(updatedJob, response);
       await this.discordQueue.completeJob(updatedJob, "completed");
       return true;
     } catch (error) {
@@ -160,18 +178,7 @@ export class ChatAgent extends Agent<Env> {
       });
 
       if (attempt >= MAX_DISCORD_JOB_ATTEMPTS) {
-        try {
-          await editOriginalInteractionResponse(
-            updatedJob.responseTarget,
-            "Sorry, I could not complete that request."
-          );
-        } catch (editError) {
-          console.error("Discord queued job failure response failed", {
-            sequence: updatedJob.sequence,
-            interactionId: updatedJob.interactionId,
-            error: getErrorMessage(editError)
-          });
-        }
+        await this.deliverDiscordJobFailure(updatedJob, message);
         await this.discordQueue.completeJob(updatedJob, "failed");
         return true;
       }
@@ -184,6 +191,60 @@ export class ChatAgent extends Agent<Env> {
       await this.scheduleDiscordQueueDrain(Math.min(attempt * 5, 30));
       return false;
     }
+  }
+
+  private async deliverDiscordJobResponse(
+    job: DiscordQueuedJob,
+    response: DiscordChatResponse
+  ) {
+    if (job.responseTarget.type === "debug") {
+      await this.discordQueue.putDebugResult(job.responseTarget.id, {
+        status: "completed",
+        response
+      });
+      return;
+    }
+
+    await editOriginalInteractionResponse(
+      job.responseTarget,
+      response.content,
+      response.attachments
+    );
+  }
+
+  private async deliverDiscordJobFailure(job: DiscordQueuedJob, error: string) {
+    if (job.responseTarget.type === "debug") {
+      await this.discordQueue.putDebugResult(job.responseTarget.id, {
+        status: "failed",
+        error
+      });
+      return;
+    }
+
+    try {
+      await editOriginalInteractionResponse(
+        job.responseTarget,
+        "Sorry, I could not complete that request."
+      );
+    } catch (editError) {
+      console.error("Discord queued job failure response failed", {
+        sequence: job.sequence,
+        interactionId: job.interactionId,
+        error: getErrorMessage(editError)
+      });
+    }
+  }
+
+  private async getDebugQueuedResponse(targetId: string) {
+    const result = await this.discordQueue.getDebugResult(targetId);
+    await this.discordQueue.deleteDebugResult(targetId);
+    if (!result) {
+      throw new Error(`Debug queued response ${targetId} was not produced.`);
+    }
+    if (result.status === "failed") {
+      throw new Error(result.error);
+    }
+    return result.response;
   }
 
   private async answerQueuedDiscordChat(

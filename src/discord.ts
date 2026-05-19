@@ -240,6 +240,7 @@ function getResponseTarget(
   interaction: DiscordInteraction
 ): DiscordResponseTarget {
   return {
+    type: "discord",
     applicationId: interaction.application_id,
     token: interaction.token
   };

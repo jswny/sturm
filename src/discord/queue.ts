@@ -1,4 +1,5 @@
 import type {
+  DiscordChatResponse,
   DiscordChatRequest,
   DiscordResponseTarget,
   DiscordUserContext
@@ -46,6 +47,18 @@ type DiscordInteractionRecord = {
   updatedAt: string;
 };
 
+export type DiscordDebugQueuedResult =
+  | {
+      status: "completed";
+      response: DiscordChatResponse;
+      updatedAt: string;
+    }
+  | {
+      status: "failed";
+      error: string;
+      updatedAt: string;
+    };
+
 export type DiscordQueuedChatInput = {
   request: DiscordChatRequest;
   responseTarget: DiscordResponseTarget;
@@ -63,6 +76,7 @@ export type DiscordQueuedResetInput = {
 const DISCORD_QUEUE_META_KEY = "discord:queue:meta";
 const DISCORD_JOB_PREFIX = "discord:queue:job:";
 const DISCORD_INTERACTION_PREFIX = "discord:queue:interaction:";
+const DISCORD_DEBUG_RESULT_PREFIX = "discord:queue:debug-result:";
 
 export class DiscordJobQueue {
   constructor(private storage: DurableObjectStorage) {}
@@ -181,6 +195,31 @@ export class DiscordJobQueue {
       );
     });
   }
+
+  async putDebugResult(
+    targetId: string,
+    result:
+      | { status: "completed"; response: DiscordChatResponse }
+      | { status: "failed"; error: string }
+  ) {
+    await this.storage.put<DiscordDebugQueuedResult>(
+      getDiscordDebugResultKey(targetId),
+      {
+        ...result,
+        updatedAt: new Date().toISOString()
+      } as DiscordDebugQueuedResult
+    );
+  }
+
+  async getDebugResult(targetId: string) {
+    return this.storage.get<DiscordDebugQueuedResult>(
+      getDiscordDebugResultKey(targetId)
+    );
+  }
+
+  async deleteDebugResult(targetId: string) {
+    await this.storage.delete(getDiscordDebugResultKey(targetId));
+  }
 }
 
 function createDiscordQueuedJob(
@@ -230,4 +269,8 @@ function getDiscordJobKey(sequence: number) {
 
 function getDiscordInteractionKey(interactionId: string) {
   return `${DISCORD_INTERACTION_PREFIX}${interactionId}`;
+}
+
+function getDiscordDebugResultKey(targetId: string) {
+  return `${DISCORD_DEBUG_RESULT_PREFIX}${targetId}`;
 }

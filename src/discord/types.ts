@@ -12,9 +12,19 @@ export type DiscordChatResponse = {
   attachments?: DiscordResponseAttachment[];
 };
 
-export type DiscordResponseTarget = {
+export type DiscordResponseTarget =
+  | DiscordWebhookResponseTarget
+  | DiscordDebugResponseTarget;
+
+export type DiscordWebhookResponseTarget = {
+  type: "discord";
   applicationId: string;
   token: string;
+};
+
+export type DiscordDebugResponseTarget = {
+  type: "debug";
+  id: string;
 };
 
 export type DiscordResponseAttachment = {

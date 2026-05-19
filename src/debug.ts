@@ -29,6 +29,7 @@ type DebugChatPayload = {
 
 type DebugResetPayload = {
   surface: DebugSurface;
+  interactionId?: string;
 };
 
 export async function handleDebugRequest(
@@ -81,8 +82,9 @@ async function replyToDebugChat(payload: DebugChatPayload, env: DebugEnv) {
 
   const conversationName = getDebugConversationName(payload.surface);
   const agent = await getAgentByName(env.ChatAgent, conversationName);
-  const response = await agent.askFromDiscord({
-    interactionId: payload.interactionId ?? crypto.randomUUID(),
+  const interactionId = payload.interactionId ?? crypto.randomUUID();
+  const response = await agent.runDebugQueuedDiscordChat({
+    interactionId,
     text: payload.text.trim(),
     guildId:
       payload.surface.type === "guild_channel"
@@ -99,6 +101,8 @@ async function replyToDebugChat(payload: DebugChatPayload, env: DebugEnv) {
   return json({
     ok: true,
     conversationName,
+    interactionId,
+    queued: true,
     response: response.content,
     attachments: response.attachments?.map((attachment) => ({
       filename: attachment.filename,
@@ -116,11 +120,25 @@ async function replyToDebugReset(payload: DebugResetPayload, env: DebugEnv) {
 
   const conversationName = getDebugConversationName(payload.surface);
   const agent = await getAgentByName(env.ChatAgent, conversationName);
-  const response = await agent.resetFromDiscord();
+  const interactionId = payload.interactionId ?? crypto.randomUUID();
+  const response = await agent.runDebugQueuedDiscordReset({
+    interactionId,
+    guildId:
+      payload.surface.type === "guild_channel"
+        ? payload.surface.guildId
+        : undefined,
+    channelId:
+      payload.surface.type === "guild_channel"
+        ? payload.surface.channelId
+        : undefined,
+    userId: payload.surface.type === "dm" ? payload.surface.userId : undefined
+  });
 
   return json({
     ok: true,
     conversationName,
+    interactionId,
+    queued: true,
     response: response.content
   });
 }

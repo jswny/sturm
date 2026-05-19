@@ -1,10 +1,13 @@
-import type { DiscordResponseAttachment, DiscordResponseTarget } from "./types";
+import type {
+  DiscordResponseAttachment,
+  DiscordWebhookResponseTarget
+} from "./types";
 
 const DISCORD_API_BASE = "https://discord.com/api/v10";
 const MAX_DISCORD_CONTENT_LENGTH = 2000;
 
 export async function editOriginalInteractionResponse(
-  target: DiscordResponseTarget,
+  target: DiscordWebhookResponseTarget,
   content: string,
   attachments: DiscordResponseAttachment[] = []
 ) {
