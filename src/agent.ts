@@ -10,6 +10,7 @@ import {
 } from "ai";
 import { createWorkersAI } from "workers-ai-provider";
 import type { DiscordChatRequest, DiscordChatResponse } from "./discord";
+import type { GeneratedImage } from "./images";
 import {
   CHAT_MODEL,
   COMPACTION_PROVIDER_OPTIONS,
@@ -42,18 +43,6 @@ function inlineDataUrls(messages: ModelMessage[]): ModelMessage[] {
   });
 }
 
-function extractAssistantText(message: UIMessage | undefined) {
-  if (!message) return "";
-  return message.parts
-    .filter(
-      (part): part is Extract<typeof part, { type: "text" }> =>
-        part.type === "text"
-    )
-    .map((part) => part.text)
-    .join("\n\n")
-    .trim();
-}
-
 function formatDiscordUserMessage(request: DiscordChatRequest) {
   const lines = ["Discord user:"];
   if (request.user?.id) lines.push(`id: ${request.user.id}`);
@@ -65,6 +54,33 @@ function formatDiscordUserMessage(request: DiscordChatRequest) {
 
 User message:
 ${request.text}`;
+}
+
+function formatImageArtifactMessage(artifacts: GeneratedImage[]) {
+  if (artifacts.length === 0) return "";
+
+  return artifacts
+    .map(
+      (artifact) =>
+        `Generated image:\nprompt: ${artifact.prompt}\nmodel: ${artifact.model}\nsize: ${artifact.width}x${artifact.height}\nstatus: sent as attachment`
+    )
+    .join("\n\n");
+}
+
+function formatAssistantMessageText(text: string, artifacts: GeneratedImage[]) {
+  const artifactMessage = formatImageArtifactMessage(artifacts);
+  const trimmed = text.trim();
+
+  if (trimmed && artifactMessage) return `${trimmed}\n\n${artifactMessage}`;
+  return trimmed || artifactMessage || "I did not get a text response.";
+}
+
+function formatDiscordResponseText(text: string, artifacts: GeneratedImage[]) {
+  const trimmed = text.trim();
+  if (trimmed) return trimmed;
+  if (artifacts.length === 1) return "Generated image.";
+  if (artifacts.length > 1) return `Generated ${artifacts.length} images.`;
+  return "I did not get a text response.";
 }
 
 export class ChatAgent extends Agent<Env> {
@@ -140,6 +156,7 @@ export class ChatAgent extends Agent<Env> {
 
     const workersai = createWorkersAI({ binding: this.env.AI });
     const history = this.session.getHistory() as UIMessage[];
+    const imageArtifacts: GeneratedImage[] = [];
     const result = await generateText({
       model: workersai(CHAT_MODEL, {
         sessionAffinity: this.sessionAffinity
@@ -147,9 +164,16 @@ export class ChatAgent extends Agent<Env> {
       providerOptions: REPLY_PROVIDER_OPTIONS,
       system: createSystemPrompt(),
       messages: inlineDataUrls(await convertToModelMessages(history)),
-      tools: createDiscordTools(this.env),
+      tools: createDiscordTools(this.env, {
+        onImageGenerated: (artifact) => imageArtifacts.push(artifact)
+      }),
       stopWhen: stepCountIs(5)
     });
+    const assistantText = formatAssistantMessageText(
+      result.text,
+      imageArtifacts
+    );
+    const responseText = formatDiscordResponseText(result.text, imageArtifacts);
 
     const assistantMessage: UIMessage = {
       id: `${userMessage.id}-assistant`,
@@ -162,10 +186,18 @@ export class ChatAgent extends Agent<Env> {
         userId: request.userId,
         user: request.user
       },
-      parts: [{ type: "text", text: result.text }]
+      parts: [{ type: "text", text: assistantText }]
     };
     await this.session.appendMessage(assistantMessage);
 
-    return { content: extractAssistantText(assistantMessage) };
+    return {
+      content: responseText,
+      attachments: imageArtifacts.map((artifact) => ({
+        filename: artifact.filename,
+        mimeType: artifact.mimeType,
+        base64: artifact.base64,
+        description: `Generated image for: ${artifact.prompt}`
+      }))
+    };
   }
 }

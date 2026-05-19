@@ -99,7 +99,14 @@ async function replyToDebugChat(payload: DebugChatPayload, env: DebugEnv) {
   return json({
     ok: true,
     conversationName,
-    response: response.content
+    response: response.content,
+    attachments: response.attachments?.map((attachment) => ({
+      filename: attachment.filename,
+      mimeType: attachment.mimeType,
+      description: attachment.description,
+      base64: attachment.base64,
+      dataUrl: `data:${attachment.mimeType};base64,${attachment.base64}`
+    }))
   });
 }
 

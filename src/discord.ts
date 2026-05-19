@@ -11,6 +11,14 @@ export type DiscordChatRequest = {
 
 export type DiscordChatResponse = {
   content: string;
+  attachments?: DiscordResponseAttachment[];
+};
+
+export type DiscordResponseAttachment = {
+  filename: string;
+  mimeType: string;
+  base64: string;
+  description?: string;
 };
 
 export type DiscordUserContext = {
@@ -195,7 +203,8 @@ async function replyToCommand(
 
     await editOriginalInteractionResponse(
       interaction,
-      result.content || "I did not get a text response."
+      result.content || "I did not get a text response.",
+      result.attachments
     );
   } catch (error) {
     console.error("Discord command failed", error);
@@ -262,19 +271,16 @@ function getStringOption(interaction: DiscordInteraction, name: string) {
 
 async function editOriginalInteractionResponse(
   interaction: DiscordInteraction,
-  content: string
+  content: string,
+  attachments: DiscordResponseAttachment[] = []
 ) {
+  const body = createDiscordResponseBody(content, attachments);
   const response = await fetch(
     `${DISCORD_API_BASE}/webhooks/${interaction.application_id}/${interaction.token}/messages/@original`,
     {
       method: "PATCH",
-      headers: {
-        "content-type": "application/json"
-      },
-      body: JSON.stringify({
-        content: truncateDiscordContent(content),
-        allowed_mentions: { parse: [] }
-      })
+      headers: body.headers,
+      body: body.body
     }
   );
 
@@ -284,6 +290,45 @@ async function editOriginalInteractionResponse(
       `Discord original response edit failed: ${response.status} ${body}`
     );
   }
+}
+
+function createDiscordResponseBody(
+  content: string,
+  attachments: DiscordResponseAttachment[]
+) {
+  const payload = {
+    content: truncateDiscordContent(content),
+    allowed_mentions: { parse: [] },
+    attachments: attachments.map((attachment, index) => ({
+      id: index,
+      filename: attachment.filename,
+      description: attachment.description
+    }))
+  };
+
+  if (attachments.length === 0) {
+    return {
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload)
+    };
+  }
+
+  const form = new FormData();
+  form.append("payload_json", JSON.stringify(payload));
+  for (const [index, attachment] of attachments.entries()) {
+    form.append(
+      `files[${index}]`,
+      new File([base64ToBytes(attachment.base64)], attachment.filename, {
+        type: attachment.mimeType
+      })
+    );
+  }
+
+  return { headers: undefined, body: form };
+}
+
+function base64ToBytes(base64: string) {
+  return Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
 }
 
 async function verifyDiscordRequest(

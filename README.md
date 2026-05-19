@@ -105,6 +105,7 @@ curl -H "authorization: Bearer <debug-token>" \
 - Responses are deferred immediately, then the original interaction response is
   edited after Workers AI finishes.
 - Web search and URL summarization require `KAGI_API_KEY`.
+- Image generation uses Workers AI and returns Discord attachments.
 
 ## License
 
