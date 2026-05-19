@@ -1,35 +1,17 @@
 import { getAgentByName } from "agents";
+import type {
+  DiscordResponseTarget,
+  DiscordUserContext
+} from "./discord/types";
 
-export type DiscordChatRequest = {
-  interactionId: string;
-  text: string;
-  guildId?: string;
-  channelId?: string;
-  userId?: string;
-  user?: DiscordUserContext;
-};
-
-export type DiscordChatResponse = {
-  content: string;
-  attachments?: DiscordResponseAttachment[];
-};
-
-export type DiscordResponseTarget = {
-  applicationId: string;
-  token: string;
-};
-
-export type DiscordResponseAttachment = {
-  filename: string;
-  mimeType: string;
-  base64: string;
-  description?: string;
-};
-
-export type DiscordUserContext = {
-  id: string;
-  displayName?: string;
-};
+export type {
+  DiscordChatRequest,
+  DiscordChatResponse,
+  DiscordResponseAttachment,
+  DiscordResponseTarget,
+  DiscordUserContext
+} from "./discord/types";
+export { editOriginalInteractionResponse } from "./discord/api";
 
 type DiscordEnv = Env & {
   DISCORD_PUBLIC_KEY?: string;
@@ -67,8 +49,6 @@ type DiscordCommandOption = {
   value?: string | number | boolean;
 };
 
-const DISCORD_API_BASE = "https://discord.com/api/v10";
-const MAX_DISCORD_CONTENT_LENGTH = 2000;
 const EPHEMERAL_MESSAGE_FLAG = 1 << 6;
 
 const InteractionType = {
@@ -265,68 +245,6 @@ function getResponseTarget(
   };
 }
 
-export async function editOriginalInteractionResponse(
-  target: DiscordResponseTarget,
-  content: string,
-  attachments: DiscordResponseAttachment[] = []
-) {
-  const body = createDiscordResponseBody(content, attachments);
-  const response = await fetch(
-    `${DISCORD_API_BASE}/webhooks/${target.applicationId}/${target.token}/messages/@original`,
-    {
-      method: "PATCH",
-      headers: body.headers,
-      body: body.body
-    }
-  );
-
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(
-      `Discord original response edit failed: ${response.status} ${body}`
-    );
-  }
-}
-
-function createDiscordResponseBody(
-  content: string,
-  attachments: DiscordResponseAttachment[]
-) {
-  const payload = {
-    content: truncateDiscordContent(content),
-    allowed_mentions: { parse: [] },
-    attachments: attachments.map((attachment, index) => ({
-      id: index,
-      filename: attachment.filename,
-      description: attachment.description
-    }))
-  };
-
-  if (attachments.length === 0) {
-    return {
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(payload)
-    };
-  }
-
-  const form = new FormData();
-  form.append("payload_json", JSON.stringify(payload));
-  for (const [index, attachment] of attachments.entries()) {
-    form.append(
-      `files[${index}]`,
-      new File([base64ToBytes(attachment.base64)], attachment.filename, {
-        type: attachment.mimeType
-      })
-    );
-  }
-
-  return { headers: undefined, body: form };
-}
-
-function base64ToBytes(base64: string) {
-  return Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
-}
-
 async function verifyDiscordRequest(
   request: Request,
   body: string,
@@ -367,11 +285,6 @@ function hexToBytes(hex: string) {
     bytes[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16);
   }
   return bytes;
-}
-
-function truncateDiscordContent(content: string) {
-  if (content.length <= MAX_DISCORD_CONTENT_LENGTH) return content;
-  return `${content.slice(0, MAX_DISCORD_CONTENT_LENGTH - 3)}...`;
 }
 
 function json(body: unknown, init?: ResponseInit) {
