@@ -1,3 +1,4 @@
+import type { RESTPatchAPIWebhookWithTokenMessageJSONBody } from "discord-api-types/v10";
 import type {
   DiscordResponseAttachment,
   DiscordWebhookResponseTarget
@@ -33,11 +34,11 @@ function createDiscordResponseBody(
   content: string,
   attachments: DiscordResponseAttachment[]
 ) {
-  const payload = {
+  const payload: RESTPatchAPIWebhookWithTokenMessageJSONBody = {
     content: truncateDiscordContent(content),
     allowed_mentions: { parse: [] },
     attachments: attachments.map((attachment, index) => ({
-      id: index,
+      id: String(index),
       filename: attachment.filename,
       description: attachment.description
     }))

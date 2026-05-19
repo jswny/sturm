@@ -1,3 +1,15 @@
+import {
+  ApplicationCommandOptionType,
+  ApplicationCommandType,
+  InteractionResponseType,
+  InteractionType,
+  MessageFlags,
+  type APIChatInputApplicationCommandInteraction,
+  type APIInteraction,
+  type APIInteractionResponse,
+  type RESTPostAPIChatInputApplicationCommandsJSONBody
+} from "discord-api-types/v10";
+import { verifyKey } from "discord-interactions";
 import { getAgentByName } from "agents";
 import type {
   DiscordResponseTarget,
@@ -18,72 +30,27 @@ type DiscordEnv = Env & {
   DISCORD_PUBLIC_KEY?: string;
 };
 
-type DiscordInteraction = {
-  id: string;
-  application_id: string;
-  token: string;
-  type: number;
-  guild_id?: string;
-  channel_id?: string;
-  member?: {
-    nick?: string;
-    user?: {
-      id: string;
-      username?: string;
-      global_name?: string | null;
-    };
-  };
-  user?: {
-    id: string;
-    username?: string;
-    global_name?: string | null;
-  };
-  data?: {
-    name?: string;
-    options?: DiscordCommandOption[];
-  };
-};
-
-type DiscordCommandOption = {
-  name: string;
-  type: number;
-  value?: string | number | boolean;
-};
-
-const EPHEMERAL_MESSAGE_FLAG = 1 << 6;
-
-const InteractionType = {
-  PING: 1,
-  APPLICATION_COMMAND: 2
-} as const;
-
-const InteractionResponseType = {
-  PONG: 1,
-  CHANNEL_MESSAGE_WITH_SOURCE: 4,
-  DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE: 5
-} as const;
-
 export const C_COMMAND = {
   name: "c",
   description: "Chat with Sturm",
-  type: 1,
+  type: ApplicationCommandType.ChatInput,
   options: [
     {
       name: "text",
       description: "Text to send to Sturm",
-      type: 3,
+      type: ApplicationCommandOptionType.String,
       required: true
     }
   ]
-} as const;
+} as const satisfies RESTPostAPIChatInputApplicationCommandsJSONBody;
 
 export const RESET_COMMAND = {
   name: "reset",
   description: "Reset context for this channel or DM",
-  type: 1,
+  type: ApplicationCommandType.ChatInput,
   // Manage Messages. DMs are still allowed through command contexts.
   default_member_permissions: "8192"
-} as const;
+} as const satisfies RESTPostAPIChatInputApplicationCommandsJSONBody;
 
 export async function handleDiscordRequest(
   request: Request,
@@ -108,9 +75,9 @@ export async function handleDiscordRequest(
     return new Response("Bad request signature.", { status: 401 });
   }
 
-  let interaction: DiscordInteraction;
+  let interaction: APIInteraction;
   try {
-    interaction = JSON.parse(body) as DiscordInteraction;
+    interaction = JSON.parse(body) as APIInteraction;
   } catch (error) {
     logWarn("Discord interaction JSON parse failed", {
       bodyLength: body.length,
@@ -119,14 +86,14 @@ export async function handleDiscordRequest(
     return json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  if (interaction.type === InteractionType.PING) {
-    return json({ type: InteractionResponseType.PONG });
+  if (interaction.type === InteractionType.Ping) {
+    return interactionJson({ type: InteractionResponseType.Pong });
   }
 
-  if (interaction.type !== InteractionType.APPLICATION_COMMAND) {
-    return json(
+  if (interaction.type !== InteractionType.ApplicationCommand) {
+    return interactionJson(
       {
-        type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+        type: InteractionResponseType.ChannelMessageWithSource,
         data: {
           content: "Unsupported interaction.",
           allowed_mentions: { parse: [] }
@@ -136,12 +103,25 @@ export async function handleDiscordRequest(
     );
   }
 
-  if (interaction.data?.name === C_COMMAND.name) {
+  if (!isChatInputApplicationCommandInteraction(interaction)) {
+    return interactionJson(
+      {
+        type: InteractionResponseType.ChannelMessageWithSource,
+        data: {
+          content: "Unsupported command type.",
+          allowed_mentions: { parse: [] }
+        }
+      },
+      { status: 200 }
+    );
+  }
+
+  if (interaction.data.name === C_COMMAND.name) {
     const text = getStringOption(interaction, "text");
     if (!text) {
-      return json(
+      return interactionJson(
         {
-          type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+          type: InteractionResponseType.ChannelMessageWithSource,
           data: {
             content: "Missing text.",
             allowed_mentions: { parse: [] }
@@ -154,24 +134,24 @@ export async function handleDiscordRequest(
     const agent = await enqueueCommand(interaction, text, env);
     ctx.waitUntil(agent.processDiscordQueue());
 
-    return json({
-      type: InteractionResponseType.DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE
+    return interactionJson({
+      type: InteractionResponseType.DeferredChannelMessageWithSource
     });
   }
 
-  if (interaction.data?.name === RESET_COMMAND.name) {
+  if (interaction.data.name === RESET_COMMAND.name) {
     const agent = await enqueueResetCommand(interaction, env);
     ctx.waitUntil(agent.processDiscordQueue());
 
-    return json({
-      type: InteractionResponseType.DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE,
-      data: { flags: EPHEMERAL_MESSAGE_FLAG }
+    return interactionJson({
+      type: InteractionResponseType.DeferredChannelMessageWithSource,
+      data: { flags: MessageFlags.Ephemeral }
     });
   }
 
-  return json(
+  return interactionJson(
     {
-      type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+      type: InteractionResponseType.ChannelMessageWithSource,
       data: {
         content: "Unknown command.",
         allowed_mentions: { parse: [] }
@@ -181,8 +161,17 @@ export async function handleDiscordRequest(
   );
 }
 
+function isChatInputApplicationCommandInteraction(
+  interaction: APIInteraction
+): interaction is APIChatInputApplicationCommandInteraction {
+  return (
+    interaction.type === InteractionType.ApplicationCommand &&
+    interaction.data.type === ApplicationCommandType.ChatInput
+  );
+}
+
 async function enqueueCommand(
-  interaction: DiscordInteraction,
+  interaction: APIChatInputApplicationCommandInteraction,
   text: string,
   env: Env
 ) {
@@ -202,7 +191,10 @@ async function enqueueCommand(
   return agent;
 }
 
-async function enqueueResetCommand(interaction: DiscordInteraction, env: Env) {
+async function enqueueResetCommand(
+  interaction: APIChatInputApplicationCommandInteraction,
+  env: Env
+) {
   const conversationName = getConversationName(interaction);
   const agent = await getAgentByName(env.ChatAgent, conversationName);
   await agent.enqueueDiscordReset({
@@ -216,7 +208,9 @@ async function enqueueResetCommand(interaction: DiscordInteraction, env: Env) {
   return agent;
 }
 
-function getConversationName(interaction: DiscordInteraction) {
+function getConversationName(
+  interaction: APIChatInputApplicationCommandInteraction
+) {
   if (interaction.guild_id && interaction.channel_id) {
     return `discord:guild:${interaction.guild_id}:channel:${interaction.channel_id}`;
   }
@@ -229,12 +223,12 @@ function getConversationName(interaction: DiscordInteraction) {
   throw new Error("Discord interaction did not include a usable location.");
 }
 
-function getUserId(interaction: DiscordInteraction) {
+function getUserId(interaction: APIChatInputApplicationCommandInteraction) {
   return interaction.member?.user?.id ?? interaction.user?.id;
 }
 
 function getUserContext(
-  interaction: DiscordInteraction
+  interaction: APIChatInputApplicationCommandInteraction
 ): DiscordUserContext | undefined {
   const user = interaction.member?.user ?? interaction.user;
   if (!user?.id) return undefined;
@@ -246,13 +240,17 @@ function getUserContext(
   };
 }
 
-function getStringOption(interaction: DiscordInteraction, name: string) {
+function getStringOption(
+  interaction: APIChatInputApplicationCommandInteraction,
+  name: string
+) {
   const option = interaction.data?.options?.find((item) => item.name === name);
-  return typeof option?.value === "string" ? option.value.trim() : "";
+  if (option?.type !== ApplicationCommandOptionType.String) return "";
+  return option.value.trim();
 }
 
 function getResponseTarget(
-  interaction: DiscordInteraction
+  interaction: APIChatInputApplicationCommandInteraction
 ): DiscordResponseTarget {
   return {
     type: "discord",
@@ -270,37 +268,7 @@ async function verifyDiscordRequest(
   const timestamp = request.headers.get("x-signature-timestamp");
   if (!signature || !timestamp || !env.DISCORD_PUBLIC_KEY) return false;
 
-  try {
-    const key = await crypto.subtle.importKey(
-      "raw",
-      hexToBytes(env.DISCORD_PUBLIC_KEY),
-      "Ed25519",
-      false,
-      ["verify"]
-    );
-    const signedData = new TextEncoder().encode(`${timestamp}${body}`);
-
-    return await crypto.subtle.verify(
-      "Ed25519",
-      key,
-      hexToBytes(signature),
-      signedData
-    );
-  } catch {
-    return false;
-  }
-}
-
-function hexToBytes(hex: string) {
-  if (hex.length % 2 !== 0 || !/^[\da-f]+$/i.test(hex)) {
-    throw new Error("Invalid hex string");
-  }
-
-  const bytes = new Uint8Array(hex.length / 2);
-  for (let i = 0; i < bytes.length; i++) {
-    bytes[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16);
-  }
-  return bytes;
+  return verifyKey(body, signature, timestamp, env.DISCORD_PUBLIC_KEY);
 }
 
 function json(body: unknown, init?: ResponseInit) {
@@ -311,4 +279,8 @@ function json(body: unknown, init?: ResponseInit) {
       ...init?.headers
     }
   });
+}
+
+function interactionJson(body: APIInteractionResponse, init?: ResponseInit) {
+  return json(body, init);
 }

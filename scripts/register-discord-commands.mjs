@@ -1,4 +1,10 @@
 import { existsSync, readFileSync } from "node:fs";
+import {
+  ApplicationCommandOptionType,
+  ApplicationCommandType,
+  ApplicationIntegrationType,
+  InteractionContextType
+} from "discord-api-types/v10";
 
 loadDevVars();
 
@@ -19,12 +25,12 @@ const commands = [
   {
     name: "c",
     description: "Chat with Sturm",
-    type: 1,
+    type: ApplicationCommandType.ChatInput,
     options: [
       {
         name: "text",
         description: "Text to send to Sturm",
-        type: 3,
+        type: ApplicationCommandOptionType.String,
         required: true
       }
     ]
@@ -32,24 +38,18 @@ const commands = [
   {
     name: "reset",
     description: "Reset context for this channel or DM",
-    type: 1,
+    type: ApplicationCommandType.ChatInput,
     // Manage Messages. DMs are still allowed through command contexts.
     default_member_permissions: "8192"
   }
 ];
 
-const globalCommandContexts = {
-  GUILD_INSTALL: 0,
-  GUILD: 0,
-  BOT_DM: 1
-};
-
 const registeredCommands =
   scope === "global"
     ? commands.map((command) => ({
         ...command,
-        integration_types: [globalCommandContexts.GUILD_INSTALL],
-        contexts: [globalCommandContexts.GUILD, globalCommandContexts.BOT_DM]
+        integration_types: [ApplicationIntegrationType.GuildInstall],
+        contexts: [InteractionContextType.Guild, InteractionContextType.BotDM]
       }))
     : commands;
 
