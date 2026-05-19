@@ -99,9 +99,6 @@ src/
   threshold.
 - The `webSearch` tool uses Kagi's FastGPT API. Set `KAGI_API_KEY` locally in
   `.dev.vars` and in Cloudflare for deployed Workers.
-- The demo `getWeather` tool still returns random weather data.
-- The `calculate` tool runs server-side and is safe for Discord because it does
-  not require browser callbacks or human approval UI.
 
 ## License
 
