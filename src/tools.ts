@@ -1,6 +1,12 @@
 import { tool } from "ai";
 import { z } from "zod";
-import { searchWeb, type SearchEnv, type SearchResponse } from "./search";
+import {
+  searchWeb,
+  summarizeUrl,
+  type SearchEnv,
+  type SearchResponse,
+  type UrlSummaryResponse
+} from "./search";
 
 const searchResultSchema = z.object({
   title: z.string().describe("Reference title"),
@@ -15,6 +21,15 @@ const searchResponseSchema = z.object({
     .array(searchResultSchema)
     .describe("References used by web search"),
   error: z.string().optional().describe("Error message when search failed")
+});
+
+const urlSummaryResponseSchema = z.object({
+  url: z.string().describe("The summarized URL"),
+  summary: z.string().optional().describe("The URL summary"),
+  error: z
+    .string()
+    .optional()
+    .describe("Error message when summarization failed")
 });
 
 function formatWebSearchOutput(output: SearchResponse) {
@@ -38,6 +53,20 @@ function formatWebSearchOutput(output: SearchResponse) {
   ].join("\n");
 }
 
+function formatUrlSummaryOutput(output: UrlSummaryResponse) {
+  if (output.error) {
+    return `URL summarization failed: ${output.error}`;
+  }
+
+  return [
+    `URL summary for: ${output.url}`,
+    "",
+    output.summary
+      ? `Summary:\n${output.summary}`
+      : "Summary: No summary returned."
+  ].join("\n");
+}
+
 export function createDiscordTools(env: SearchEnv) {
   return {
     webSearch: tool({
@@ -54,6 +83,20 @@ export function createDiscordTools(env: SearchEnv) {
       toModelOutput: ({ output }) => ({
         type: "text",
         value: formatWebSearchOutput(output)
+      })
+    }),
+
+    summarizeUrl: tool({
+      description:
+        "Summarize the content at a specific URL. Use when the user asks to summarize, explain, or extract the main points from a link.",
+      inputSchema: z.object({
+        url: z.string().url().describe("The complete URL to summarize")
+      }),
+      outputSchema: urlSummaryResponseSchema,
+      execute: async ({ url }) => summarizeUrl(env, url),
+      toModelOutput: ({ output }) => ({
+        type: "text",
+        value: formatUrlSummaryOutput(output)
       })
     })
   };

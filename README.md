@@ -104,7 +104,7 @@ curl -H "authorization: Bearer <debug-token>" \
   limits it by default to members with Manage Messages.
 - Responses are deferred immediately, then the original interaction response is
   edited after Workers AI finishes.
-- Web search requires `KAGI_API_KEY`.
+- Web search and URL summarization require `KAGI_API_KEY`.
 
 ## License
 
