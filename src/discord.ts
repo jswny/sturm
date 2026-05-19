@@ -3,6 +3,7 @@ import type {
   DiscordResponseTarget,
   DiscordUserContext
 } from "./discord/types";
+import { logWarn } from "./logging";
 
 export type {
   DiscordChatRequest,
@@ -99,13 +100,22 @@ export async function handleDiscordRequest(
   const body = await request.text();
   const verified = await verifyDiscordRequest(request, body, env);
   if (!verified) {
+    logWarn("Discord request verification failed", {
+      hasSignature: request.headers.has("x-signature-ed25519"),
+      hasTimestamp: request.headers.has("x-signature-timestamp"),
+      hasPublicKey: Boolean(env.DISCORD_PUBLIC_KEY)
+    });
     return new Response("Bad request signature.", { status: 401 });
   }
 
   let interaction: DiscordInteraction;
   try {
     interaction = JSON.parse(body) as DiscordInteraction;
-  } catch {
+  } catch (error) {
+    logWarn("Discord interaction JSON parse failed", {
+      bodyLength: body.length,
+      error: error instanceof Error ? error.message : String(error)
+    });
     return json({ error: "Invalid JSON" }, { status: 400 });
   }
 

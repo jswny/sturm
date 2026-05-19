@@ -1,3 +1,5 @@
+import { logError, logWarn } from "./logging";
+
 export type ImageEnv = Env;
 
 export type GeneratedImage = {
@@ -54,6 +56,11 @@ export async function generateImage(
   const contentType = formResponse.headers.get("content-type");
 
   if (!body || !contentType) {
+    logWarn("Workers AI image generation request preparation failed", {
+      model: IMAGE_MODEL,
+      hasBody: Boolean(body),
+      hasContentType: Boolean(contentType)
+    });
     return {
       response: {
         prompt,
@@ -74,8 +81,10 @@ export async function generateImage(
       }
     })) as FluxImageResponse;
   } catch (error) {
-    console.error("Workers AI image generation failed", {
-      error: error instanceof Error ? error.message : String(error)
+    logError("Workers AI image generation failed", error, {
+      model: IMAGE_MODEL,
+      width,
+      height
     });
     return {
       response: {
@@ -89,6 +98,11 @@ export async function generateImage(
   }
 
   if (!result.image) {
+    logWarn("Workers AI image generation returned no image", {
+      model: IMAGE_MODEL,
+      width,
+      height
+    });
     return {
       response: {
         prompt,

@@ -1,3 +1,5 @@
+import { logError, logWarn } from "./logging";
+
 export type SearchEnv = Env & {
   KAGI_API_KEY?: string;
 };
@@ -80,8 +82,9 @@ export async function searchWeb(
       body: JSON.stringify({ query })
     });
   } catch (error) {
-    console.error("Kagi search request failed", {
-      error: error instanceof Error ? error.message : String(error)
+    logError("Kagi search request failed", error, {
+      provider: "kagi",
+      endpoint: "fastgpt"
     });
     return {
       query,
@@ -92,7 +95,9 @@ export async function searchWeb(
 
   if (!response.ok) {
     const body = await response.text().catch(() => "");
-    console.warn("Kagi FastGPT returned an error", {
+    logWarn("Kagi FastGPT returned an error", {
+      provider: "kagi",
+      endpoint: "fastgpt",
       status: response.status,
       statusText: response.statusText,
       body: body.slice(0, 500)
@@ -108,8 +113,9 @@ export async function searchWeb(
   try {
     payload = (await response.json()) as KagiFastGptResponse;
   } catch (error) {
-    console.error("Kagi FastGPT returned invalid JSON", {
-      error: error instanceof Error ? error.message : String(error)
+    logError("Kagi FastGPT returned invalid JSON", error, {
+      provider: "kagi",
+      endpoint: "fastgpt"
     });
     return {
       query,
@@ -155,8 +161,9 @@ export async function summarizeUrl(
       body: JSON.stringify({ url })
     });
   } catch (error) {
-    console.error("Kagi summarize request failed", {
-      error: error instanceof Error ? error.message : String(error)
+    logError("Kagi summarize request failed", error, {
+      provider: "kagi",
+      endpoint: "summarize"
     });
     return {
       url,
@@ -166,7 +173,9 @@ export async function summarizeUrl(
 
   if (!response.ok) {
     const body = await response.text().catch(() => "");
-    console.warn("Kagi summarize returned an error", {
+    logWarn("Kagi summarize returned an error", {
+      provider: "kagi",
+      endpoint: "summarize",
       status: response.status,
       statusText: response.statusText,
       body: body.slice(0, 500)
@@ -181,8 +190,9 @@ export async function summarizeUrl(
   try {
     payload = (await response.json()) as KagiSummaryResponse;
   } catch (error) {
-    console.error("Kagi summarize returned invalid JSON", {
-      error: error instanceof Error ? error.message : String(error)
+    logError("Kagi summarize returned invalid JSON", error, {
+      provider: "kagi",
+      endpoint: "summarize"
     });
     return {
       url,

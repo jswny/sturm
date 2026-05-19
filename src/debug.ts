@@ -1,4 +1,5 @@
 import { getAgentByName } from "agents";
+import { logWarn } from "./logging";
 
 type DebugEnv = Env & {
   STURM_DEBUG_TOKEN?: string;
@@ -146,7 +147,10 @@ async function replyToDebugReset(payload: DebugResetPayload, env: DebugEnv) {
 async function readJson<T>(request: Request): Promise<T> {
   try {
     return (await request.json()) as T;
-  } catch {
+  } catch (error) {
+    logWarn("Debug request JSON parse failed", {
+      error: error instanceof Error ? error.message : String(error)
+    });
     throw new Response(JSON.stringify({ error: "Invalid JSON" }), {
       status: 400,
       headers: { "content-type": "application/json" }

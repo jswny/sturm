@@ -17,6 +17,7 @@ import {
   createDiscordUserMessage
 } from "./discord/turn";
 import type { DiscordChatRequest, DiscordChatResponse } from "./discord/types";
+import { getErrorMessage, logError, logInfo } from "./logging";
 import {
   CHAT_MODEL,
   COMPACTION_PROVIDER_OPTIONS,
@@ -27,10 +28,6 @@ import {
 const MAX_DISCORD_JOB_ATTEMPTS = 3;
 const DISCORD_QUEUE_DRAIN_SECONDS = 13 * 60;
 const DISCORD_QUEUE_DRAIN_PAYLOAD = { kind: "discord-queue-drain" } as const;
-
-function getErrorMessage(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
-}
 
 export class ChatAgent extends Agent<Env> {
   private discordTurn = Promise.resolve();
@@ -130,6 +127,9 @@ export class ChatAgent extends Agent<Env> {
       });
     } catch (error) {
       await this.discordQueue.markScheduleFailed();
+      logError("Discord queue drain schedule failed", error, {
+        delaySeconds
+      });
       throw error;
     }
   }
@@ -172,11 +172,12 @@ export class ChatAgent extends Agent<Env> {
       return true;
     } catch (error) {
       const message = getErrorMessage(error);
-      console.error("Discord queued job failed", {
+      logError("Discord queued job failed", error, {
         sequence: updatedJob.sequence,
         interactionId: updatedJob.interactionId,
         attempt,
-        error: message
+        jobType: updatedJob.type,
+        responseTargetType: updatedJob.responseTarget.type
       });
 
       if (attempt >= MAX_DISCORD_JOB_ATTEMPTS) {
@@ -207,7 +208,7 @@ export class ChatAgent extends Agent<Env> {
       return;
     }
 
-    console.log("Editing Discord interaction response", {
+    logInfo("Editing Discord interaction response", {
       sequence: job.sequence,
       interactionId: job.interactionId,
       attachments: response.attachments?.length ?? 0
@@ -234,10 +235,9 @@ export class ChatAgent extends Agent<Env> {
         "Sorry, I could not complete that request."
       );
     } catch (editError) {
-      console.error("Discord queued job failure response failed", {
+      logError("Discord queued job failure response failed", editError, {
         sequence: job.sequence,
-        interactionId: job.interactionId,
-        error: getErrorMessage(editError)
+        interactionId: job.interactionId
       });
     }
   }

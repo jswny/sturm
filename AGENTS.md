@@ -54,6 +54,7 @@ If the application uses Durable Objects or Workflows, refer to the relevant best
 - Stale debug queue results are pruned by `DiscordJobQueue.pruneStaleDebugResults()` after the queue drains. Normal debug requests should still delete their own result after reading it.
 - Keep Workers AI model settings, compaction settings, and provider options in `src/model.ts`.
 - Keep assistant prompt text in `src/prompts.ts`.
+- Use `src/logging.ts` for app logs so operational errors keep consistent structured context. Do not log Discord interaction tokens, API keys, or raw request bodies.
 - Keep tool definitions grouped by domain in `src/tools/`, with `src/tools/index.ts` as the tool registry, and provider-specific tool clients in their own modules.
 - Conversation identity must remain explicit:
   - Guild channels use `discord:guild:<guild_id>:channel:<channel_id>`.
