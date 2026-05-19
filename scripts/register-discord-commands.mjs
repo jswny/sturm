@@ -28,6 +28,13 @@ const commands = [
         required: true
       }
     ]
+  },
+  {
+    name: "reset",
+    description: "Reset context for this channel or DM",
+    type: 1,
+    // Manage Messages. DMs are still allowed through command contexts.
+    default_member_permissions: "8192"
   }
 ];
 

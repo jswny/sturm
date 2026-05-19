@@ -88,6 +88,24 @@ export class ChatAgent extends Agent<Env> {
     return run;
   }
 
+  resetFromDiscord(): Promise<DiscordChatResponse> {
+    const run = this.discordTurn.then(() => {
+      const messageCount = this.session.getPathLength();
+      this.session.clearMessages();
+      return {
+        content:
+          messageCount === 1
+            ? "Reset context. Cleared 1 message."
+            : `Reset context. Cleared ${messageCount} messages.`
+      };
+    });
+    this.discordTurn = run.then(
+      () => undefined,
+      () => undefined
+    );
+    return run;
+  }
+
   private async answerFromDiscord(
     request: DiscordChatRequest
   ): Promise<DiscordChatResponse> {

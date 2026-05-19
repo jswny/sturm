@@ -91,7 +91,9 @@ src/
 
 ## Notes
 
-- The bot currently supports `/c text:<message>`.
+- The bot supports `/c text:<message>` and `/reset`.
+- `/reset` clears the current channel or DM context only. In guilds, Discord
+  limits it by default to members with Manage Messages.
 - Responses are deferred immediately, then the original interaction response is
   edited after Workers AI finishes.
 - Conversation history is stored with Cloudflare's experimental Session API in

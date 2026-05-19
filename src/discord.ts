@@ -45,6 +45,7 @@ type DiscordCommandOption = {
 
 const DISCORD_API_BASE = "https://discord.com/api/v10";
 const MAX_DISCORD_CONTENT_LENGTH = 2000;
+const EPHEMERAL_MESSAGE_FLAG = 1 << 6;
 
 const InteractionType = {
   PING: 1,
@@ -69,6 +70,14 @@ export const C_COMMAND = {
       required: true
     }
   ]
+} as const;
+
+export const RESET_COMMAND = {
+  name: "reset",
+  description: "Reset context for this channel or DM",
+  type: 1,
+  // Manage Messages. DMs are still allowed through command contexts.
+  default_member_permissions: "8192"
 } as const;
 
 export async function handleDiscordRequest(
@@ -113,38 +122,47 @@ export async function handleDiscordRequest(
     );
   }
 
-  if (interaction.data?.name !== C_COMMAND.name) {
-    return json(
-      {
-        type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
-        data: {
-          content: "Unknown command.",
-          allowed_mentions: { parse: [] }
-        }
-      },
-      { status: 200 }
-    );
+  if (interaction.data?.name === C_COMMAND.name) {
+    const text = getStringOption(interaction, "text");
+    if (!text) {
+      return json(
+        {
+          type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+          data: {
+            content: "Missing text.",
+            allowed_mentions: { parse: [] }
+          }
+        },
+        { status: 200 }
+      );
+    }
+
+    ctx.waitUntil(replyToCommand(interaction, text, env));
+
+    return json({
+      type: InteractionResponseType.DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE
+    });
   }
 
-  const text = getStringOption(interaction, "text");
-  if (!text) {
-    return json(
-      {
-        type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
-        data: {
-          content: "Missing text.",
-          allowed_mentions: { parse: [] }
-        }
-      },
-      { status: 200 }
-    );
+  if (interaction.data?.name === RESET_COMMAND.name) {
+    ctx.waitUntil(replyToResetCommand(interaction, env));
+
+    return json({
+      type: InteractionResponseType.DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE,
+      data: { flags: EPHEMERAL_MESSAGE_FLAG }
+    });
   }
 
-  ctx.waitUntil(replyToCommand(interaction, text, env));
-
-  return json({
-    type: InteractionResponseType.DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE
-  });
+  return json(
+    {
+      type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+      data: {
+        content: "Unknown command.",
+        allowed_mentions: { parse: [] }
+      }
+    },
+    { status: 200 }
+  );
 }
 
 async function replyToCommand(
@@ -172,6 +190,25 @@ async function replyToCommand(
     await editOriginalInteractionResponse(
       interaction,
       "Sorry, I could not complete that request."
+    );
+  }
+}
+
+async function replyToResetCommand(interaction: DiscordInteraction, env: Env) {
+  try {
+    const conversationName = getConversationName(interaction);
+    const agent = await getAgentByName(env.ChatAgent, conversationName);
+    const result = await agent.resetFromDiscord();
+
+    await editOriginalInteractionResponse(
+      interaction,
+      result.content || "Reset context."
+    );
+  } catch (error) {
+    console.error("Discord reset command failed", error);
+    await editOriginalInteractionResponse(
+      interaction,
+      "Sorry, I could not reset this context."
     );
   }
 }
