@@ -15,9 +15,9 @@ import {
   COMPACTION_PROVIDER_OPTIONS,
   COMPACTION_TAIL_TOKEN_BUDGET,
   COMPACTION_TOKEN_THRESHOLD,
-  REPLY_PROVIDER_OPTIONS,
-  SYSTEM_PROMPT
+  REPLY_PROVIDER_OPTIONS
 } from "./model";
+import { SYSTEM_PROMPT } from "./prompts";
 import { createDiscordTools } from "./tools";
 
 /**

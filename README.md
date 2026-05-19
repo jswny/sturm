@@ -83,7 +83,8 @@ https://<worker-host>/discord
 src/
   agent.ts    # Persistent ChatAgent and Discord conversation memory
   discord.ts  # Discord interaction verification, routing, and replies
-  model.ts    # Workers AI model, prompts, compaction, and reasoning settings
+  model.ts    # Workers AI model, compaction, and reasoning settings
+  prompts.ts  # Assistant system prompts
   server.ts   # Worker entrypoint and Durable Object export
   tools.ts    # Server-side tools available to the assistant
 ```
