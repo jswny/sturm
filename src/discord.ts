@@ -6,10 +6,16 @@ export type DiscordChatRequest = {
   guildId?: string;
   channelId?: string;
   userId?: string;
+  user?: DiscordUserContext;
 };
 
 export type DiscordChatResponse = {
   content: string;
+};
+
+export type DiscordUserContext = {
+  id: string;
+  displayName?: string;
 };
 
 type DiscordEnv = Env & {
@@ -24,12 +30,17 @@ type DiscordInteraction = {
   guild_id?: string;
   channel_id?: string;
   member?: {
+    nick?: string;
     user?: {
       id: string;
+      username?: string;
+      global_name?: string | null;
     };
   };
   user?: {
     id: string;
+    username?: string;
+    global_name?: string | null;
   };
   data?: {
     name?: string;
@@ -178,7 +189,8 @@ async function replyToCommand(
       text,
       guildId: interaction.guild_id,
       channelId: interaction.channel_id,
-      userId: getUserId(interaction)
+      userId: getUserId(interaction),
+      user: getUserContext(interaction)
     });
 
     await editOriginalInteractionResponse(
@@ -228,6 +240,19 @@ function getConversationName(interaction: DiscordInteraction) {
 
 function getUserId(interaction: DiscordInteraction) {
   return interaction.member?.user?.id ?? interaction.user?.id;
+}
+
+function getUserContext(
+  interaction: DiscordInteraction
+): DiscordUserContext | undefined {
+  const user = interaction.member?.user ?? interaction.user;
+  if (!user?.id) return undefined;
+
+  return {
+    id: user.id,
+    displayName:
+      interaction.member?.nick ?? user.global_name ?? user.username ?? undefined
+  };
 }
 
 function getStringOption(interaction: DiscordInteraction, name: string) {

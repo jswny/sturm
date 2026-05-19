@@ -54,6 +54,19 @@ function extractAssistantText(message: UIMessage | undefined) {
     .trim();
 }
 
+function formatDiscordUserMessage(request: DiscordChatRequest) {
+  const lines = ["Discord user:"];
+  if (request.user?.id) lines.push(`id: ${request.user.id}`);
+  if (request.user?.displayName) {
+    lines.push(`display_name: ${request.user.displayName}`);
+  }
+
+  return `${lines.join("\n")}
+
+User message:
+${request.text}`;
+}
+
 export class ChatAgent extends Agent<Env> {
   private discordTurn = Promise.resolve();
   private session = Session.create(this)
@@ -117,9 +130,10 @@ export class ChatAgent extends Agent<Env> {
         interactionId: request.interactionId,
         guildId: request.guildId,
         channelId: request.channelId,
-        userId: request.userId
+        userId: request.userId,
+        user: request.user
       },
-      parts: [{ type: "text", text: request.text }]
+      parts: [{ type: "text", text: formatDiscordUserMessage(request) }]
     };
 
     await this.session.appendMessage(userMessage);
@@ -145,7 +159,8 @@ export class ChatAgent extends Agent<Env> {
         interactionId: request.interactionId,
         guildId: request.guildId,
         channelId: request.channelId,
-        userId: request.userId
+        userId: request.userId,
+        user: request.user
       },
       parts: [{ type: "text", text: result.text }]
     };
