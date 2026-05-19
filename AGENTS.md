@@ -51,7 +51,7 @@ If the application uses Durable Objects or Workflows, refer to the relevant best
 - Keep persistent agent/session behavior in `src/agent.ts`.
 - Keep Workers AI model settings, compaction settings, and provider options in `src/model.ts`.
 - Keep assistant prompt text in `src/prompts.ts`.
-- Keep tool definitions in `src/tools.ts` and provider-specific tool clients in their own modules.
+- Keep tool definitions grouped by domain in `src/tools/`, with `src/tools/index.ts` as the tool registry, and provider-specific tool clients in their own modules.
 - Conversation identity must remain explicit:
   - Guild channels use `discord:guild:<guild_id>:channel:<channel_id>`.
   - Bot DMs use `discord:dm:<user_id>`.
