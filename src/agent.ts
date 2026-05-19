@@ -17,7 +17,7 @@ import {
   COMPACTION_TOKEN_THRESHOLD,
   REPLY_PROVIDER_OPTIONS
 } from "./model";
-import { SYSTEM_PROMPT } from "./prompts";
+import { createSystemPrompt } from "./prompts";
 import { createDiscordTools } from "./tools";
 
 /**
@@ -113,7 +113,7 @@ export class ChatAgent extends Agent<Env> {
         sessionAffinity: this.sessionAffinity
       }),
       providerOptions: REPLY_PROVIDER_OPTIONS,
-      system: SYSTEM_PROMPT,
+      system: createSystemPrompt(),
       messages: inlineDataUrls(await convertToModelMessages(history)),
       tools: createDiscordTools(this.env),
       stopWhen: stepCountIs(5)
