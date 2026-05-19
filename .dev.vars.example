@@ -5,3 +5,4 @@ DISCORD_TEST_GUILD_ID=
 # Optional: guild or global. CLI flags override this.
 DISCORD_COMMAND_SCOPE=
 KAGI_API_KEY=
+STURM_DEBUG_TOKEN=

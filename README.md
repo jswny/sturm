@@ -23,7 +23,10 @@ DISCORD_TOKEN=
 DISCORD_TEST_GUILD_ID=
 DISCORD_COMMAND_SCOPE=
 KAGI_API_KEY=
+STURM_DEBUG_TOKEN=
 ```
+
+Restart `npm run dev` after changing `.dev.vars`.
 
 For production, set secrets in Cloudflare:
 
@@ -73,6 +76,25 @@ Set the Discord Developer Portal Interactions Endpoint URL to:
 
 ```text
 https://<worker-host>/discord
+```
+
+Debug locally without Discord:
+
+Set `STURM_DEBUG_TOKEN` in `.dev.vars`, then use that same value in the
+authorization header.
+
+```bash
+curl -H "authorization: Bearer <debug-token>" \
+  -H "content-type: application/json" \
+  -d '{"surface":{"type":"guild_channel","guildId":"test-guild","channelId":"test-channel"},"user":{"id":"test-user","displayName":"Test User"},"text":"hello"}' \
+  http://localhost:8787/debug/chat
+```
+
+```bash
+curl -H "authorization: Bearer <debug-token>" \
+  -H "content-type: application/json" \
+  -d '{"surface":{"type":"guild_channel","guildId":"test-guild","channelId":"test-channel"}}' \
+  http://localhost:8787/debug/reset
 ```
 
 ## Notes

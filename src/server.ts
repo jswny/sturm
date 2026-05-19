@@ -1,9 +1,11 @@
+import { handleDebugRequest } from "./debug";
 import { handleDiscordRequest } from "./discord";
 
 export { ChatAgent } from "./agent";
 
 type ServerEnv = Env & {
   DISCORD_APPLICATION_ID?: string;
+  STURM_DEBUG_TOKEN?: string;
 };
 
 export default {
@@ -19,6 +21,7 @@ export default {
     }
 
     return (
+      (await handleDebugRequest(request, env)) ||
       (await handleDiscordRequest(request, env, ctx)) ||
       new Response("Not found", { status: 404 })
     );
