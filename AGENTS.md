@@ -50,6 +50,7 @@ If the application uses Durable Objects or Workflows, refer to the relevant best
 - Keep Discord request verification and command routing in `src/discord.ts`; keep outbound Discord API, queue, turn, format, and shared types in focused modules under `src/discord/`.
 - Keep persistent agent/session orchestration in `src/agent.ts`.
 - Discord interactions should be durably queued in the per-conversation Agent before returning the deferred Discord response. Do not run model/tool work from the `/discord` route with `ctx.waitUntil`.
+- Completed/failed Discord interaction dedupe records are pruned by `DiscordJobQueue.pruneCompletedInteractionRecords()` after the queue drains. Do not prune pending records.
 - Keep Workers AI model settings, compaction settings, and provider options in `src/model.ts`.
 - Keep assistant prompt text in `src/prompts.ts`.
 - Keep tool definitions grouped by domain in `src/tools/`, with `src/tools/index.ts` as the tool registry, and provider-specific tool clients in their own modules.

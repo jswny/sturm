@@ -77,6 +77,8 @@ const DISCORD_QUEUE_META_KEY = "discord:queue:meta";
 const DISCORD_JOB_PREFIX = "discord:queue:job:";
 const DISCORD_INTERACTION_PREFIX = "discord:queue:interaction:";
 const DISCORD_DEBUG_RESULT_PREFIX = "discord:queue:debug-result:";
+const INTERACTION_RECORD_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+const INTERACTION_RECORD_PRUNE_BATCH_SIZE = 100;
 
 export class DiscordJobQueue {
   constructor(private storage: DurableObjectStorage) {}
@@ -194,6 +196,31 @@ export class DiscordJobQueue {
         }
       );
     });
+  }
+
+  async pruneCompletedInteractionRecords(
+    retentionMs = INTERACTION_RECORD_RETENTION_MS
+  ) {
+    const cutoffMs = Date.now() - retentionMs;
+    const records = await this.storage.list<DiscordInteractionRecord>({
+      prefix: DISCORD_INTERACTION_PREFIX,
+      limit: INTERACTION_RECORD_PRUNE_BATCH_SIZE
+    });
+    const keysToDelete: string[] = [];
+
+    for (const [key, record] of records) {
+      if (record.status === "pending") continue;
+
+      const updatedAtMs = Date.parse(record.updatedAt);
+      if (!Number.isFinite(updatedAtMs)) continue;
+      if (updatedAtMs < cutoffMs) keysToDelete.push(key);
+    }
+
+    if (keysToDelete.length > 0) {
+      await this.storage.delete(keysToDelete);
+    }
+
+    return keysToDelete.length;
   }
 
   async putDebugResult(

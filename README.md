@@ -106,6 +106,8 @@ curl -H "authorization: Bearer <debug-token>" \
 - Responses are deferred after the interaction is durably queued, then the
   per-channel or per-DM Agent drains queued jobs linearly and edits the original
   interaction response after Workers AI finishes.
+- Completed queue dedupe records are pruned after seven days; pending jobs are
+  preserved.
 - Web search and URL summarization require `KAGI_API_KEY`.
 - Image generation uses Workers AI and returns Discord attachments.
 
