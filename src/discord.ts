@@ -6,11 +6,11 @@ import {
   MessageFlags,
   type APIChatInputApplicationCommandInteraction,
   type APIInteraction,
-  type APIInteractionResponse,
-  type RESTPostAPIChatInputApplicationCommandsJSONBody
+  type APIInteractionResponse
 } from "discord-api-types/v10";
 import { verifyKey } from "discord-interactions";
 import { getAgentByName } from "agents";
+import { C_COMMAND, RESET_COMMAND } from "./discord/commands";
 import type {
   DiscordResponseTarget,
   DiscordUserContext
@@ -29,28 +29,6 @@ export { editOriginalInteractionResponse } from "./discord/api";
 type DiscordEnv = Env & {
   DISCORD_PUBLIC_KEY?: string;
 };
-
-export const C_COMMAND = {
-  name: "c",
-  description: "Chat with Sturm",
-  type: ApplicationCommandType.ChatInput,
-  options: [
-    {
-      name: "text",
-      description: "Text to send to Sturm",
-      type: ApplicationCommandOptionType.String,
-      required: true
-    }
-  ]
-} as const satisfies RESTPostAPIChatInputApplicationCommandsJSONBody;
-
-export const RESET_COMMAND = {
-  name: "reset",
-  description: "Reset context for this channel or DM",
-  type: ApplicationCommandType.ChatInput,
-  // Manage Messages. DMs are still allowed through command contexts.
-  default_member_permissions: "8192"
-} as const satisfies RESTPostAPIChatInputApplicationCommandsJSONBody;
 
 export async function handleDiscordRequest(
   request: Request,

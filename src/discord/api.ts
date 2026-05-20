@@ -1,5 +1,9 @@
 import type {
+  RESTAPIPartialCurrentUserGuild,
+  RESTGetAPICurrentUserGuildsResult,
   RESTGetAPIGuildMemberResult,
+  RESTPutAPIApplicationGuildCommandsJSONBody,
+  RESTPutAPIApplicationGuildCommandsResult,
   RESTPatchAPIGuildMemberJSONBody,
   RESTPatchAPIGuildMemberResult,
   RESTPatchAPIWebhookWithTokenMessageJSONBody
@@ -55,6 +59,45 @@ export async function getGuildMember(
   return discordApiFetch<RESTGetAPIGuildMemberResult>(
     `/guilds/${guildId}/members/${userId}`,
     token
+  );
+}
+
+export async function getCurrentUserGuilds(
+  token: string
+): Promise<RESTGetAPICurrentUserGuildsResult> {
+  const guilds: RESTAPIPartialCurrentUserGuild[] = [];
+  let after: string | undefined;
+
+  while (true) {
+    const query = new URLSearchParams({ limit: "200" });
+    if (after) query.set("after", after);
+
+    const page = await discordApiFetch<RESTGetAPICurrentUserGuildsResult>(
+      `/users/@me/guilds?${query.toString()}`,
+      token
+    );
+    guilds.push(...page);
+
+    if (page.length < 200) return guilds;
+    after = page.at(-1)?.id;
+    if (!after) return guilds;
+  }
+}
+
+export async function overwriteGuildApplicationCommands(
+  token: string,
+  applicationId: string,
+  guildId: string,
+  commands: RESTPutAPIApplicationGuildCommandsJSONBody
+): Promise<RESTPutAPIApplicationGuildCommandsResult> {
+  return discordApiFetch<RESTPutAPIApplicationGuildCommandsResult>(
+    `/applications/${applicationId}/guilds/${guildId}/commands`,
+    token,
+    {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(commands)
+    }
   );
 }
 

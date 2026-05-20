@@ -19,10 +19,10 @@ For all limits and quotas, retrieve from the product's `/platform/limits/` page.
 
 Run `wrangler types` after changing bindings in wrangler.jsonc.
 
-For local Discord slash-command testing, use
-`npm run discord:register -- 556940307011338329`. Sturm currently only
-registers guild-scoped commands because they propagate quickly and avoid
-global/guild duplicate command ambiguity.
+For local Discord slash-command testing, run `npm run dev`, then register
+guild-scoped commands through
+`curl -X POST http://localhost:8787/api/admin/register-commands`. This
+registers commands in every guild the configured bot is in.
 Design principle: use guild-scoped Discord commands for this bot. Do not add
 global command registration unless explicitly requested; global command
 propagation is too slow for the current development and deployment workflow.
@@ -61,6 +61,7 @@ If the application uses Durable Objects or Workflows, refer to the relevant best
 - Use `src/logging.ts` for app logs so operational errors keep consistent structured context. Do not log Discord interaction tokens, API keys, or raw request bodies.
 - Keep tool definitions grouped by domain in `src/tools/`, with `src/tools/index.ts` as the tool registry, and provider-specific tool clients in their own modules.
 - Tools should return clear plaintext model-facing results that state success or failure and the concrete action taken. This keeps chat history useful as a log of write tools and other tool activity.
+- Admin HTTP routes live under `/api/admin/` and are expected to be protected by Cloudflare Access, not in-app auth. Keep them narrow, explicit, and operational; do not expose arbitrary mutation payloads.
 - Conversation identity must remain explicit:
   - Guild channels use `discord:guild:<guild_id>:channel:<channel_id>`.
   - Bot DMs use `discord:dm:<user_id>`.

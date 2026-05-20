@@ -33,16 +33,16 @@ npx wrangler secret put DISCORD_TOKEN
 npx wrangler secret put KAGI_API_KEY
 ```
 
-`DISCORD_APPLICATION_ID` is only needed locally for command registration and
-health output. `DISCORD_TOKEN` is also used by the Worker for authenticated
-Discord bot API tools.
+`DISCORD_APPLICATION_ID` is used for health output and command registration.
+`DISCORD_TOKEN` is used by the Worker for authenticated Discord bot API tools
+and command registration.
 
 ## Commands
 
-Register `/c` and `/reset` in a guild:
+Register `/c` and `/reset` in every guild the bot is in:
 
 ```bash
-npm run discord:register -- <guild-id>
+curl -X POST http://localhost:8787/api/admin/register-commands
 ```
 
 Sturm currently only registers guild-scoped commands. Guild command updates
@@ -65,6 +65,15 @@ Set the Discord Developer Portal Interactions Endpoint URL to:
 ```text
 https://<worker-host>/discord
 ```
+
+For the deployed bot:
+
+```bash
+curl -X POST https://<worker-host>/api/admin/register-commands
+```
+
+This admin endpoint is intended to be protected by Cloudflare Access. It does
+not implement its own bearer-token authentication.
 
 Debug locally without Discord:
 

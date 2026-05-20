@@ -1,3 +1,4 @@
+import { handleAdminRequest } from "./admin";
 import { handleDebugRequest } from "./debug";
 import { handleDiscordRequest } from "./discord";
 import { logError } from "./logging";
@@ -6,6 +7,7 @@ export { ChatAgent } from "./agent";
 
 type ServerEnv = Env & {
   DISCORD_APPLICATION_ID?: string;
+  DISCORD_TOKEN?: string;
   STURM_DEBUG_TOKEN?: string;
 };
 
@@ -23,6 +25,7 @@ export default {
       }
 
       return (
+        (await handleAdminRequest(request, env)) ||
         (await handleDebugRequest(request, env)) ||
         (await handleDiscordRequest(request, env, ctx)) ||
         new Response("Not found", { status: 404 })

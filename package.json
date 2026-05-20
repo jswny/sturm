@@ -14,7 +14,6 @@
     "dev": "wrangler dev",
     "start": "wrangler dev",
     "deploy": "wrangler deploy",
-    "discord:register": "node scripts/register-discord-commands.mjs",
     "types": "wrangler types env.d.ts --include-runtime false",
     "format": "oxfmt --write .",
     "lint": "oxlint src/",
