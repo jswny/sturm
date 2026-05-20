@@ -19,8 +19,6 @@ Fill in `.dev.vars` for local development:
 DISCORD_PUBLIC_KEY=
 DISCORD_APPLICATION_ID=
 DISCORD_TOKEN=
-DISCORD_TEST_GUILD_ID=
-DISCORD_COMMAND_SCOPE=
 KAGI_API_KEY=
 STURM_DEBUG_TOKEN=
 ```
@@ -41,24 +39,14 @@ Discord bot API tools.
 
 ## Commands
 
-Register `/c`:
+Register `/c` and `/reset` in a guild:
 
 ```bash
-npm run discord:register
+npm run discord:register -- <guild-id>
 ```
 
-By default, this registers `/c` globally with Discord's `GUILD` and `BOT_DM`
-interaction contexts, so the same command works in servers and bot DMs. It can
-take a little time for the Discord client to show new or changed global
-commands.
-
-For fast guild-only iteration, set `DISCORD_TEST_GUILD_ID` and run:
-
-```bash
-npm run discord:register:guild
-```
-
-Guild-scoped commands are not available in DMs.
+Sturm currently only registers guild-scoped commands. Guild command updates
+propagate quickly, but guild-scoped commands are not available in DMs.
 
 Run locally:
 

@@ -19,9 +19,13 @@ For all limits and quotas, retrieve from the product's `/platform/limits/` page.
 
 Run `wrangler types` after changing bindings in wrangler.jsonc.
 
-For local Discord slash-command testing, prefer `npm run discord:register:guild`
-because guild command updates propagate fastest. Use global registration for
-commands that need to work in DMs or production-like behavior.
+For local Discord slash-command testing, use
+`npm run discord:register -- 556940307011338329`. Sturm currently only
+registers guild-scoped commands because they propagate quickly and avoid
+global/guild duplicate command ambiguity.
+Design principle: use guild-scoped Discord commands for this bot. Do not add
+global command registration unless explicitly requested; global command
+propagation is too slow for the current development and deployment workflow.
 
 ## Node.js Compatibility
 

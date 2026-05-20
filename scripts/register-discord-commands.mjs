@@ -1,17 +1,14 @@
 import { existsSync, readFileSync } from "node:fs";
 import {
   ApplicationCommandOptionType,
-  ApplicationCommandType,
-  ApplicationIntegrationType,
-  InteractionContextType
+  ApplicationCommandType
 } from "discord-api-types/v10";
 
 loadDevVars();
 
 const token = process.env.DISCORD_TOKEN;
 const applicationId = process.env.DISCORD_APPLICATION_ID;
-const guildId = process.env.DISCORD_TEST_GUILD_ID;
-const scope = getRegistrationScope();
+const guildId = getGuildId();
 
 if (!token) {
   throw new Error("DISCORD_TOKEN is required.");
@@ -44,19 +41,7 @@ const commands = [
   }
 ];
 
-const registeredCommands =
-  scope === "global"
-    ? commands.map((command) => ({
-        ...command,
-        integration_types: [ApplicationIntegrationType.GuildInstall],
-        contexts: [InteractionContextType.Guild, InteractionContextType.BotDM]
-      }))
-    : commands;
-
-const url =
-  scope === "guild"
-    ? `https://discord.com/api/v10/applications/${applicationId}/guilds/${guildId}/commands`
-    : `https://discord.com/api/v10/applications/${applicationId}/commands`;
+const url = `https://discord.com/api/v10/applications/${applicationId}/guilds/${guildId}/commands`;
 
 const response = await fetch(url, {
   method: "PUT",
@@ -64,7 +49,7 @@ const response = await fetch(url, {
     authorization: `Bot ${token}`,
     "content-type": "application/json"
   },
-  body: JSON.stringify(registeredCommands)
+  body: JSON.stringify(commands)
 });
 
 const body = await response.text();
@@ -72,34 +57,20 @@ if (!response.ok) {
   throw new Error(`Command registration failed: ${response.status} ${body}`);
 }
 
-console.log(
-  scope === "guild"
-    ? `Registered /c in test guild ${guildId}.`
-    : "Registered /c globally with guild and bot DM contexts."
-);
+console.log(`Registered /c and /reset in guild ${guildId}.`);
 
-function getRegistrationScope() {
-  if (process.argv.includes("--global")) return "global";
-
-  if (process.argv.includes("--guild")) {
-    if (!guildId) {
-      throw new Error("DISCORD_TEST_GUILD_ID is required for --guild.");
-    }
-    return "guild";
+function getGuildId() {
+  const args = process.argv.slice(2);
+  const guildFlagIndex = args.indexOf("--guild");
+  if (guildFlagIndex !== -1) {
+    const guildId = args[guildFlagIndex + 1];
+    if (guildId) return guildId;
   }
 
-  if (process.env.DISCORD_COMMAND_SCOPE) {
-    const commandScope = process.env.DISCORD_COMMAND_SCOPE.toLowerCase();
-    if (commandScope !== "guild" && commandScope !== "global") {
-      throw new Error("DISCORD_COMMAND_SCOPE must be either guild or global.");
-    }
-    if (commandScope === "guild" && !guildId) {
-      throw new Error("DISCORD_TEST_GUILD_ID is required for guild scope.");
-    }
-    return commandScope;
-  }
+  const positionalGuildId = args.find((arg) => !arg.startsWith("-"));
+  if (positionalGuildId) return positionalGuildId;
 
-  return "global";
+  throw new Error("Usage: npm run discord:register -- <guild-id>");
 }
 
 function loadDevVars() {
