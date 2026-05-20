@@ -56,6 +56,7 @@ If the application uses Durable Objects or Workflows, refer to the relevant best
 - Keep assistant prompt text in `src/prompts.ts`.
 - Use `src/logging.ts` for app logs so operational errors keep consistent structured context. Do not log Discord interaction tokens, API keys, or raw request bodies.
 - Keep tool definitions grouped by domain in `src/tools/`, with `src/tools/index.ts` as the tool registry, and provider-specific tool clients in their own modules.
+- Tools should return clear plaintext model-facing results that state success or failure and the concrete action taken. This keeps chat history useful as a log of write tools and other tool activity.
 - Conversation identity must remain explicit:
   - Guild channels use `discord:guild:<guild_id>:channel:<channel_id>`.
   - Bot DMs use `discord:dm:<user_id>`.
