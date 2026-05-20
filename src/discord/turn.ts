@@ -19,9 +19,9 @@ import type { DiscordChatRequest, DiscordChatResponse } from "./types";
 
 export type DiscordSessionMemory = {
   appendMessage(message: UIMessage): Promise<void>;
-  getHistory(): unknown[];
-  getPathLength(): number;
-  clearMessages(): void;
+  getHistory(): Promise<unknown[]>;
+  getPathLength(): Promise<number>;
+  clearMessages(): Promise<void>;
 };
 
 export function createDiscordUserMessage(
@@ -49,7 +49,7 @@ export async function createDiscordAssistantResponse(
   request: DiscordChatRequest
 ): Promise<DiscordChatResponse> {
   const workersai = createWorkersAI({ binding: env.AI });
-  const history = session.getHistory() as UIMessage[];
+  const history = (await session.getHistory()) as UIMessage[];
   const imageArtifacts: GeneratedImage[] = [];
   const result = await generateText({
     model: workersai(CHAT_MODEL, {
@@ -92,11 +92,11 @@ export async function createDiscordAssistantResponse(
   };
 }
 
-export function clearDiscordSession(
+export async function clearDiscordSession(
   session: DiscordSessionMemory
-): DiscordChatResponse {
-  const messageCount = session.getPathLength();
-  session.clearMessages();
+): Promise<DiscordChatResponse> {
+  const messageCount = await session.getPathLength();
+  await session.clearMessages();
   return {
     content:
       messageCount === 1

@@ -106,9 +106,7 @@ export class ChatAgent extends Agent<Env> {
   }
 
   resetFromDiscord(): Promise<DiscordChatResponse> {
-    const run = this.discordTurn.then(() => {
-      return clearDiscordSession(this.session);
-    });
+    const run = this.discordTurn.then(() => clearDiscordSession(this.session));
     this.discordTurn = run.then(
       () => undefined,
       () => undefined
@@ -165,7 +163,7 @@ export class ChatAgent extends Agent<Env> {
       const response =
         updatedJob.type === "chat"
           ? await this.answerQueuedDiscordChat(updatedJob)
-          : clearDiscordSession(this.session);
+          : await clearDiscordSession(this.session);
 
       await this.deliverDiscordJobResponse(updatedJob, response);
       await this.discordQueue.completeJob(updatedJob, "completed");
