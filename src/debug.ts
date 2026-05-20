@@ -26,6 +26,9 @@ type DebugChatPayload = {
   user: DebugUser;
   text: string;
   interactionId?: string;
+  permissions?: {
+    user?: string;
+  };
 };
 
 type DebugResetPayload = {
@@ -96,7 +99,8 @@ async function replyToDebugChat(payload: DebugChatPayload, env: DebugEnv) {
         ? payload.surface.channelId
         : undefined,
     userId: payload.user.id,
-    user: payload.user
+    user: payload.user,
+    userPermissions: payload.permissions?.user
   });
 
   return json({

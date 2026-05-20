@@ -31,12 +31,13 @@ For production, set secrets in Cloudflare:
 
 ```bash
 npx wrangler secret put DISCORD_PUBLIC_KEY
+npx wrangler secret put DISCORD_TOKEN
 npx wrangler secret put KAGI_API_KEY
 ```
 
-`DISCORD_TOKEN` and `DISCORD_APPLICATION_ID` are only needed locally for command
-registration unless the Worker starts calling authenticated Discord bot API
-routes.
+`DISCORD_APPLICATION_ID` is only needed locally for command registration and
+health output. `DISCORD_TOKEN` is also used by the Worker for authenticated
+Discord bot API tools.
 
 ## Commands
 
@@ -83,6 +84,8 @@ Set `STURM_DEBUG_TOKEN` in `.dev.vars`, then use that same value in the
 authorization header. Debug chat and reset requests use the same durable
 per-conversation queue as real Discord interactions, then return the queued
 result.
+For permission-gated tools, include a Discord permission bitfield in
+`permissions.user`; for example, Manage Nicknames is `134217728`.
 
 ```bash
 curl -H "authorization: Bearer <debug-token>" \
@@ -113,6 +116,9 @@ curl -H "authorization: Bearer <debug-token>" \
 - Web search and URL summarization require `KAGI_API_KEY`.
 - URL archiving creates archive.today latest links from chat tool calls.
 - Image generation uses Workers AI and returns Discord attachments.
+- Nickname postfix changes require `DISCORD_TOKEN` and Discord Manage Nicknames
+  permission for the `/c` caller. Discord API errors are surfaced when bot
+  permissions or role hierarchy block a target.
 
 ## License
 

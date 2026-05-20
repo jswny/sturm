@@ -1,4 +1,9 @@
-import type { RESTPatchAPIWebhookWithTokenMessageJSONBody } from "discord-api-types/v10";
+import type {
+  RESTGetAPIGuildMemberResult,
+  RESTPatchAPIGuildMemberJSONBody,
+  RESTPatchAPIGuildMemberResult,
+  RESTPatchAPIWebhookWithTokenMessageJSONBody
+} from "discord-api-types/v10";
 import type {
   DiscordResponseAttachment,
   DiscordWebhookResponseTarget
@@ -6,6 +11,18 @@ import type {
 
 const DISCORD_API_BASE = "https://discord.com/api/v10";
 const MAX_DISCORD_CONTENT_LENGTH = 2000;
+
+export class DiscordApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly body: string,
+    readonly code?: number
+  ) {
+    super(message);
+    this.name = "DiscordApiError";
+  }
+}
 
 export async function editOriginalInteractionResponse(
   target: DiscordWebhookResponseTarget,
@@ -28,6 +45,61 @@ export async function editOriginalInteractionResponse(
       `Discord original response edit failed: ${response.status} ${body}`
     );
   }
+}
+
+export async function getGuildMember(
+  token: string,
+  guildId: string,
+  userId: string
+): Promise<RESTGetAPIGuildMemberResult> {
+  return discordApiFetch<RESTGetAPIGuildMemberResult>(
+    `/guilds/${guildId}/members/${userId}`,
+    token
+  );
+}
+
+export async function modifyGuildMemberNickname(
+  token: string,
+  guildId: string,
+  userId: string,
+  nick: string | null
+): Promise<RESTPatchAPIGuildMemberResult> {
+  const body: RESTPatchAPIGuildMemberJSONBody = { nick };
+  return discordApiFetch<RESTPatchAPIGuildMemberResult>(
+    `/guilds/${guildId}/members/${userId}`,
+    token,
+    {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body)
+    }
+  );
+}
+
+async function discordApiFetch<T>(
+  path: string,
+  token: string,
+  init: RequestInit = {}
+): Promise<T> {
+  const response = await fetch(`${DISCORD_API_BASE}${path}`, {
+    ...init,
+    headers: {
+      authorization: `Bot ${token}`,
+      ...init.headers
+    }
+  });
+
+  const body = await response.text();
+  if (!response.ok) {
+    throw new DiscordApiError(
+      `Discord API request failed: ${response.status} ${body}`,
+      response.status,
+      body,
+      getDiscordErrorCode(body)
+    );
+  }
+
+  return JSON.parse(body) as T;
 }
 
 function createDiscordResponseBody(
@@ -72,4 +144,13 @@ function base64ToBytes(base64: string) {
 function truncateDiscordContent(content: string) {
   if (content.length <= MAX_DISCORD_CONTENT_LENGTH) return content;
   return `${content.slice(0, MAX_DISCORD_CONTENT_LENGTH - 3)}...`;
+}
+
+function getDiscordErrorCode(body: string) {
+  try {
+    const parsed = JSON.parse(body) as { code?: unknown };
+    return typeof parsed.code === "number" ? parsed.code : undefined;
+  } catch {
+    return undefined;
+  }
 }

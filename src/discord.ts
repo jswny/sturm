@@ -185,7 +185,8 @@ async function enqueueCommand(
       guildId: interaction.guild_id,
       channelId: interaction.channel_id,
       userId: getUserId(interaction),
-      user: getUserContext(interaction)
+      user: getUserContext(interaction),
+      userPermissions: interaction.member?.permissions
     }
   });
   return agent;

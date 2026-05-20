@@ -5,6 +5,7 @@ export type DiscordChatRequest = {
   channelId?: string;
   userId?: string;
   user?: DiscordUserContext;
+  userPermissions?: string;
 };
 
 export type DiscordChatResponse = {

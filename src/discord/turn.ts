@@ -59,6 +59,7 @@ export async function createDiscordAssistantResponse(
     system: createSystemPrompt(),
     messages: inlineDataUrls(await convertToModelMessages(history)),
     tools: createDiscordTools(env, {
+      discordRequest: request,
       onImageGenerated: (artifact) => imageArtifacts.push(artifact)
     }),
     stopWhen: stepCountIs(5)
