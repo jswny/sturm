@@ -111,6 +111,7 @@ curl -H "authorization: Bearer <debug-token>" \
 - Stale debug queue results are pruned after one day; normal debug requests
   delete their result after it is returned.
 - Web search and URL summarization require `KAGI_API_KEY`.
+- URL archiving creates archive.today latest links from chat tool calls.
 - Image generation uses Workers AI and returns Discord attachments.
 
 ## License

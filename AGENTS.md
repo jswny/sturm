@@ -64,3 +64,4 @@ If the application uses Durable Objects or Workflows, refer to the relevant best
 - `webSearch` is backed by Kagi FastGPT in `src/search.ts` and requires `KAGI_API_KEY`.
 - Debug HTTP routes live in `src/debug.ts`, require `STURM_DEBUG_TOKEN`, and must reuse the same explicit Discord conversation keys and durable queue path as real interactions. Use stable test identifiers like `test-guild`, `test-channel`, and `test-user` unless real Discord IDs are explicitly needed.
 - Image generation is a chat tool backed by Workers AI in `src/images.ts`. Treat generated images as response artifacts: send them as Discord attachments or debug response data, but never store raw base64/image bytes in Session history.
+- User-facing bot capabilities should generally be chat tools behind `/c`, not separate slash commands, unless the user explicitly asks for a separate command.

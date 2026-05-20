@@ -1,5 +1,6 @@
 import type { GeneratedImage, ImageEnv } from "../images";
 import type { SearchEnv } from "../search";
+import { createArchiveTools } from "./archive";
 import { createImageTools } from "./images";
 import { createSearchTools } from "./search";
 
@@ -11,6 +12,7 @@ export type ToolOptions = {
 
 export function createDiscordTools(env: ToolEnv, options: ToolOptions = {}) {
   return {
+    ...createArchiveTools(),
     ...createSearchTools(env),
     ...createImageTools(env, options)
   };
