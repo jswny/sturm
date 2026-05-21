@@ -120,7 +120,8 @@ curl -H "authorization: Bearer <debug-token>" \
   guild-scoped `GuildMemory` Durable Object is the source of truth and handles
   concurrent writes from multiple channel Agents.
 - Completed interaction dedupe records are pruned after seven days; active jobs
-  are preserved.
+  are preserved. Each Agent also schedules daily housekeeping, with the same
+  cleanup run opportunistically after queued Discord work.
 - Stale debug queue results are pruned after one day; normal debug requests
   delete their result after it is returned.
 - Web search and URL summarization require `KAGI_API_KEY`.

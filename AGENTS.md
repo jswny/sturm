@@ -61,6 +61,7 @@ If the application uses Durable Objects or Workflows, refer to the relevant best
 - Queued Discord job attempts run inside `runFiber()` for recoverable active execution. Fibers are only the active-work recovery wrapper; keep fiber snapshots small and metadata-only, and use `onFiberRecovered()` to requeue still-active interactions through the SDK queue.
 - Completed/failed Discord interaction dedupe records are pruned by `DiscordInteractionStore.pruneCompletedInteractionRecords()`. Do not prune active records.
 - Stale debug queue results are pruned by `DiscordInteractionStore.pruneStaleDebugResults()`. Normal debug requests should still delete their own result after reading it.
+- Keep Agent housekeeping centralized in `ChatAgent.housekeeping()`. Register recurring cleanup from `ChatAgent.onStart()` with the idempotent Agents SDK `scheduleEvery()` API, and reuse that same method for opportunistic cleanup after queued Discord work.
 - Keep Workers AI model settings, compaction settings, and provider options in `src/model.ts`.
 - Keep assistant prompt text in `src/prompts.ts`.
 - Guild memory must keep the Agents SDK memory APIs as the public model: use `Session.withContext("guild_memory", ...)`, `session.tools()`, and the SDK-generated `set_context` tool. Do not replace this with a custom memory tool unless explicitly requested.

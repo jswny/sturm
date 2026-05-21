@@ -44,6 +44,7 @@ const DISCORD_DEBUG_RESPONSE_TIMEOUT_MS = 14 * 60 * 1000;
 const DISCORD_DEBUG_RESPONSE_POLL_MS = 100;
 const DISCORD_DEFERRED_RESPONSE_SETTLE_MS = 500;
 const DISCORD_JOB_FIBER_PREFIX = "discord-job:";
+const HOUSEKEEPING_INTERVAL_SECONDS = 24 * 60 * 60;
 
 type DiscordInteractionQueuePayload = {
   interactionId: string;
@@ -107,6 +108,11 @@ export class ChatAgent extends Agent<Env> {
     )
     .compactAfter(COMPACTION_TOKEN_THRESHOLD);
 
+  override async onStart(props?: Record<string, unknown>) {
+    await super.onStart(props);
+    await this.scheduleEvery(HOUSEKEEPING_INTERVAL_SECONDS, "housekeeping");
+  }
+
   async enqueueDiscordChat(input: DiscordInteractionChatInput) {
     const result = await this.discordInteractions.create(input);
     if (!result.created || !result.job) return;
@@ -159,6 +165,20 @@ export class ChatAgent extends Agent<Env> {
       responseTarget: { type: "debug", id: input.interactionId }
     });
     return this.waitForDebugQueuedResponse(input.interactionId);
+  }
+
+  async housekeeping() {
+    const [completedInteractionRecords, staleDebugResults] = await Promise.all([
+      this.discordInteractions.pruneCompletedInteractionRecords(),
+      this.discordInteractions.pruneStaleDebugResults()
+    ]);
+
+    if (completedInteractionRecords > 0 || staleDebugResults > 0) {
+      logInfo("Discord housekeeping pruned stale records", {
+        completedInteractionRecords,
+        staleDebugResults
+      });
+    }
   }
 
   async processDiscordInteraction(
@@ -259,8 +279,7 @@ export class ChatAgent extends Agent<Env> {
         this.processDiscordJobAttempt(job, fiber, queueItem?.id)
       );
     } finally {
-      await this.discordInteractions.pruneCompletedInteractionRecords();
-      await this.discordInteractions.pruneStaleDebugResults();
+      await this.housekeeping();
     }
   }
 
