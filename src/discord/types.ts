@@ -13,6 +13,13 @@ export type DiscordChatResponse = {
   attachments?: DiscordResponseAttachment[];
 };
 
+export type DiscordGeneratedChatResponse = {
+  content: string;
+  assistantMessageText: string;
+  attachments?: DiscordGeneratedResponseAttachment[];
+  generatedAt: string;
+};
+
 export type DiscordResponseTarget =
   | DiscordWebhookResponseTarget
   | DiscordDebugResponseTarget;
@@ -34,6 +41,13 @@ export type DiscordResponseAttachment = {
   r2Key?: string;
   base64: string;
   description?: string;
+};
+
+export type DiscordGeneratedResponseAttachment = Omit<
+  DiscordResponseAttachment,
+  "base64" | "r2Key"
+> & {
+  r2Key: string;
 };
 
 export type DiscordUserContext = {

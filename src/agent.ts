@@ -13,8 +13,11 @@ import {
 } from "./discord/queue";
 import {
   clearDiscordSession,
+  createDiscordAssistantMessage,
   createDiscordAssistantResponse,
-  createDiscordUserMessage
+  createDiscordAssistantTurn,
+  createDiscordUserMessage,
+  hydrateDiscordGeneratedResponse
 } from "./discord/turn";
 import type { DiscordChatRequest, DiscordChatResponse } from "./discord/types";
 import { getErrorMessage, logError, logInfo } from "./logging";
@@ -170,14 +173,18 @@ export class ChatAgent extends Agent<Env> {
   }
 
   private async processDiscordJob(job: DiscordQueuedJob) {
-    const updatedJob = await this.discordQueue.recordAttempt(job);
+    let updatedJob = await this.discordQueue.recordAttempt(job);
     const attempt = updatedJob.attempts;
 
     try {
-      const response =
-        updatedJob.type === "chat"
-          ? await this.answerQueuedDiscordChat(updatedJob)
-          : await clearDiscordSession(this.session);
+      let response: DiscordChatResponse;
+      if (updatedJob.type === "chat") {
+        const result = await this.answerQueuedDiscordChat(updatedJob);
+        updatedJob = result.job;
+        response = result.response;
+      } else {
+        response = await clearDiscordSession(this.session);
+      }
 
       await this.deliverDiscordJobResponse(updatedJob, response);
       await this.discordQueue.completeJob(updatedJob, "completed");
@@ -268,22 +275,72 @@ export class ChatAgent extends Agent<Env> {
 
   private async answerQueuedDiscordChat(
     job: DiscordQueuedChatJob
-  ): Promise<DiscordChatResponse> {
-    if (!job.userMessageAppended) {
+  ): Promise<{ job: DiscordQueuedChatJob; response: DiscordChatResponse }> {
+    let updatedJob = job;
+
+    if (!updatedJob.userMessageAppended) {
       await this.session.appendMessage(createDiscordUserMessage(job.request));
-      await this.discordQueue.putJob({
-        ...job,
+      updatedJob = {
+        ...updatedJob,
         userMessageAppended: true,
         updatedAt: new Date().toISOString()
-      } satisfies DiscordQueuedChatJob);
+      };
+      await this.discordQueue.putJob(updatedJob);
     }
 
-    return createDiscordAssistantResponse(
+    if (updatedJob.generatedResponse) {
+      const generatedResponse = updatedJob.generatedResponse;
+      updatedJob = await this.appendQueuedDiscordAssistantMessage(updatedJob);
+      return {
+        job: updatedJob,
+        response: await hydrateDiscordGeneratedResponse(
+          this.env,
+          generatedResponse
+        )
+      };
+    }
+
+    const turn = await createDiscordAssistantTurn(
       this.env,
       this.session,
       this.sessionAffinity,
       job.request
     );
+    updatedJob = {
+      ...updatedJob,
+      generatedResponse: turn.generatedResponse,
+      updatedAt: new Date().toISOString()
+    };
+    await this.discordQueue.putJob(updatedJob);
+
+    await this.session.appendMessage(turn.assistantMessage);
+    updatedJob = {
+      ...updatedJob,
+      assistantMessageAppended: true,
+      updatedAt: new Date().toISOString()
+    };
+    await this.discordQueue.putJob(updatedJob);
+
+    return { job: updatedJob, response: turn.response };
+  }
+
+  private async appendQueuedDiscordAssistantMessage(job: DiscordQueuedChatJob) {
+    if (job.assistantMessageAppended) return job;
+    if (!job.generatedResponse) return job;
+
+    await this.session.appendMessage(
+      createDiscordAssistantMessage(
+        job.request,
+        job.generatedResponse.assistantMessageText
+      )
+    );
+    const updatedJob = {
+      ...job,
+      assistantMessageAppended: true,
+      updatedAt: new Date().toISOString()
+    } satisfies DiscordQueuedChatJob;
+    await this.discordQueue.putJob(updatedJob);
+    return updatedJob;
   }
 
   private async answerFromDiscord(

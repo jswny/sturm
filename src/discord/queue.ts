@@ -1,6 +1,7 @@
 import type {
   DiscordChatResponse,
   DiscordChatRequest,
+  DiscordGeneratedChatResponse,
   DiscordResponseTarget,
   DiscordUserContext
 } from "./types";
@@ -34,6 +35,8 @@ export type DiscordQueuedChatJob = {
   createdAt: string;
   updatedAt: string;
   userMessageAppended?: boolean;
+  assistantMessageAppended?: boolean;
+  generatedResponse?: DiscordGeneratedChatResponse;
   lastError?: string;
 };
 
