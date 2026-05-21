@@ -179,7 +179,10 @@ export class ChatAgent extends Agent<Env> {
     try {
       let response: DiscordChatResponse;
       if (updatedJob.type === "chat") {
-        const result = await this.answerQueuedDiscordChat(updatedJob);
+        const chatJob = updatedJob;
+        const result = await this.keepAliveWhile(() =>
+          this.answerQueuedDiscordChat(chatJob)
+        );
         updatedJob = result.job;
         response = result.response;
       } else {
@@ -347,11 +350,13 @@ export class ChatAgent extends Agent<Env> {
     request: DiscordChatRequest
   ): Promise<DiscordChatResponse> {
     await this.session.appendMessage(createDiscordUserMessage(request));
-    return createDiscordAssistantResponse(
-      this.env,
-      this.session,
-      this.sessionAffinity,
-      request
+    return this.keepAliveWhile(() =>
+      createDiscordAssistantResponse(
+        this.env,
+        this.session,
+        this.sessionAffinity,
+        request
+      )
     );
   }
 }
