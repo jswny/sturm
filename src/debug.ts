@@ -5,16 +5,11 @@ type DebugEnv = Env & {
   STURM_DEBUG_TOKEN?: string;
 };
 
-type DebugSurface =
-  | {
-      type: "guild_channel";
-      guildId: string;
-      channelId: string;
-    }
-  | {
-      type: "dm";
-      userId: string;
-    };
+type DebugSurface = {
+  type: "guild_channel";
+  guildId: string;
+  channelId: string;
+};
 
 type DebugUser = {
   id: string;
@@ -90,14 +85,8 @@ async function replyToDebugChat(payload: DebugChatPayload, env: DebugEnv) {
   const response = await agent.runDebugQueuedDiscordChat({
     interactionId,
     text: payload.text.trim(),
-    guildId:
-      payload.surface.type === "guild_channel"
-        ? payload.surface.guildId
-        : undefined,
-    channelId:
-      payload.surface.type === "guild_channel"
-        ? payload.surface.channelId
-        : undefined,
+    guildId: payload.surface.guildId,
+    channelId: payload.surface.channelId,
     userId: payload.user.id,
     user: payload.user,
     userPermissions: payload.permissions?.user
@@ -129,15 +118,8 @@ async function replyToDebugReset(payload: DebugResetPayload, env: DebugEnv) {
   const interactionId = payload.interactionId ?? crypto.randomUUID();
   const response = await agent.runDebugQueuedDiscordReset({
     interactionId,
-    guildId:
-      payload.surface.type === "guild_channel"
-        ? payload.surface.guildId
-        : undefined,
-    channelId:
-      payload.surface.type === "guild_channel"
-        ? payload.surface.channelId
-        : undefined,
-    userId: payload.surface.type === "dm" ? payload.surface.userId : undefined
+    guildId: payload.surface.guildId,
+    channelId: payload.surface.channelId
   });
 
   return json({
@@ -175,13 +157,6 @@ function validateDebugChatPayload(payload: DebugChatPayload) {
 
   if (!payload.user.id) return "Missing user.id.";
 
-  if (
-    payload.surface.type === "dm" &&
-    payload.surface.userId !== payload.user.id
-  ) {
-    return "DM surface userId must match user.id.";
-  }
-
   if (!payload.text?.trim()) return "Missing text.";
 
   return null;
@@ -190,26 +165,16 @@ function validateDebugChatPayload(payload: DebugChatPayload) {
 function validateDebugSurface(surface: DebugSurface | undefined) {
   if (!surface || typeof surface !== "object") return "Missing surface.";
 
-  if (surface.type === "guild_channel") {
-    if (!surface.guildId) return "Missing surface.guildId.";
-    if (!surface.channelId) return "Missing surface.channelId.";
-    return null;
+  if (surface.type !== "guild_channel") {
+    return "surface.type must be guild_channel.";
   }
-
-  if (surface.type === "dm") {
-    if (!surface.userId) return "Missing surface.userId.";
-    return null;
-  }
-
-  return "surface.type must be guild_channel or dm.";
+  if (!surface.guildId) return "Missing surface.guildId.";
+  if (!surface.channelId) return "Missing surface.channelId.";
+  return null;
 }
 
 function getDebugConversationName(surface: DebugSurface) {
-  if (surface.type === "guild_channel") {
-    return `discord:guild:${surface.guildId}:channel:${surface.channelId}`;
-  }
-
-  return `discord:dm:${surface.userId}`;
+  return `discord:guild:${surface.guildId}:channel:${surface.channelId}`;
 }
 
 function json(body: unknown, init?: ResponseInit) {

@@ -109,6 +109,10 @@ export async function handleDiscordRequest(
       );
     }
 
+    if (!getGuildChannelLocation(interaction)) {
+      return guildOnlyInteractionResponse();
+    }
+
     const agent = await enqueueCommand(interaction, text, env);
     ctx.waitUntil(agent.processDiscordQueue());
 
@@ -118,6 +122,10 @@ export async function handleDiscordRequest(
   }
 
   if (interaction.data.name === RESET_COMMAND.name) {
+    if (!getGuildChannelLocation(interaction)) {
+      return guildOnlyInteractionResponse();
+    }
+
     const agent = await enqueueResetCommand(interaction, env);
     ctx.waitUntil(agent.processDiscordQueue());
 
@@ -153,15 +161,20 @@ async function enqueueCommand(
   text: string,
   env: Env
 ) {
-  const conversationName = getConversationName(interaction);
+  const location = getGuildChannelLocation(interaction);
+  if (!location) {
+    throw new Error("Discord interaction did not include a guild channel.");
+  }
+
+  const conversationName = getConversationName(location);
   const agent = await getAgentByName(env.ChatAgent, conversationName);
   await agent.enqueueDiscordChat({
     responseTarget: getResponseTarget(interaction),
     request: {
       interactionId: interaction.id,
       text,
-      guildId: interaction.guild_id,
-      channelId: interaction.channel_id,
+      guildId: location.guildId,
+      channelId: location.channelId,
       userId: getUserId(interaction),
       user: getUserContext(interaction),
       userPermissions: interaction.member?.permissions
@@ -174,12 +187,17 @@ async function enqueueResetCommand(
   interaction: APIChatInputApplicationCommandInteraction,
   env: Env
 ) {
-  const conversationName = getConversationName(interaction);
+  const location = getGuildChannelLocation(interaction);
+  if (!location) {
+    throw new Error("Discord interaction did not include a guild channel.");
+  }
+
+  const conversationName = getConversationName(location);
   const agent = await getAgentByName(env.ChatAgent, conversationName);
   await agent.enqueueDiscordReset({
     interactionId: interaction.id,
-    guildId: interaction.guild_id,
-    channelId: interaction.channel_id,
+    guildId: location.guildId,
+    channelId: location.channelId,
     userId: getUserId(interaction),
     user: getUserContext(interaction),
     responseTarget: getResponseTarget(interaction)
@@ -187,19 +205,23 @@ async function enqueueResetCommand(
   return agent;
 }
 
-function getConversationName(
+type DiscordGuildChannelLocation = {
+  guildId: string;
+  channelId: string;
+};
+
+function getGuildChannelLocation(
   interaction: APIChatInputApplicationCommandInteraction
-) {
-  if (interaction.guild_id && interaction.channel_id) {
-    return `discord:guild:${interaction.guild_id}:channel:${interaction.channel_id}`;
-  }
+): DiscordGuildChannelLocation | null {
+  if (!interaction.guild_id || !interaction.channel_id) return null;
+  return {
+    guildId: interaction.guild_id,
+    channelId: interaction.channel_id
+  };
+}
 
-  if (!interaction.guild_id) {
-    const userId = getUserId(interaction);
-    if (userId) return `discord:dm:${userId}`;
-  }
-
-  throw new Error("Discord interaction did not include a usable location.");
+function getConversationName(location: DiscordGuildChannelLocation) {
+  return `discord:guild:${location.guildId}:channel:${location.channelId}`;
 }
 
 function getUserId(interaction: APIChatInputApplicationCommandInteraction) {
@@ -262,4 +284,17 @@ function json(body: unknown, init?: ResponseInit) {
 
 function interactionJson(body: APIInteractionResponse, init?: ResponseInit) {
   return json(body, init);
+}
+
+function guildOnlyInteractionResponse() {
+  return interactionJson(
+    {
+      type: InteractionResponseType.ChannelMessageWithSource,
+      data: {
+        content: "Sturm only works in server channels right now.",
+        allowed_mentions: { parse: [] }
+      }
+    },
+    { status: 200 }
+  );
 }

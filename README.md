@@ -4,7 +4,8 @@ A webhook-based Discord bot on Cloudflare Workers.
 
 Discord sends interactions to `/discord`. The Worker verifies Discord request
 signatures, handles slash commands, and enqueues chat messages in a Cloudflare
-Agent Durable Object. Conversations persist per Discord channel or DM.
+Agent Durable Object. Conversations persist per Discord guild channel. DMs are
+not supported right now.
 
 ## Setup
 
@@ -51,8 +52,8 @@ Register `/c` and `/reset` in every guild the bot is in:
 curl -X POST http://localhost:8787/api/admin/register-commands
 ```
 
-Sturm currently only registers guild-scoped commands. Guild command updates
-propagate quickly, but guild-scoped commands are not available in DMs.
+Sturm only registers guild-scoped commands. Guild command updates propagate
+quickly, and DM commands are intentionally not supported right now.
 
 Run locally:
 
@@ -107,10 +108,10 @@ curl -H "authorization: Bearer <debug-token>" \
 ## Notes
 
 - The bot supports `/c text:<message>` and `/reset`.
-- `/reset` clears the current channel or DM context only. In guilds, Discord
-  limits it by default to members with Manage Messages.
+- `/reset` clears the current guild channel context only. Discord limits it by
+  default to members with Manage Messages.
 - Responses are deferred after the interaction is durably queued, then the
-  per-channel or per-DM Agent drains queued jobs linearly and edits the original
+  per-channel Agent drains queued jobs linearly and edits the original
   interaction response after Workers AI finishes.
 - Completed queue dedupe records are pruned after seven days; pending jobs are
   preserved.

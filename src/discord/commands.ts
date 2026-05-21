@@ -20,9 +20,8 @@ export const C_COMMAND = {
 
 export const RESET_COMMAND = {
   name: "reset",
-  description: "Reset context for this channel or DM",
+  description: "Reset context for this channel",
   type: ApplicationCommandType.ChatInput,
-  // Manage Messages. DMs are still allowed through command contexts.
   default_member_permissions: "8192"
 } as const satisfies RESTPutAPIApplicationGuildCommandsJSONBody[number];
 

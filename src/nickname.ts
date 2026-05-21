@@ -185,7 +185,7 @@ function validateNicknameContext(
   if (!context.guildId) {
     return {
       targetUserId: resolvedTargetUserId,
-      error: "Nickname changes only work in a server, not in DMs."
+      error: "Nickname changes require a server context."
     };
   }
 

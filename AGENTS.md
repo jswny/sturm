@@ -53,6 +53,7 @@ If the application uses Durable Objects or Workflows, refer to the relevant best
 
 - This repo is a Discord webhook bot, not a web UI.
 - Treat each Discord conversation Agent as a long-running Cloudflare Agent: it should be a durable identity that wakes on Discord interactions or schedules, persists any work that matters, and must not rely on in-memory flags, timers, open requests, or closures surviving hibernation/eviction. Follow the Long-running Agents doc above when changing queueing, scheduling, recovery, memory, or multi-step tool work.
+- Sturm is guild-only for now. Do not add bot DM support, DM command contexts, or `discord:dm:*` conversation keys unless explicitly requested.
 - Keep Discord request verification and command routing in `src/discord.ts`; keep outbound Discord API, queue, turn, format, and shared types in focused modules under `src/discord/`.
 - Keep persistent agent/session orchestration in `src/agent.ts`.
 - Discord interactions should be durably queued in the per-conversation Agent before returning the deferred Discord response. Do not run model/tool work from the `/discord` route with `ctx.waitUntil`.
@@ -66,8 +67,7 @@ If the application uses Durable Objects or Workflows, refer to the relevant best
 - Admin HTTP routes live under `/api/admin/` and are expected to be protected by Cloudflare Access, not in-app auth. Keep them narrow, explicit, and operational; do not expose arbitrary mutation payloads.
 - Conversation identity must remain explicit:
   - Guild channels use `discord:guild:<guild_id>:channel:<channel_id>`.
-  - Bot DMs use `discord:dm:<user_id>`.
-  - Do not add fallback pooled DM/channel keys.
+  - Do not add fallback pooled channel keys.
 - `/reset` clears only the current scoped Session via `session.clearMessages()`.
 - `webSearch` is backed by Kagi FastGPT in `src/search.ts` and requires `KAGI_API_KEY`.
 - Debug HTTP routes live in `src/debug.ts`, require `STURM_DEBUG_TOKEN`, and must reuse the same explicit Discord conversation keys and durable queue path as real interactions. Use stable test identifiers like `test-guild`, `test-channel`, and `test-user` unless real Discord IDs are explicitly needed.
