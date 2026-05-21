@@ -32,8 +32,7 @@ type DiscordEnv = Env & {
 
 export async function handleDiscordRequest(
   request: Request,
-  env: DiscordEnv,
-  ctx: ExecutionContext
+  env: DiscordEnv
 ): Promise<Response | null> {
   const url = new URL(request.url);
   if (url.pathname !== "/discord" && url.pathname !== "/discord/") return null;
@@ -113,8 +112,7 @@ export async function handleDiscordRequest(
       return guildOnlyInteractionResponse();
     }
 
-    const agent = await enqueueCommand(interaction, text, env);
-    ctx.waitUntil(agent.processDiscordQueue());
+    await enqueueCommand(interaction, text, env);
 
     return interactionJson({
       type: InteractionResponseType.DeferredChannelMessageWithSource
@@ -126,8 +124,7 @@ export async function handleDiscordRequest(
       return guildOnlyInteractionResponse();
     }
 
-    const agent = await enqueueResetCommand(interaction, env);
-    ctx.waitUntil(agent.processDiscordQueue());
+    await enqueueResetCommand(interaction, env);
 
     return interactionJson({
       type: InteractionResponseType.DeferredChannelMessageWithSource,

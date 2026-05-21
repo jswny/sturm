@@ -57,9 +57,10 @@ If the application uses Durable Objects or Workflows, refer to the relevant best
 - Keep Discord request verification and command routing in `src/discord.ts`; keep outbound Discord API, queue, turn, format, and shared types in focused modules under `src/discord/`.
 - Keep persistent agent/session orchestration in `src/agent.ts`.
 - Discord interactions should be durably queued in the per-conversation Agent before returning the deferred Discord response. Do not run model/tool work from the `/discord` route with `ctx.waitUntil`.
-- Queued Discord job attempts run inside `runFiber()` for recoverable active execution. The custom Discord queue remains the source of truth for ordering, attempts, generated responses, and idempotent phase markers; fibers are only the active-work recovery wrapper. Keep fiber snapshots small and metadata-only, and use `onFiberRecovered()` to clear interrupted queue processing state and reschedule the drain.
-- Completed/failed Discord interaction dedupe records are pruned by `DiscordJobQueue.pruneCompletedInteractionRecords()` after the queue drains. Do not prune pending records.
-- Stale debug queue results are pruned by `DiscordJobQueue.pruneStaleDebugResults()` after the queue drains. Normal debug requests should still delete their own result after reading it.
+- Use the Agents SDK built-in queue (`this.queue`) as the FIFO/retry mechanism for Discord work. Keep Discord-specific state in `DiscordInteractionStore`: interaction dedupe, attempt counts, generated response checkpoints, debug results, and terminal status.
+- Queued Discord job attempts run inside `runFiber()` for recoverable active execution. Fibers are only the active-work recovery wrapper; keep fiber snapshots small and metadata-only, and use `onFiberRecovered()` to requeue still-active interactions through the SDK queue.
+- Completed/failed Discord interaction dedupe records are pruned by `DiscordInteractionStore.pruneCompletedInteractionRecords()`. Do not prune active records.
+- Stale debug queue results are pruned by `DiscordInteractionStore.pruneStaleDebugResults()`. Normal debug requests should still delete their own result after reading it.
 - Keep Workers AI model settings, compaction settings, and provider options in `src/model.ts`.
 - Keep assistant prompt text in `src/prompts.ts`.
 - Guild memory must keep the Agents SDK memory APIs as the public model: use `Session.withContext("guild_memory", ...)`, `session.tools()`, and the SDK-generated `set_context` tool. Do not replace this with a custom memory tool unless explicitly requested.

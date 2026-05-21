@@ -86,8 +86,8 @@ Debug locally without Discord:
 
 Set `STURM_DEBUG_TOKEN` in `.dev.vars`, then use that same value in the
 authorization header. Debug chat and reset requests use the same durable
-per-conversation queue as real Discord interactions, then return the queued
-result.
+per-conversation Agents SDK queue as real Discord interactions, then wait for
+and return the queued result.
 For permission-gated tools, include a Discord permission bitfield in
 `permissions.user`; for example, Manage Nicknames is `134217728`.
 
@@ -111,15 +111,16 @@ curl -H "authorization: Bearer <debug-token>" \
 - `/reset` clears the current guild channel context only. Discord limits it by
   default to members with Manage Messages. It does not clear guild memory.
 - Responses are deferred after the interaction is durably queued, then the
-  per-channel Agent drains queued jobs linearly and edits the original
-  interaction response after Workers AI finishes. Each queued job attempt runs
-  in an Agent fiber so interrupted active work can clear the stuck processing
-  marker and resume from persisted queue state.
+  per-channel Agent processes SDK queue tasks linearly and edits the original
+  interaction response after Workers AI finishes. Discord-specific state tracks
+  dedupe, attempts, generated response checkpoints, and debug results. Each
+  queued job attempt runs in an Agent fiber so interrupted active work can
+  requeue from persisted interaction state.
 - Guild memory is shared across channels in the same Discord guild. A
   guild-scoped `GuildMemory` Durable Object is the source of truth and handles
   concurrent writes from multiple channel Agents.
-- Completed queue dedupe records are pruned after seven days; pending jobs are
-  preserved.
+- Completed interaction dedupe records are pruned after seven days; active jobs
+  are preserved.
 - Stale debug queue results are pruned after one day; normal debug requests
   delete their result after it is returned.
 - Web search and URL summarization require `KAGI_API_KEY`.

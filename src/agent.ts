@@ -1,16 +1,21 @@
-import { Agent, type FiberContext, type FiberRecoveryContext } from "agents";
+import {
+  Agent,
+  type FiberContext,
+  type FiberRecoveryContext,
+  type QueueItem
+} from "agents";
 import { Session } from "agents/experimental/memory/session";
 import { createCompactFunction } from "agents/experimental/memory/utils";
 import { generateText } from "ai";
 import { createWorkersAI } from "workers-ai-provider";
 import { editOriginalInteractionResponse } from "./discord/api";
 import {
-  DiscordJobQueue,
-  type DiscordQueuedChatInput,
-  type DiscordQueuedChatJob,
-  type DiscordQueuedJob,
-  type DiscordQueuedResetInput
-} from "./discord/queue";
+  DiscordInteractionStore,
+  type DiscordInteractionChatInput,
+  type DiscordInteractionChatJob,
+  type DiscordInteractionJob,
+  type DiscordInteractionResetInput
+} from "./discord/interactions";
 import {
   clearDiscordSession,
   createDiscordAssistantMessage,
@@ -30,11 +35,19 @@ import {
 } from "./model";
 
 const MAX_DISCORD_JOB_ATTEMPTS = 3;
-const DISCORD_QUEUE_DRAIN_SECONDS = 13 * 60;
-const DISCORD_QUEUE_SCHEDULED_STALE_MS = 2 * 60 * 1000;
-const DISCORD_QUEUE_PROCESSING_STALE_MS = 20 * 60 * 1000;
-const DISCORD_QUEUE_DRAIN_PAYLOAD = { kind: "discord-queue-drain" } as const;
+const DISCORD_QUEUE_RETRY = {
+  maxAttempts: MAX_DISCORD_JOB_ATTEMPTS,
+  baseDelayMs: 5000,
+  maxDelayMs: 30000
+} as const;
+const DISCORD_DEBUG_RESPONSE_TIMEOUT_MS = 14 * 60 * 1000;
+const DISCORD_DEBUG_RESPONSE_POLL_MS = 100;
+const DISCORD_DEFERRED_RESPONSE_SETTLE_MS = 500;
 const DISCORD_JOB_FIBER_PREFIX = "discord-job:";
+
+type DiscordInteractionQueuePayload = {
+  interactionId: string;
+};
 
 type DiscordJobFiberPhase =
   | "starting"
@@ -54,7 +67,7 @@ type DiscordJobFiberPhase =
 type DiscordJobFiberSnapshot = {
   sequence: number;
   interactionId: string;
-  jobType: DiscordQueuedJob["type"];
+  jobType: DiscordInteractionJob["type"];
   attempt?: number;
   phase: DiscordJobFiberPhase;
   updatedAt: string;
@@ -62,7 +75,7 @@ type DiscordJobFiberSnapshot = {
 
 export class ChatAgent extends Agent<Env> {
   private discordTurn = Promise.resolve();
-  private discordQueue = new DiscordJobQueue(this.ctx.storage);
+  private discordInteractions = new DiscordInteractionStore(this.ctx.storage);
   private session = Session.create(this)
     .withContext("guild_memory", {
       description:
@@ -94,14 +107,38 @@ export class ChatAgent extends Agent<Env> {
     )
     .compactAfter(COMPACTION_TOKEN_THRESHOLD);
 
-  async enqueueDiscordChat(input: DiscordQueuedChatInput) {
-    await this.discordQueue.enqueue(input);
-    await this.scheduleDiscordQueueDrain();
+  async enqueueDiscordChat(input: DiscordInteractionChatInput) {
+    const result = await this.discordInteractions.create(input);
+    if (!result.created || !result.job) return;
+
+    try {
+      await this.queueDiscordInteraction(result.job.interactionId);
+    } catch (error) {
+      await this.discordInteractions.deleteCreatedInteraction(result.job);
+      logError("Discord interaction queue failed", error, {
+        sequence: result.job.sequence,
+        interactionId: result.job.interactionId,
+        jobType: result.job.type
+      });
+      throw error;
+    }
   }
 
-  async enqueueDiscordReset(input: DiscordQueuedResetInput) {
-    await this.discordQueue.enqueue(input);
-    await this.scheduleDiscordQueueDrain();
+  async enqueueDiscordReset(input: DiscordInteractionResetInput) {
+    const result = await this.discordInteractions.create(input);
+    if (!result.created || !result.job) return;
+
+    try {
+      await this.queueDiscordInteraction(result.job.interactionId);
+    } catch (error) {
+      await this.discordInteractions.deleteCreatedInteraction(result.job);
+      logError("Discord interaction queue failed", error, {
+        sequence: result.job.sequence,
+        interactionId: result.job.interactionId,
+        jobType: result.job.type
+      });
+      throw error;
+    }
   }
 
   async runDebugQueuedDiscordChat(
@@ -111,23 +148,33 @@ export class ChatAgent extends Agent<Env> {
       responseTarget: { type: "debug", id: request.interactionId },
       request
     });
-    await this.processDiscordQueue();
-    return this.getDebugQueuedResponse(request.interactionId);
+    return this.waitForDebugQueuedResponse(request.interactionId);
   }
 
   async runDebugQueuedDiscordReset(
-    input: Omit<DiscordQueuedResetInput, "responseTarget">
+    input: Omit<DiscordInteractionResetInput, "responseTarget">
   ): Promise<DiscordChatResponse> {
     await this.enqueueDiscordReset({
       ...input,
       responseTarget: { type: "debug", id: input.interactionId }
     });
-    await this.processDiscordQueue();
-    return this.getDebugQueuedResponse(input.interactionId);
+    return this.waitForDebugQueuedResponse(input.interactionId);
   }
 
-  async processDiscordQueue(): Promise<void> {
-    const run = this.discordTurn.then(() => this.drainDiscordQueue());
+  async processDiscordInteraction(
+    payload: DiscordInteractionQueuePayload,
+    queueItem?: QueueItem
+  ): Promise<void> {
+    if (!payload?.interactionId) {
+      logWarn("Discord queued interaction missing interactionId", {
+        queueTaskId: queueItem?.id
+      });
+      return;
+    }
+
+    const run = this.discordTurn.then(() =>
+      this.processQueuedDiscordInteraction(payload.interactionId, queueItem)
+    );
     this.discordTurn = run.then(
       () => undefined,
       () => undefined
@@ -160,91 +207,78 @@ export class ChatAgent extends Agent<Env> {
     }
 
     const snapshot = getDiscordJobFiberSnapshot(ctx.snapshot);
-    const recoveryDecision = await this.discordQueue.recoverInterruptedDrain();
+    const interactionId =
+      snapshot?.interactionId ??
+      getInteractionIdFromDiscordJobFiberName(ctx.name);
+    const active = interactionId
+      ? await this.discordInteractions.hasActiveInteraction(interactionId)
+      : false;
     logWarn("Recovered interrupted Discord job fiber", {
       fiberId: ctx.id,
       fiberName: ctx.name,
       fiberAgeMs: Date.now() - ctx.createdAt,
-      sequence:
-        snapshot?.sequence ?? getSequenceFromDiscordJobFiberName(ctx.name),
-      interactionId: snapshot?.interactionId,
+      sequence: snapshot?.sequence,
+      interactionId,
       jobType: snapshot?.jobType,
       attempt: snapshot?.attempt,
       phase: snapshot?.phase,
-      wasScheduled: recoveryDecision.wasScheduled,
-      wasProcessing: recoveryDecision.wasProcessing
+      requeued: active
     });
 
-    if (await this.discordQueue.hasPendingJobs()) {
-      await this.scheduleDiscordQueueDrain();
+    if (active && interactionId) {
+      await this.queueDiscordInteraction(interactionId);
     }
   }
 
-  private async scheduleDiscordQueueDrain(delaySeconds = 0) {
-    const scheduleDecision = await this.discordQueue.markScheduledIfIdle({
-      scheduledStaleMs: DISCORD_QUEUE_SCHEDULED_STALE_MS,
-      processingStaleMs: DISCORD_QUEUE_PROCESSING_STALE_MS
-    });
-    if (
-      scheduleDecision.recoveredScheduled ||
-      scheduleDecision.recoveredProcessing
-    ) {
-      logInfo("Recovered stale Discord queue state", {
-        recoveredScheduled: scheduleDecision.recoveredScheduled,
-        recoveredProcessing: scheduleDecision.recoveredProcessing
-      });
-    }
-    if (!scheduleDecision.shouldSchedule) return;
-
-    try {
-      await this.schedule(delaySeconds, "processDiscordQueue", {
-        ...DISCORD_QUEUE_DRAIN_PAYLOAD,
-        scheduledAt: new Date().toISOString()
-      });
-    } catch (error) {
-      await this.discordQueue.markScheduleFailed();
-      logError("Discord queue drain schedule failed", error, {
-        delaySeconds
-      });
-      throw error;
-    }
-  }
-
-  private async drainDiscordQueue() {
-    const startedAt = Date.now();
-    await this.discordQueue.markDrainStarted();
-
-    try {
-      while (Date.now() - startedAt < DISCORD_QUEUE_DRAIN_SECONDS * 1000) {
-        const job = await this.discordQueue.getNextJob();
-        if (!job) return;
-
-        const completed = await this.processDiscordJob(job);
-        if (!completed) return;
+  private async queueDiscordInteraction(interactionId: string) {
+    await this.queue(
+      "processDiscordInteraction",
+      { interactionId },
+      {
+        retry: DISCORD_QUEUE_RETRY
       }
-    } finally {
-      await this.discordQueue.markDrainFinished();
-      await this.discordQueue.pruneCompletedInteractionRecords();
-      await this.discordQueue.pruneStaleDebugResults();
-
-      if (await this.discordQueue.hasPendingJobs()) {
-        await this.scheduleDiscordQueueDrain(1);
-      }
-    }
-  }
-
-  private async processDiscordJob(job: DiscordQueuedJob) {
-    return this.runFiber(getDiscordJobFiberName(job.sequence), async (fiber) =>
-      this.processDiscordJobAttempt(job, fiber)
     );
   }
 
+  private async processQueuedDiscordInteraction(
+    interactionId: string,
+    queueItem?: QueueItem
+  ) {
+    const job =
+      await this.discordInteractions.getJobByInteractionId(interactionId);
+    if (!job) {
+      logInfo("Discord queued interaction has no active job", {
+        interactionId,
+        queueTaskId: queueItem?.id
+      });
+      return;
+    }
+
+    try {
+      await this.runFiber(getDiscordJobFiberName(job.interactionId), (fiber) =>
+        this.processDiscordJobAttempt(job, fiber, queueItem?.id)
+      );
+    } finally {
+      await this.discordInteractions.pruneCompletedInteractionRecords();
+      await this.discordInteractions.pruneStaleDebugResults();
+    }
+  }
+
   private async processDiscordJobAttempt(
-    job: DiscordQueuedJob,
-    fiber: FiberContext
+    job: DiscordInteractionJob,
+    fiber: FiberContext,
+    queueTaskId?: string
   ) {
     this.stashDiscordJobFiber(fiber, job, "starting");
-    let updatedJob = await this.discordQueue.recordAttempt(job);
+    let updatedJob = await this.discordInteractions.recordAttempt(job);
+    if (!updatedJob) {
+      logInfo("Discord queued interaction disappeared before processing", {
+        sequence: job.sequence,
+        interactionId: job.interactionId,
+        queueTaskId
+      });
+      return;
+    }
     const attempt = updatedJob.attempts;
     this.stashDiscordJobFiber(fiber, updatedJob, "attempt-recorded", attempt);
 
@@ -272,9 +306,8 @@ export class ChatAgent extends Agent<Env> {
         "response-delivered",
         attempt
       );
-      await this.discordQueue.completeJob(updatedJob, "completed");
+      await this.discordInteractions.completeJob(updatedJob, "completed");
       this.stashDiscordJobFiber(fiber, updatedJob, "completed", attempt);
-      return true;
     } catch (error) {
       const message = getErrorMessage(error);
       logError("Discord queued job failed", error, {
@@ -282,39 +315,40 @@ export class ChatAgent extends Agent<Env> {
         interactionId: updatedJob.interactionId,
         attempt,
         jobType: updatedJob.type,
-        responseTargetType: updatedJob.responseTarget.type
+        responseTargetType: updatedJob.responseTarget.type,
+        queueTaskId
       });
 
       if (attempt >= MAX_DISCORD_JOB_ATTEMPTS) {
         await this.deliverDiscordJobFailure(updatedJob, message);
-        await this.discordQueue.completeJob(updatedJob, "failed");
+        await this.discordInteractions.completeJob(updatedJob, "failed");
         this.stashDiscordJobFiber(fiber, updatedJob, "failed", attempt);
-        return true;
+        return;
       }
 
-      await this.discordQueue.putJob({
+      await this.discordInteractions.putJob({
         ...updatedJob,
         lastError: message,
         updatedAt: new Date().toISOString()
-      } satisfies DiscordQueuedJob);
-      await this.scheduleDiscordQueueDrain(Math.min(attempt * 5, 30));
+      } satisfies DiscordInteractionJob);
       this.stashDiscordJobFiber(fiber, updatedJob, "retry-scheduled", attempt);
-      return false;
+      throw error;
     }
   }
 
   private async deliverDiscordJobResponse(
-    job: DiscordQueuedJob,
+    job: DiscordInteractionJob,
     response: DiscordChatResponse
   ) {
     if (job.responseTarget.type === "debug") {
-      await this.discordQueue.putDebugResult(job.responseTarget.id, {
+      await this.discordInteractions.putDebugResult(job.responseTarget.id, {
         status: "completed",
         response
       });
       return;
     }
 
+    await waitForDiscordDeferredResponse(job);
     logInfo("Editing Discord interaction response", {
       sequence: job.sequence,
       interactionId: job.interactionId,
@@ -327,15 +361,19 @@ export class ChatAgent extends Agent<Env> {
     );
   }
 
-  private async deliverDiscordJobFailure(job: DiscordQueuedJob, error: string) {
+  private async deliverDiscordJobFailure(
+    job: DiscordInteractionJob,
+    error: string
+  ) {
     if (job.responseTarget.type === "debug") {
-      await this.discordQueue.putDebugResult(job.responseTarget.id, {
+      await this.discordInteractions.putDebugResult(job.responseTarget.id, {
         status: "failed",
         error
       });
       return;
     }
 
+    await waitForDiscordDeferredResponse(job);
     try {
       await editOriginalInteractionResponse(
         job.responseTarget,
@@ -349,23 +387,34 @@ export class ChatAgent extends Agent<Env> {
     }
   }
 
-  private async getDebugQueuedResponse(targetId: string) {
-    const result = await this.discordQueue.getDebugResult(targetId);
-    await this.discordQueue.deleteDebugResult(targetId);
-    if (!result) {
-      throw new Error(`Debug queued response ${targetId} was not produced.`);
+  private async waitForDebugQueuedResponse(targetId: string) {
+    const deadline = Date.now() + DISCORD_DEBUG_RESPONSE_TIMEOUT_MS;
+
+    while (Date.now() < deadline) {
+      const result = await this.discordInteractions.getDebugResult(targetId);
+      if (!result) {
+        await sleep(DISCORD_DEBUG_RESPONSE_POLL_MS);
+        continue;
+      }
+
+      await this.discordInteractions.deleteDebugResult(targetId);
+      if (result.status === "failed") {
+        throw new Error(result.error);
+      }
+      return result.response;
     }
-    if (result.status === "failed") {
-      throw new Error(result.error);
-    }
-    return result.response;
+
+    throw new Error(`Debug queued response ${targetId} was not produced.`);
   }
 
   private async answerQueuedDiscordChat(
-    job: DiscordQueuedChatJob,
+    job: DiscordInteractionChatJob,
     fiber: FiberContext,
     attempt: number
-  ): Promise<{ job: DiscordQueuedChatJob; response: DiscordChatResponse }> {
+  ): Promise<{
+    job: DiscordInteractionChatJob;
+    response: DiscordChatResponse;
+  }> {
     let updatedJob = job;
 
     if (!updatedJob.userMessageAppended) {
@@ -375,7 +424,7 @@ export class ChatAgent extends Agent<Env> {
         userMessageAppended: true,
         updatedAt: new Date().toISOString()
       };
-      await this.discordQueue.putJob(updatedJob);
+      await this.discordInteractions.putJob(updatedJob);
       this.stashDiscordJobFiber(
         fiber,
         updatedJob,
@@ -419,7 +468,7 @@ export class ChatAgent extends Agent<Env> {
       generatedResponse: turn.generatedResponse,
       updatedAt: new Date().toISOString()
     };
-    await this.discordQueue.putJob(updatedJob);
+    await this.discordInteractions.putJob(updatedJob);
     this.stashDiscordJobFiber(
       fiber,
       updatedJob,
@@ -433,7 +482,7 @@ export class ChatAgent extends Agent<Env> {
       assistantMessageAppended: true,
       updatedAt: new Date().toISOString()
     };
-    await this.discordQueue.putJob(updatedJob);
+    await this.discordInteractions.putJob(updatedJob);
     this.stashDiscordJobFiber(
       fiber,
       updatedJob,
@@ -444,7 +493,9 @@ export class ChatAgent extends Agent<Env> {
     return { job: updatedJob, response: turn.response };
   }
 
-  private async appendQueuedDiscordAssistantMessage(job: DiscordQueuedChatJob) {
+  private async appendQueuedDiscordAssistantMessage(
+    job: DiscordInteractionChatJob
+  ) {
     if (job.assistantMessageAppended) return job;
     if (!job.generatedResponse) return job;
 
@@ -458,8 +509,8 @@ export class ChatAgent extends Agent<Env> {
       ...job,
       assistantMessageAppended: true,
       updatedAt: new Date().toISOString()
-    } satisfies DiscordQueuedChatJob;
-    await this.discordQueue.putJob(updatedJob);
+    } satisfies DiscordInteractionChatJob;
+    await this.discordInteractions.putJob(updatedJob);
     return updatedJob;
   }
 
@@ -479,7 +530,7 @@ export class ChatAgent extends Agent<Env> {
 
   private stashDiscordJobFiber(
     fiber: FiberContext,
-    job: DiscordQueuedJob,
+    job: DiscordInteractionJob,
     phase: DiscordJobFiberPhase,
     attempt?: number
   ) {
@@ -494,13 +545,28 @@ export class ChatAgent extends Agent<Env> {
   }
 }
 
-function getDiscordJobFiberName(sequence: number) {
-  return `${DISCORD_JOB_FIBER_PREFIX}${sequence}`;
+function getDiscordJobFiberName(interactionId: string) {
+  return `${DISCORD_JOB_FIBER_PREFIX}${interactionId}`;
 }
 
-function getSequenceFromDiscordJobFiberName(name: string) {
-  const sequence = Number(name.slice(DISCORD_JOB_FIBER_PREFIX.length));
-  return Number.isFinite(sequence) ? sequence : undefined;
+function getInteractionIdFromDiscordJobFiberName(name: string) {
+  const interactionId = name.slice(DISCORD_JOB_FIBER_PREFIX.length);
+  return interactionId || undefined;
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForDiscordDeferredResponse(job: DiscordInteractionJob) {
+  if (job.responseTarget.type !== "discord") return;
+
+  const createdAtMs = Date.parse(job.createdAt);
+  if (!Number.isFinite(createdAtMs)) return;
+
+  const waitMs =
+    DISCORD_DEFERRED_RESPONSE_SETTLE_MS - (Date.now() - createdAtMs);
+  if (waitMs > 0) await sleep(waitMs);
 }
 
 function getDiscordJobFiberSnapshot(
