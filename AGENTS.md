@@ -5,6 +5,7 @@ STOP. Your knowledge of Cloudflare Workers APIs and limits may be outdated. Alwa
 ## Docs
 
 - https://developers.cloudflare.com/workers/
+- Long-running Agents: https://developers.cloudflare.com/agents/concepts/long-running-agents/
 - MCP: `https://docs.mcp.cloudflare.com/mcp`
 
 For all limits and quotas, retrieve from the product's `/platform/limits/` page. eg. `/workers/platform/limits`
@@ -51,6 +52,7 @@ If the application uses Durable Objects or Workflows, refer to the relevant best
 ## Project Architecture
 
 - This repo is a Discord webhook bot, not a web UI.
+- Treat each Discord conversation Agent as a long-running Cloudflare Agent: it should be a durable identity that wakes on Discord interactions or schedules, persists any work that matters, and must not rely on in-memory flags, timers, open requests, or closures surviving hibernation/eviction. Follow the Long-running Agents doc above when changing queueing, scheduling, recovery, memory, or multi-step tool work.
 - Keep Discord request verification and command routing in `src/discord.ts`; keep outbound Discord API, queue, turn, format, and shared types in focused modules under `src/discord/`.
 - Keep persistent agent/session orchestration in `src/agent.ts`.
 - Discord interactions should be durably queued in the per-conversation Agent before returning the deferred Discord response. Do not run model/tool work from the `/discord` route with `ctx.waitUntil`.
