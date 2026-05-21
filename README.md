@@ -112,7 +112,9 @@ curl -H "authorization: Bearer <debug-token>" \
   default to members with Manage Messages. It does not clear guild memory.
 - Responses are deferred after the interaction is durably queued, then the
   per-channel Agent drains queued jobs linearly and edits the original
-  interaction response after Workers AI finishes.
+  interaction response after Workers AI finishes. Each queued job attempt runs
+  in an Agent fiber so interrupted active work can clear the stuck processing
+  marker and resume from persisted queue state.
 - Guild memory is shared across channels in the same Discord guild. A
   guild-scoped `GuildMemory` Durable Object is the source of truth and handles
   concurrent writes from multiple channel Agents.

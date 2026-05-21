@@ -20,6 +20,11 @@ export type DiscordQueueScheduleDecision = {
   recoveredProcessing: boolean;
 };
 
+export type DiscordQueueRecoveryDecision = {
+  wasScheduled: boolean;
+  wasProcessing: boolean;
+};
+
 export type DiscordQueueScheduleOptions = {
   scheduledStaleMs: number;
   processingStaleMs: number;
@@ -202,6 +207,27 @@ export class DiscordJobQueue {
       meta.processing = false;
       delete meta.processingStartedAt;
       await txn.put(DISCORD_QUEUE_META_KEY, meta);
+    });
+  }
+
+  async recoverInterruptedDrain() {
+    return this.storage.transaction(async (txn) => {
+      const meta =
+        (await txn.get<DiscordQueueMeta>(DISCORD_QUEUE_META_KEY)) ??
+        getDefaultQueueMeta();
+      const wasScheduled = meta.scheduled;
+      const wasProcessing = meta.processing;
+
+      meta.scheduled = false;
+      delete meta.scheduledAt;
+      meta.processing = false;
+      delete meta.processingStartedAt;
+
+      await txn.put(DISCORD_QUEUE_META_KEY, meta);
+      return {
+        wasScheduled,
+        wasProcessing
+      } satisfies DiscordQueueRecoveryDecision;
     });
   }
 

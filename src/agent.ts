@@ -1,4 +1,4 @@
-import { Agent } from "agents";
+import { Agent, type FiberContext, type FiberRecoveryContext } from "agents";
 import { Session } from "agents/experimental/memory/session";
 import { createCompactFunction } from "agents/experimental/memory/utils";
 import { generateText } from "ai";
@@ -20,7 +20,7 @@ import {
   hydrateDiscordGeneratedResponse
 } from "./discord/turn";
 import type { DiscordChatRequest, DiscordChatResponse } from "./discord/types";
-import { getErrorMessage, logError, logInfo } from "./logging";
+import { getErrorMessage, logError, logInfo, logWarn } from "./logging";
 import { getGuildIdFromConversationName, GuildMemoryProvider } from "./memory";
 import {
   CHAT_MODEL,
@@ -34,6 +34,31 @@ const DISCORD_QUEUE_DRAIN_SECONDS = 13 * 60;
 const DISCORD_QUEUE_SCHEDULED_STALE_MS = 2 * 60 * 1000;
 const DISCORD_QUEUE_PROCESSING_STALE_MS = 20 * 60 * 1000;
 const DISCORD_QUEUE_DRAIN_PAYLOAD = { kind: "discord-queue-drain" } as const;
+const DISCORD_JOB_FIBER_PREFIX = "discord-job:";
+
+type DiscordJobFiberPhase =
+  | "starting"
+  | "attempt-recorded"
+  | "running"
+  | "user-message-appended"
+  | "generating-response"
+  | "generated-response-saved"
+  | "assistant-message-appended"
+  | "rehydrating-generated-response"
+  | "response-ready"
+  | "response-delivered"
+  | "completed"
+  | "retry-scheduled"
+  | "failed";
+
+type DiscordJobFiberSnapshot = {
+  sequence: number;
+  interactionId: string;
+  jobType: DiscordQueuedJob["type"];
+  attempt?: number;
+  phase: DiscordJobFiberPhase;
+  updatedAt: string;
+};
 
 export class ChatAgent extends Agent<Env> {
   private discordTurn = Promise.resolve();
@@ -128,6 +153,33 @@ export class ChatAgent extends Agent<Env> {
     return run;
   }
 
+  override async onFiberRecovered(ctx: FiberRecoveryContext) {
+    if (!ctx.name.startsWith(DISCORD_JOB_FIBER_PREFIX)) {
+      await super.onFiberRecovered(ctx);
+      return;
+    }
+
+    const snapshot = getDiscordJobFiberSnapshot(ctx.snapshot);
+    const recoveryDecision = await this.discordQueue.recoverInterruptedDrain();
+    logWarn("Recovered interrupted Discord job fiber", {
+      fiberId: ctx.id,
+      fiberName: ctx.name,
+      fiberAgeMs: Date.now() - ctx.createdAt,
+      sequence:
+        snapshot?.sequence ?? getSequenceFromDiscordJobFiberName(ctx.name),
+      interactionId: snapshot?.interactionId,
+      jobType: snapshot?.jobType,
+      attempt: snapshot?.attempt,
+      phase: snapshot?.phase,
+      wasScheduled: recoveryDecision.wasScheduled,
+      wasProcessing: recoveryDecision.wasProcessing
+    });
+
+    if (await this.discordQueue.hasPendingJobs()) {
+      await this.scheduleDiscordQueueDrain();
+    }
+  }
+
   private async scheduleDiscordQueueDrain(delaySeconds = 0) {
     const scheduleDecision = await this.discordQueue.markScheduledIfIdle({
       scheduledStaleMs: DISCORD_QUEUE_SCHEDULED_STALE_MS,
@@ -182,15 +234,29 @@ export class ChatAgent extends Agent<Env> {
   }
 
   private async processDiscordJob(job: DiscordQueuedJob) {
+    return this.runFiber(getDiscordJobFiberName(job.sequence), async (fiber) =>
+      this.processDiscordJobAttempt(job, fiber)
+    );
+  }
+
+  private async processDiscordJobAttempt(
+    job: DiscordQueuedJob,
+    fiber: FiberContext
+  ) {
+    this.stashDiscordJobFiber(fiber, job, "starting");
     let updatedJob = await this.discordQueue.recordAttempt(job);
     const attempt = updatedJob.attempts;
+    this.stashDiscordJobFiber(fiber, updatedJob, "attempt-recorded", attempt);
 
     try {
       let response: DiscordChatResponse;
+      this.stashDiscordJobFiber(fiber, updatedJob, "running", attempt);
       if (updatedJob.type === "chat") {
         const chatJob = updatedJob;
-        const result = await this.keepAliveWhile(() =>
-          this.answerQueuedDiscordChat(chatJob)
+        const result = await this.answerQueuedDiscordChat(
+          chatJob,
+          fiber,
+          attempt
         );
         updatedJob = result.job;
         response = result.response;
@@ -198,8 +264,16 @@ export class ChatAgent extends Agent<Env> {
         response = await clearDiscordSession(this.session);
       }
 
+      this.stashDiscordJobFiber(fiber, updatedJob, "response-ready", attempt);
       await this.deliverDiscordJobResponse(updatedJob, response);
+      this.stashDiscordJobFiber(
+        fiber,
+        updatedJob,
+        "response-delivered",
+        attempt
+      );
       await this.discordQueue.completeJob(updatedJob, "completed");
+      this.stashDiscordJobFiber(fiber, updatedJob, "completed", attempt);
       return true;
     } catch (error) {
       const message = getErrorMessage(error);
@@ -214,6 +288,7 @@ export class ChatAgent extends Agent<Env> {
       if (attempt >= MAX_DISCORD_JOB_ATTEMPTS) {
         await this.deliverDiscordJobFailure(updatedJob, message);
         await this.discordQueue.completeJob(updatedJob, "failed");
+        this.stashDiscordJobFiber(fiber, updatedJob, "failed", attempt);
         return true;
       }
 
@@ -223,6 +298,7 @@ export class ChatAgent extends Agent<Env> {
         updatedAt: new Date().toISOString()
       } satisfies DiscordQueuedJob);
       await this.scheduleDiscordQueueDrain(Math.min(attempt * 5, 30));
+      this.stashDiscordJobFiber(fiber, updatedJob, "retry-scheduled", attempt);
       return false;
     }
   }
@@ -286,7 +362,9 @@ export class ChatAgent extends Agent<Env> {
   }
 
   private async answerQueuedDiscordChat(
-    job: DiscordQueuedChatJob
+    job: DiscordQueuedChatJob,
+    fiber: FiberContext,
+    attempt: number
   ): Promise<{ job: DiscordQueuedChatJob; response: DiscordChatResponse }> {
     let updatedJob = job;
 
@@ -298,10 +376,22 @@ export class ChatAgent extends Agent<Env> {
         updatedAt: new Date().toISOString()
       };
       await this.discordQueue.putJob(updatedJob);
+      this.stashDiscordJobFiber(
+        fiber,
+        updatedJob,
+        "user-message-appended",
+        attempt
+      );
     }
 
     if (updatedJob.generatedResponse) {
       const generatedResponse = updatedJob.generatedResponse;
+      this.stashDiscordJobFiber(
+        fiber,
+        updatedJob,
+        "rehydrating-generated-response",
+        attempt
+      );
       updatedJob = await this.appendQueuedDiscordAssistantMessage(updatedJob);
       return {
         job: updatedJob,
@@ -312,6 +402,12 @@ export class ChatAgent extends Agent<Env> {
       };
     }
 
+    this.stashDiscordJobFiber(
+      fiber,
+      updatedJob,
+      "generating-response",
+      attempt
+    );
     const turn = await createDiscordAssistantTurn(
       this.env,
       this.session,
@@ -324,6 +420,12 @@ export class ChatAgent extends Agent<Env> {
       updatedAt: new Date().toISOString()
     };
     await this.discordQueue.putJob(updatedJob);
+    this.stashDiscordJobFiber(
+      fiber,
+      updatedJob,
+      "generated-response-saved",
+      attempt
+    );
 
     await this.session.appendMessage(turn.assistantMessage);
     updatedJob = {
@@ -332,6 +434,12 @@ export class ChatAgent extends Agent<Env> {
       updatedAt: new Date().toISOString()
     };
     await this.discordQueue.putJob(updatedJob);
+    this.stashDiscordJobFiber(
+      fiber,
+      updatedJob,
+      "assistant-message-appended",
+      attempt
+    );
 
     return { job: updatedJob, response: turn.response };
   }
@@ -368,4 +476,56 @@ export class ChatAgent extends Agent<Env> {
       )
     );
   }
+
+  private stashDiscordJobFiber(
+    fiber: FiberContext,
+    job: DiscordQueuedJob,
+    phase: DiscordJobFiberPhase,
+    attempt?: number
+  ) {
+    fiber.stash({
+      sequence: job.sequence,
+      interactionId: job.interactionId,
+      jobType: job.type,
+      attempt,
+      phase,
+      updatedAt: new Date().toISOString()
+    } satisfies DiscordJobFiberSnapshot);
+  }
+}
+
+function getDiscordJobFiberName(sequence: number) {
+  return `${DISCORD_JOB_FIBER_PREFIX}${sequence}`;
+}
+
+function getSequenceFromDiscordJobFiberName(name: string) {
+  const sequence = Number(name.slice(DISCORD_JOB_FIBER_PREFIX.length));
+  return Number.isFinite(sequence) ? sequence : undefined;
+}
+
+function getDiscordJobFiberSnapshot(
+  snapshot: unknown
+): DiscordJobFiberSnapshot | null {
+  if (!snapshot || typeof snapshot !== "object") return null;
+  const value = snapshot as Partial<DiscordJobFiberSnapshot>;
+  if (
+    typeof value.sequence !== "number" ||
+    typeof value.interactionId !== "string" ||
+    (value.jobType !== "chat" && value.jobType !== "reset") ||
+    typeof value.phase !== "string"
+  ) {
+    return null;
+  }
+
+  return {
+    sequence: value.sequence,
+    interactionId: value.interactionId,
+    jobType: value.jobType,
+    attempt: value.attempt,
+    phase: value.phase as DiscordJobFiberPhase,
+    updatedAt:
+      typeof value.updatedAt === "string"
+        ? value.updatedAt
+        : new Date(0).toISOString()
+  };
 }

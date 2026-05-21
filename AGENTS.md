@@ -57,6 +57,7 @@ If the application uses Durable Objects or Workflows, refer to the relevant best
 - Keep Discord request verification and command routing in `src/discord.ts`; keep outbound Discord API, queue, turn, format, and shared types in focused modules under `src/discord/`.
 - Keep persistent agent/session orchestration in `src/agent.ts`.
 - Discord interactions should be durably queued in the per-conversation Agent before returning the deferred Discord response. Do not run model/tool work from the `/discord` route with `ctx.waitUntil`.
+- Queued Discord job attempts run inside `runFiber()` for recoverable active execution. The custom Discord queue remains the source of truth for ordering, attempts, generated responses, and idempotent phase markers; fibers are only the active-work recovery wrapper. Keep fiber snapshots small and metadata-only, and use `onFiberRecovered()` to clear interrupted queue processing state and reschedule the drain.
 - Completed/failed Discord interaction dedupe records are pruned by `DiscordJobQueue.pruneCompletedInteractionRecords()` after the queue drains. Do not prune pending records.
 - Stale debug queue results are pruned by `DiscordJobQueue.pruneStaleDebugResults()` after the queue drains. Normal debug requests should still delete their own result after reading it.
 - Keep Workers AI model settings, compaction settings, and provider options in `src/model.ts`.
