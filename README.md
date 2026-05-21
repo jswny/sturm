@@ -109,10 +109,13 @@ curl -H "authorization: Bearer <debug-token>" \
 
 - The bot supports `/c text:<message>` and `/reset`.
 - `/reset` clears the current guild channel context only. Discord limits it by
-  default to members with Manage Messages.
+  default to members with Manage Messages. It does not clear guild memory.
 - Responses are deferred after the interaction is durably queued, then the
   per-channel Agent drains queued jobs linearly and edits the original
   interaction response after Workers AI finishes.
+- Guild memory is shared across channels in the same Discord guild. A
+  guild-scoped `GuildMemory` Durable Object is the source of truth and handles
+  concurrent writes from multiple channel Agents.
 - Completed queue dedupe records are pruned after seven days; pending jobs are
   preserved.
 - Stale debug queue results are pruned after one day; normal debug requests

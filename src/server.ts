@@ -4,6 +4,7 @@ import { handleDiscordRequest } from "./discord";
 import { logError } from "./logging";
 
 export { ChatAgent } from "./agent";
+export { GuildMemoryObject } from "./memory";
 
 type ServerEnv = Env & {
   DISCORD_APPLICATION_ID?: string;

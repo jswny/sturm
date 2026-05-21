@@ -21,6 +21,7 @@ import {
 } from "./discord/turn";
 import type { DiscordChatRequest, DiscordChatResponse } from "./discord/types";
 import { getErrorMessage, logError, logInfo } from "./logging";
+import { getGuildIdFromConversationName, GuildMemoryProvider } from "./memory";
 import {
   CHAT_MODEL,
   COMPACTION_PROVIDER_OPTIONS,
@@ -38,6 +39,14 @@ export class ChatAgent extends Agent<Env> {
   private discordTurn = Promise.resolve();
   private discordQueue = new DiscordJobQueue(this.ctx.storage);
   private session = Session.create(this)
+    .withContext("guild_memory", {
+      description:
+        "Durable memory shared by Sturm across all channels in this Discord guild. Store only concise, stable, reusable server facts, preferences, decisions, and conventions.",
+      maxTokens: 2000,
+      provider: new GuildMemoryProvider(this.env.GuildMemory, () =>
+        getGuildIdFromConversationName(this.name)
+      )
+    })
     .onCompaction(
       createCompactFunction({
         summarize: async (prompt) => {

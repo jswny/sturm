@@ -2,6 +2,7 @@ import {
   convertToModelMessages,
   generateText,
   stepCountIs,
+  type ToolSet,
   type UIMessage
 } from "ai";
 import { createWorkersAI } from "workers-ai-provider";
@@ -26,6 +27,8 @@ export type DiscordSessionMemory = {
   getHistory(): Promise<unknown[]>;
   getPathLength(): Promise<number>;
   clearMessages(): Promise<void>;
+  refreshSystemPrompt(): Promise<string>;
+  tools(): Promise<ToolSet>;
 };
 
 export function createDiscordUserMessage(
@@ -80,12 +83,15 @@ export async function createDiscordAssistantTurn(
       sessionAffinity
     }),
     providerOptions: REPLY_PROVIDER_OPTIONS,
-    system: createSystemPrompt(),
+    system: createDiscordTurnSystemPrompt(await session.refreshSystemPrompt()),
     messages: inlineDataUrls(await convertToModelMessages(history)),
-    tools: createDiscordTools(env, {
-      discordRequest: request,
-      onImageGenerated: (artifact) => imageArtifacts.push(artifact)
-    }),
+    tools: {
+      ...createDiscordTools(env, {
+        discordRequest: request,
+        onImageGenerated: (artifact) => imageArtifacts.push(artifact)
+      }),
+      ...(await session.tools())
+    },
     stopWhen: stepCountIs(5)
   });
   const assistantText = formatAssistantMessageText(result.text, imageArtifacts);
@@ -188,4 +194,11 @@ function bytesToBase64(bytes: Uint8Array) {
     binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
   }
   return btoa(binary);
+}
+
+function createDiscordTurnSystemPrompt(contextPrompt: string) {
+  if (!contextPrompt.trim()) return createSystemPrompt();
+  return `${createSystemPrompt()}
+
+${contextPrompt}`;
 }

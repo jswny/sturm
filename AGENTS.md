@@ -61,6 +61,9 @@ If the application uses Durable Objects or Workflows, refer to the relevant best
 - Stale debug queue results are pruned by `DiscordJobQueue.pruneStaleDebugResults()` after the queue drains. Normal debug requests should still delete their own result after reading it.
 - Keep Workers AI model settings, compaction settings, and provider options in `src/model.ts`.
 - Keep assistant prompt text in `src/prompts.ts`.
+- Guild memory must keep the Agents SDK memory APIs as the public model: use `Session.withContext("guild_memory", ...)`, `session.tools()`, and the SDK-generated `set_context` tool. Do not replace this with a custom memory tool unless explicitly requested.
+- Guild memory is shared across channels in the same guild, so the provider must treat it as multi-writer state. `GuildMemoryProvider` in `src/memory.ts` uses the `GuildMemory` Durable Object as the per-guild backing authority. Same-version writes are accepted, obvious append deltas are merged, and stale replacement edits return a clear conflict error through `set_context`. The Agents SDK provider API receives final block text rather than the raw `append`/`replace` action, so append handling is inferred from the text delta against the provider's last read snapshot.
+- `GuildMemory` Durable Objects are keyed as `discord:guild:<guild_id>:memory` and are the only storage for guild memory. Do not mirror guild memory to R2 unless explicitly requested. Channel Session history remains per guild channel.
 - Use `src/logging.ts` for app logs so operational errors keep consistent structured context. Do not log Discord interaction tokens, API keys, or raw request bodies.
 - Keep tool definitions grouped by domain in `src/tools/`, with `src/tools/index.ts` as the tool registry, and provider-specific tool clients in their own modules.
 - Tools should return clear plaintext model-facing results that state success or failure and the concrete action taken. This keeps chat history useful as a log of write tools and other tool activity.
@@ -68,7 +71,7 @@ If the application uses Durable Objects or Workflows, refer to the relevant best
 - Conversation identity must remain explicit:
   - Guild channels use `discord:guild:<guild_id>:channel:<channel_id>`.
   - Do not add fallback pooled channel keys.
-- `/reset` clears only the current scoped Session via `session.clearMessages()`.
+- `/reset` clears only the current scoped Session via `session.clearMessages()`; it does not clear `guild_memory`.
 - `webSearch` is backed by Kagi FastGPT in `src/search.ts` and requires `KAGI_API_KEY`.
 - Debug HTTP routes live in `src/debug.ts`, require `STURM_DEBUG_TOKEN`, and must reuse the same explicit Discord conversation keys and durable queue path as real interactions. Use stable test identifiers like `test-guild`, `test-channel`, and `test-user` unless real Discord IDs are explicitly needed.
 - Image generation is a chat tool backed by Workers AI in `src/images.ts` and stores artifacts in the `ARTIFACTS_BUCKET` R2 binding (`sturm-artifacts`) under `images/generated/`. Treat generated images as response artifacts: send them as Discord attachments or debug response data, but persist only R2 keys and metadata in durable queue/session state. Never store raw base64/image bytes in Session history or queued job records.
