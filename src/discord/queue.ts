@@ -8,7 +8,20 @@ import type {
 type DiscordQueueMeta = {
   nextSequence: number;
   scheduled: boolean;
+  scheduledAt?: string;
   processing: boolean;
+  processingStartedAt?: string;
+};
+
+export type DiscordQueueScheduleDecision = {
+  shouldSchedule: boolean;
+  recoveredScheduled: boolean;
+  recoveredProcessing: boolean;
+};
+
+export type DiscordQueueScheduleOptions = {
+  scheduledStaleMs: number;
+  processingStaleMs: number;
 };
 
 export type DiscordQueuedChatJob = {
@@ -111,16 +124,46 @@ export class DiscordJobQueue {
     });
   }
 
-  async markScheduledIfIdle() {
+  async markScheduledIfIdle(options: DiscordQueueScheduleOptions) {
     return this.storage.transaction(async (txn) => {
       const meta =
         (await txn.get<DiscordQueueMeta>(DISCORD_QUEUE_META_KEY)) ??
         getDefaultQueueMeta();
-      if (meta.scheduled || meta.processing) return false;
+      const now = new Date();
+      const recoveredScheduled = clearStaleMarker(
+        meta,
+        "scheduled",
+        "scheduledAt",
+        options.scheduledStaleMs,
+        now
+      );
+      const recoveredProcessing = clearStaleMarker(
+        meta,
+        "processing",
+        "processingStartedAt",
+        options.processingStaleMs,
+        now
+      );
+
+      if (meta.scheduled || meta.processing) {
+        if (recoveredScheduled || recoveredProcessing) {
+          await txn.put(DISCORD_QUEUE_META_KEY, meta);
+        }
+        return {
+          shouldSchedule: false,
+          recoveredScheduled,
+          recoveredProcessing
+        } satisfies DiscordQueueScheduleDecision;
+      }
 
       meta.scheduled = true;
+      meta.scheduledAt = now.toISOString();
       await txn.put(DISCORD_QUEUE_META_KEY, meta);
-      return true;
+      return {
+        shouldSchedule: true,
+        recoveredScheduled,
+        recoveredProcessing
+      } satisfies DiscordQueueScheduleDecision;
     });
   }
 
@@ -130,6 +173,7 @@ export class DiscordJobQueue {
         (await txn.get<DiscordQueueMeta>(DISCORD_QUEUE_META_KEY)) ??
         getDefaultQueueMeta();
       meta.scheduled = false;
+      delete meta.scheduledAt;
       await txn.put(DISCORD_QUEUE_META_KEY, meta);
     });
   }
@@ -140,7 +184,9 @@ export class DiscordJobQueue {
         (await txn.get<DiscordQueueMeta>(DISCORD_QUEUE_META_KEY)) ??
         getDefaultQueueMeta();
       meta.scheduled = false;
+      delete meta.scheduledAt;
       meta.processing = true;
+      meta.processingStartedAt = new Date().toISOString();
       await txn.put(DISCORD_QUEUE_META_KEY, meta);
     });
   }
@@ -151,6 +197,7 @@ export class DiscordJobQueue {
         (await txn.get<DiscordQueueMeta>(DISCORD_QUEUE_META_KEY)) ??
         getDefaultQueueMeta();
       meta.processing = false;
+      delete meta.processingStartedAt;
       await txn.put(DISCORD_QUEUE_META_KEY, meta);
     });
   }
@@ -311,6 +358,32 @@ function getDefaultQueueMeta(): DiscordQueueMeta {
     scheduled: false,
     processing: false
   };
+}
+
+function clearStaleMarker(
+  meta: DiscordQueueMeta,
+  markerKey: "scheduled" | "processing",
+  timestampKey: "scheduledAt" | "processingStartedAt",
+  staleMs: number,
+  now: Date
+) {
+  if (!meta[markerKey]) return false;
+
+  const timestamp = meta[timestampKey];
+  if (!timestamp) {
+    meta[markerKey] = false;
+    delete meta[timestampKey];
+    return true;
+  }
+
+  const timestampMs = Date.parse(timestamp);
+  if (!Number.isFinite(timestampMs) || now.getTime() - timestampMs > staleMs) {
+    meta[markerKey] = false;
+    delete meta[timestampKey];
+    return true;
+  }
+
+  return false;
 }
 
 function getDiscordJobKey(sequence: number) {

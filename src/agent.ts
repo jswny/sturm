@@ -27,6 +27,8 @@ import {
 
 const MAX_DISCORD_JOB_ATTEMPTS = 3;
 const DISCORD_QUEUE_DRAIN_SECONDS = 13 * 60;
+const DISCORD_QUEUE_SCHEDULED_STALE_MS = 2 * 60 * 1000;
+const DISCORD_QUEUE_PROCESSING_STALE_MS = 20 * 60 * 1000;
 const DISCORD_QUEUE_DRAIN_PAYLOAD = { kind: "discord-queue-drain" } as const;
 
 export class ChatAgent extends Agent<Env> {
@@ -115,8 +117,20 @@ export class ChatAgent extends Agent<Env> {
   }
 
   private async scheduleDiscordQueueDrain(delaySeconds = 0) {
-    const shouldSchedule = await this.discordQueue.markScheduledIfIdle();
-    if (!shouldSchedule) return;
+    const scheduleDecision = await this.discordQueue.markScheduledIfIdle({
+      scheduledStaleMs: DISCORD_QUEUE_SCHEDULED_STALE_MS,
+      processingStaleMs: DISCORD_QUEUE_PROCESSING_STALE_MS
+    });
+    if (
+      scheduleDecision.recoveredScheduled ||
+      scheduleDecision.recoveredProcessing
+    ) {
+      logInfo("Recovered stale Discord queue state", {
+        recoveredScheduled: scheduleDecision.recoveredScheduled,
+        recoveredProcessing: scheduleDecision.recoveredProcessing
+      });
+    }
+    if (!scheduleDecision.shouldSchedule) return;
 
     try {
       await this.schedule(delaySeconds, "processDiscordQueue", {
