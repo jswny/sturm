@@ -112,6 +112,7 @@ async function replyToDebugChat(payload: DebugChatPayload, env: DebugEnv) {
     attachments: response.attachments?.map((attachment) => ({
       filename: attachment.filename,
       mimeType: attachment.mimeType,
+      r2Key: attachment.r2Key,
       description: attachment.description,
       base64: attachment.base64,
       dataUrl: `data:${attachment.mimeType};base64,${attachment.base64}`

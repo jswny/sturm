@@ -31,6 +31,7 @@ export type DiscordDebugResponseTarget = {
 export type DiscordResponseAttachment = {
   filename: string;
   mimeType: string;
+  r2Key?: string;
   base64: string;
   description?: string;
 };

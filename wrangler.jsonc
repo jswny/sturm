@@ -12,6 +12,12 @@
     "binding": "AI",
     "remote": true
   },
+  "r2_buckets": [
+    {
+      "binding": "ARTIFACTS_BUCKET",
+      "bucket_name": "sturm-artifacts"
+    }
+  ],
   "durable_objects": {
     "bindings": [
       {

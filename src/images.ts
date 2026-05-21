@@ -1,6 +1,8 @@
 import { logError, logWarn } from "./logging";
 
-export type ImageEnv = Env;
+export type ImageEnv = Env & {
+  ARTIFACTS_BUCKET: R2Bucket;
+};
 
 export type GeneratedImage = {
   id: string;
@@ -8,6 +10,7 @@ export type GeneratedImage = {
   model: string;
   mimeType: string;
   filename: string;
+  r2Key: string;
   base64: string;
   width: number;
   height: number;
@@ -15,6 +18,7 @@ export type GeneratedImage = {
 
 export type GenerateImageResponse = {
   id?: string;
+  r2Key?: string;
   prompt: string;
   model: string;
   width: number;
@@ -116,25 +120,65 @@ export async function generateImage(
 
   const id = crypto.randomUUID();
   const format = getImageFormat(result.image);
+  const filename = `sturm-${id}.${format.extension}`;
   const artifact = {
     id,
     prompt,
     model: IMAGE_MODEL,
     mimeType: format.mimeType,
-    filename: `sturm-${id}.${format.extension}`,
+    filename,
+    r2Key: createGeneratedImageKey(id, format.extension),
     base64: result.image,
     width,
     height
   };
 
+  try {
+    await env.ARTIFACTS_BUCKET.put(
+      artifact.r2Key,
+      base64ToBytes(artifact.base64),
+      {
+        httpMetadata: {
+          contentType: artifact.mimeType
+        }
+      }
+    );
+  } catch (error) {
+    logError("Generated image R2 storage failed", error, {
+      model: IMAGE_MODEL,
+      r2Key: artifact.r2Key,
+      width,
+      height
+    });
+    return {
+      response: {
+        prompt,
+        model: IMAGE_MODEL,
+        width,
+        height,
+        error: "Generated image could not be stored."
+      }
+    };
+  }
+
   return {
     artifact,
     response: {
       id,
+      r2Key: artifact.r2Key,
       prompt,
       model: IMAGE_MODEL,
       width,
       height
     }
   };
+}
+
+function createGeneratedImageKey(id: string, extension: string) {
+  const date = new Date().toISOString().slice(0, 10);
+  return `images/generated/${date}/${id}.${extension}`;
+}
+
+function base64ToBytes(base64: string) {
+  return Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
 }

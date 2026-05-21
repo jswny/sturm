@@ -9,6 +9,7 @@ import {
 
 const generateImageResponseSchema = z.object({
   id: z.string().optional().describe("Generated image artifact ID"),
+  r2Key: z.string().optional().describe("Stored image object key"),
   prompt: z.string().describe("The prompt used to generate the image"),
   model: z.string().describe("The image generation model"),
   width: z.number().describe("Generated image width in pixels"),
@@ -21,13 +22,15 @@ function formatGenerateImageOutput(output: GenerateImageResponse) {
     return `Image generation failed: ${output.error}`;
   }
 
-  return [
+  const lines = [
     `Generated image artifact: ${output.id}`,
     `Prompt: ${output.prompt}`,
     `Model: ${output.model}`,
     `Size: ${output.width}x${output.height}`,
     "The image will be attached to the response. Do not include raw image data in the chat response."
-  ].join("\n");
+  ];
+  if (output.r2Key) lines.splice(1, 0, `Stored image key: ${output.r2Key}`);
+  return lines.join("\n");
 }
 
 export function createImageTools(

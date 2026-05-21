@@ -87,6 +87,7 @@ export async function createDiscordAssistantResponse(
     attachments: imageArtifacts.map((artifact) => ({
       filename: artifact.filename,
       mimeType: artifact.mimeType,
+      r2Key: artifact.r2Key,
       base64: artifact.base64,
       description: `Generated image for: ${artifact.prompt}`
     }))

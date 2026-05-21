@@ -33,6 +33,12 @@ npx wrangler secret put DISCORD_TOKEN
 npx wrangler secret put KAGI_API_KEY
 ```
 
+Create the R2 bucket used for generated image artifacts before deploying:
+
+```bash
+npx wrangler r2 bucket create sturm-artifacts
+```
+
 `DISCORD_APPLICATION_ID` is used for health output and command registration.
 `DISCORD_TOKEN` is used by the Worker for authenticated Discord bot API tools
 and command registration.
@@ -112,7 +118,9 @@ curl -H "authorization: Bearer <debug-token>" \
   delete their result after it is returned.
 - Web search and URL summarization require `KAGI_API_KEY`.
 - URL archiving creates archive.today latest links from chat tool calls.
-- Image generation uses Workers AI and returns Discord attachments.
+- Image generation uses Workers AI, stores generated artifacts in the
+  `sturm-artifacts` R2 bucket under `images/generated/`, and returns Discord
+  attachments.
 - Nickname postfix changes require `DISCORD_TOKEN` and Discord Manage Nicknames
   permission for the `/c` caller. Discord API errors are surfaced when bot
   permissions or role hierarchy block a target.

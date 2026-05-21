@@ -65,7 +65,7 @@ function formatImageArtifactMessage(artifacts: GeneratedImage[]) {
   return artifacts
     .map(
       (artifact) =>
-        `Generated image:\nprompt: ${artifact.prompt}\nmodel: ${artifact.model}\nsize: ${artifact.width}x${artifact.height}\nstatus: sent as attachment`
+        `Generated image:\nprompt: ${artifact.prompt}\nmodel: ${artifact.model}\nsize: ${artifact.width}x${artifact.height}\nr2_key: ${artifact.r2Key}\nstatus: sent as attachment`
     )
     .join("\n\n");
 }
