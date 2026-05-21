@@ -1,4 +1,5 @@
 export type LogContext = Record<string, unknown>;
+type LogLevel = "info" | "warn" | "error";
 
 export function logInfo(message: string, context?: LogContext) {
   log("info", message, context);
@@ -23,18 +24,13 @@ export function getErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
 
-function log(
-  level: "info" | "warn" | "error",
-  message: string,
-  context?: LogContext
-) {
+function log(level: LogLevel, message: string, context?: LogContext) {
   const details = removeUndefined(context);
-  if (Object.keys(details).length === 0) {
-    console[level](message);
-    return;
-  }
-
-  console[level](message, details);
+  console[level]({
+    ...details,
+    level,
+    message
+  });
 }
 
 function serializeError(error: unknown) {

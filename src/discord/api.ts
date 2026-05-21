@@ -45,8 +45,11 @@ export async function editOriginalInteractionResponse(
 
   if (!response.ok) {
     const body = await response.text();
-    throw new Error(
-      `Discord original response edit failed: ${response.status} ${body}`
+    throw new DiscordApiError(
+      `Discord original response edit failed: ${response.status} ${body}`,
+      response.status,
+      body,
+      getDiscordErrorCode(body)
     );
   }
 }

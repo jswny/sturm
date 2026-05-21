@@ -4,7 +4,7 @@ import {
   overwriteGuildApplicationCommands
 } from "./discord/api";
 import { GUILD_COMMANDS } from "./discord/commands";
-import { logInfo, logWarn } from "./logging";
+import { logError, logInfo, logWarn } from "./logging";
 
 type AdminEnv = Env & {
   DISCORD_APPLICATION_ID?: string;
@@ -43,6 +43,7 @@ async function registerCommandsInAllGuilds(env: AdminEnv) {
   const token = env.DISCORD_TOKEN?.trim();
 
   if (!applicationId) {
+    logWarn("Discord command registration missing application ID");
     return Response.json(
       { ok: false, error: "DISCORD_APPLICATION_ID is not configured." },
       { status: 500 }
@@ -50,13 +51,25 @@ async function registerCommandsInAllGuilds(env: AdminEnv) {
   }
 
   if (!token) {
+    logWarn("Discord command registration missing bot token");
     return Response.json(
       { ok: false, error: "DISCORD_TOKEN is not configured." },
       { status: 500 }
     );
   }
 
-  const guilds = await getCurrentUserGuilds(token);
+  let guilds: Awaited<ReturnType<typeof getCurrentUserGuilds>>;
+  try {
+    guilds = await getCurrentUserGuilds(token);
+  } catch (error) {
+    logDiscordAdminFailure("Discord guild list fetch failed", error, {
+      operation: "registerCommands"
+    });
+    return Response.json(
+      { ok: false, error: formatDiscordAdminError(error) },
+      { status: 502 }
+    );
+  }
   const commandNames = GUILD_COMMANDS.map((command) => command.name);
   const results: RegisterCommandsResult[] = [];
 
@@ -81,11 +94,14 @@ async function registerCommandsInAllGuilds(env: AdminEnv) {
       });
     } catch (error) {
       const message = formatDiscordAdminError(error);
-      logWarn("Discord guild command registration failed", {
-        guildId: guild.id,
-        guildName: guild.name,
-        error: message
-      });
+      logDiscordAdminFailure(
+        "Discord guild command registration failed",
+        error,
+        {
+          guildId: guild.id,
+          guildName: guild.name
+        }
+      );
       results.push({
         guildId: guild.id,
         guildName: guild.name,
@@ -104,6 +120,24 @@ async function registerCommandsInAllGuilds(env: AdminEnv) {
     commandNames,
     results
   });
+}
+
+function logDiscordAdminFailure(
+  message: string,
+  error: unknown,
+  context: Record<string, unknown>
+) {
+  if (error instanceof DiscordApiError) {
+    logWarn(message, {
+      ...context,
+      discordStatus: error.status,
+      discordCode: error.code,
+      error: formatDiscordAdminError(error)
+    });
+    return;
+  }
+
+  logError(message, error, context);
 }
 
 function formatDiscordAdminError(error: unknown) {

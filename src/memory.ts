@@ -1,5 +1,6 @@
 import type { WritableContextProvider } from "agents/experimental/memory/session";
 import { DurableObject } from "cloudflare:workers";
+import { logWarn } from "./logging";
 
 const GUILD_MEMORY_STATE_KEY = "guild-memory";
 
@@ -75,6 +76,14 @@ export class GuildMemoryObject extends DurableObject<Env> {
       const mergedContent = appendMemorySuffix(current.content, suffix);
       return this.writeMemory(current, mergedContent);
     }
+
+    logWarn("Guild memory write conflict", {
+      currentVersion: current.version,
+      baseVersion: update.baseVersion,
+      currentLength: current.content.length,
+      baseLength: baseContent.length,
+      nextLength: nextContent.length
+    });
 
     throw new Error(
       "Guild memory changed while this turn was running. Reload memory and retry the edit."

@@ -110,7 +110,13 @@ export class ChatAgent extends Agent<Env> {
 
   override async onStart(props?: Record<string, unknown>) {
     await super.onStart(props);
-    await this.scheduleEvery(HOUSEKEEPING_INTERVAL_SECONDS, "housekeeping");
+    try {
+      await this.scheduleEvery(HOUSEKEEPING_INTERVAL_SECONDS, "housekeeping");
+    } catch (error) {
+      logError("Discord housekeeping schedule registration failed", error, {
+        agentName: this.name
+      });
+    }
   }
 
   async enqueueDiscordChat(input: DiscordInteractionChatInput) {
@@ -168,15 +174,23 @@ export class ChatAgent extends Agent<Env> {
   }
 
   async housekeeping() {
-    const [completedInteractionRecords, staleDebugResults] = await Promise.all([
-      this.discordInteractions.pruneCompletedInteractionRecords(),
-      this.discordInteractions.pruneStaleDebugResults()
-    ]);
+    try {
+      const [completedInteractionRecords, staleDebugResults] =
+        await Promise.all([
+          this.discordInteractions.pruneCompletedInteractionRecords(),
+          this.discordInteractions.pruneStaleDebugResults()
+        ]);
 
-    if (completedInteractionRecords > 0 || staleDebugResults > 0) {
-      logInfo("Discord housekeeping pruned stale records", {
-        completedInteractionRecords,
-        staleDebugResults
+      if (completedInteractionRecords > 0 || staleDebugResults > 0) {
+        logInfo("Discord housekeeping pruned stale records", {
+          agentName: this.name,
+          completedInteractionRecords,
+          staleDebugResults
+        });
+      }
+    } catch (error) {
+      logError("Discord housekeeping failed", error, {
+        agentName: this.name
       });
     }
   }
@@ -246,7 +260,20 @@ export class ChatAgent extends Agent<Env> {
     });
 
     if (active && interactionId) {
-      await this.queueDiscordInteraction(interactionId);
+      try {
+        await this.queueDiscordInteraction(interactionId);
+      } catch (error) {
+        logError("Recovered Discord job fiber requeue failed", error, {
+          fiberId: ctx.id,
+          fiberName: ctx.name,
+          sequence: snapshot?.sequence,
+          interactionId,
+          jobType: snapshot?.jobType,
+          attempt: snapshot?.attempt,
+          phase: snapshot?.phase
+        });
+        throw error;
+      }
     }
   }
 
@@ -423,6 +450,10 @@ export class ChatAgent extends Agent<Env> {
       return result.response;
     }
 
+    logWarn("Debug queued response timed out", {
+      targetId,
+      timeoutMs: DISCORD_DEBUG_RESPONSE_TIMEOUT_MS
+    });
     throw new Error(`Debug queued response ${targetId} was not produced.`);
   }
 

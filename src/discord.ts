@@ -15,7 +15,7 @@ import type {
   DiscordResponseTarget,
   DiscordUserContext
 } from "./discord/types";
-import { logWarn } from "./logging";
+import { logError, logWarn } from "./logging";
 
 export type {
   DiscordChatRequest,
@@ -112,7 +112,12 @@ export async function handleDiscordRequest(
       return guildOnlyInteractionResponse();
     }
 
-    await enqueueCommand(interaction, text, env);
+    try {
+      await enqueueCommand(interaction, text, env);
+    } catch (error) {
+      logDiscordCommandError("Discord /c enqueue failed", error, interaction);
+      throw error;
+    }
 
     return interactionJson({
       type: InteractionResponseType.DeferredChannelMessageWithSource
@@ -124,7 +129,16 @@ export async function handleDiscordRequest(
       return guildOnlyInteractionResponse();
     }
 
-    await enqueueResetCommand(interaction, env);
+    try {
+      await enqueueResetCommand(interaction, env);
+    } catch (error) {
+      logDiscordCommandError(
+        "Discord /reset enqueue failed",
+        error,
+        interaction
+      );
+      throw error;
+    }
 
     return interactionJson({
       type: InteractionResponseType.DeferredChannelMessageWithSource,
@@ -266,7 +280,16 @@ async function verifyDiscordRequest(
   const timestamp = request.headers.get("x-signature-timestamp");
   if (!signature || !timestamp || !env.DISCORD_PUBLIC_KEY) return false;
 
-  return verifyKey(body, signature, timestamp, env.DISCORD_PUBLIC_KEY);
+  try {
+    return verifyKey(body, signature, timestamp, env.DISCORD_PUBLIC_KEY);
+  } catch (error) {
+    logError("Discord request verification threw", error, {
+      hasSignature: Boolean(signature),
+      hasTimestamp: Boolean(timestamp),
+      hasPublicKey: Boolean(env.DISCORD_PUBLIC_KEY)
+    });
+    return false;
+  }
 }
 
 function json(body: unknown, init?: ResponseInit) {
@@ -294,4 +317,19 @@ function guildOnlyInteractionResponse() {
     },
     { status: 200 }
   );
+}
+
+function logDiscordCommandError(
+  message: string,
+  error: unknown,
+  interaction: APIChatInputApplicationCommandInteraction
+) {
+  logError(message, error, {
+    interactionId: interaction.id,
+    applicationId: interaction.application_id,
+    guildId: interaction.guild_id,
+    channelId: interaction.channel_id,
+    commandName: interaction.data.name,
+    userId: getUserId(interaction)
+  });
 }

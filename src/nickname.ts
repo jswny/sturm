@@ -5,6 +5,7 @@ import {
   modifyGuildMemberNickname
 } from "./discord/api";
 import { hasDiscordPermission } from "./discord/permissions";
+import { logError, logWarn } from "./logging";
 
 const SPECIAL_SPACE = " ";
 
@@ -92,6 +93,7 @@ export async function setNicknamePostfix(
       changed: newNickname !== oldNickname
     };
   } catch (error) {
+    logNicknameOperationFailure("set", error, context, guard.targetUserId);
     return failure(
       "set",
       context,
@@ -159,6 +161,7 @@ export async function clearNicknamePostfix(
       changed: baseNickname !== oldNickname
     };
   } catch (error) {
+    logNicknameOperationFailure("cleared", error, context, guard.targetUserId);
     return failure(
       "cleared",
       context,
@@ -249,6 +252,32 @@ function failure(
     targetUserId,
     error
   };
+}
+
+function logNicknameOperationFailure(
+  action: NicknameResponse["action"],
+  error: unknown,
+  context: NicknameRequestContext,
+  targetUserId: string
+) {
+  const logContext = {
+    action,
+    guildId: context.guildId,
+    callerUserId: context.userId,
+    targetUserId
+  };
+
+  if (error instanceof DiscordApiError) {
+    logWarn("Discord nickname API request failed", {
+      ...logContext,
+      discordStatus: error.status,
+      discordCode: error.code,
+      error: formatNicknameError(error)
+    });
+    return;
+  }
+
+  logError("Discord nickname operation failed", error, logContext);
 }
 
 function formatNicknameError(error: unknown) {

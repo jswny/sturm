@@ -63,6 +63,10 @@ export async function searchWeb(
   const apiKey = env.KAGI_API_KEY?.trim();
 
   if (!apiKey) {
+    logWarn("Kagi search skipped because API key is not configured", {
+      provider: "kagi",
+      endpoint: "fastgpt"
+    });
     return {
       query,
       results: [],
@@ -143,6 +147,10 @@ export async function summarizeUrl(
   const apiKey = env.KAGI_API_KEY?.trim();
 
   if (!apiKey) {
+    logWarn("Kagi summarize skipped because API key is not configured", {
+      provider: "kagi",
+      endpoint: "summarize"
+    });
     return {
       url,
       error: "KAGI_API_KEY is not configured."
