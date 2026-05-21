@@ -9,7 +9,7 @@ export { GuildMemoryObject } from "./memory";
 type ServerEnv = Env & {
   DISCORD_APPLICATION_ID?: string;
   DISCORD_TOKEN?: string;
-  STURM_DEBUG_TOKEN?: string;
+  STURM_DEBUG_ENABLED?: string;
 };
 
 export default {

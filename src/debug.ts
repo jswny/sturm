@@ -2,7 +2,7 @@ import { getAgentByName } from "agents";
 import { logWarn } from "./logging";
 
 type DebugEnv = Env & {
-  STURM_DEBUG_TOKEN?: string;
+  STURM_DEBUG_ENABLED?: string;
 };
 
 type DebugSurface = {
@@ -38,8 +38,9 @@ export async function handleDebugRequest(
   const url = new URL(request.url);
   if (!url.pathname.startsWith("/debug/")) return null;
 
-  const authResponse = authorizeDebugRequest(request, env);
-  if (authResponse) return authResponse;
+  if (!isDebugEnabled(env)) {
+    return json({ error: "Debug endpoints are disabled." }, { status: 404 });
+  }
 
   if (request.method !== "POST") {
     return json({ error: "Method not allowed" }, { status: 405 });
@@ -61,18 +62,8 @@ export async function handleDebugRequest(
   return json({ error: "Unknown debug endpoint" }, { status: 404 });
 }
 
-function authorizeDebugRequest(request: Request, env: DebugEnv) {
-  const token = env.STURM_DEBUG_TOKEN?.trim();
-  if (!token) {
-    return json({ error: "Debug endpoints are disabled." }, { status: 503 });
-  }
-
-  const expected = `Bearer ${token}`;
-  if (request.headers.get("authorization") !== expected) {
-    return json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  return null;
+function isDebugEnabled(env: DebugEnv) {
+  return env.STURM_DEBUG_ENABLED?.trim().toLowerCase() === "true";
 }
 
 async function replyToDebugChat(payload: DebugChatPayload, env: DebugEnv) {

@@ -8,7 +8,6 @@ interface __BaseEnv_Env {
 	DISCORD_TOKEN: string;
 	DISCORD_TEST_GUILD_ID: string;
 	KAGI_API_KEY: string;
-	STURM_DEBUG_TOKEN: string;
 	ChatAgent: DurableObjectNamespace<import("./src/server").ChatAgent>;
 	GuildMemory: DurableObjectNamespace<import("./src/server").GuildMemoryObject>;
 }
@@ -24,5 +23,5 @@ type StringifyValues<EnvType extends Record<string, unknown>> = {
 	[Binding in keyof EnvType]: EnvType[Binding] extends string ? EnvType[Binding] : string;
 };
 declare namespace NodeJS {
-	interface ProcessEnv extends StringifyValues<Pick<Cloudflare.Env, "DISCORD_PUBLIC_KEY" | "DISCORD_APPLICATION_ID" | "DISCORD_TOKEN" | "DISCORD_TEST_GUILD_ID" | "KAGI_API_KEY" | "STURM_DEBUG_TOKEN">> {}
+	interface ProcessEnv extends StringifyValues<Pick<Cloudflare.Env, "DISCORD_PUBLIC_KEY" | "DISCORD_APPLICATION_ID" | "DISCORD_TOKEN" | "DISCORD_TEST_GUILD_ID" | "KAGI_API_KEY">> {}
 }

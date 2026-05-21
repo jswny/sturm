@@ -11,8 +11,8 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev",
-    "start": "wrangler dev",
+    "dev": "wrangler dev --var STURM_DEBUG_ENABLED:true",
+    "start": "wrangler dev --var STURM_DEBUG_ENABLED:true",
     "deploy": "wrangler deploy",
     "types": "wrangler types env.d.ts --include-runtime false",
     "format": "oxfmt --write .",

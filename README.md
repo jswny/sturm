@@ -21,7 +21,6 @@ DISCORD_PUBLIC_KEY=
 DISCORD_APPLICATION_ID=
 DISCORD_TOKEN=
 KAGI_API_KEY=
-STURM_DEBUG_TOKEN=
 ```
 
 Restart `npm run dev` after changing `.dev.vars`.
@@ -84,23 +83,21 @@ not implement its own bearer-token authentication.
 
 Debug locally without Discord:
 
-Set `STURM_DEBUG_TOKEN` in `.dev.vars`, then use that same value in the
-authorization header. Debug chat and reset requests use the same durable
-per-conversation Agents SDK queue as real Discord interactions, then wait for
-and return the queued result.
+`npm run dev` enables debug endpoints by passing
+`STURM_DEBUG_ENABLED=true` to Wrangler. Debug chat and reset requests use the
+same durable per-conversation Agents SDK queue as real Discord interactions,
+then wait for and return the queued result.
 For permission-gated tools, include a Discord permission bitfield in
 `permissions.user`; for example, Manage Nicknames is `134217728`.
 
 ```bash
-curl -H "authorization: Bearer <debug-token>" \
-  -H "content-type: application/json" \
+curl -H "content-type: application/json" \
   -d '{"surface":{"type":"guild_channel","guildId":"test-guild","channelId":"test-channel"},"user":{"id":"test-user","displayName":"Test User"},"text":"hello"}' \
   http://localhost:8787/debug/chat
 ```
 
 ```bash
-curl -H "authorization: Bearer <debug-token>" \
-  -H "content-type: application/json" \
+curl -H "content-type: application/json" \
   -d '{"surface":{"type":"guild_channel","guildId":"test-guild","channelId":"test-channel"}}' \
   http://localhost:8787/debug/reset
 ```
