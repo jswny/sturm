@@ -80,7 +80,7 @@ export class ChatAgent extends Agent<Env> {
   private session = Session.create(this)
     .withContext("guild_memory", {
       description:
-        "Durable memory shared by Sturm across all channels in this Discord guild. Store only concise, stable, reusable server facts, preferences, decisions, and conventions.",
+        "Durable memory shared by Sturm across all channels in this Discord guild. Store concise, stable, reusable guild-level context, including casual server lore, running jokes, and friend-server banter. Store subjective or teasing claims about people as user-provided lore rather than verified facts.",
       maxTokens: 2000,
       provider: new GuildMemoryProvider(this.env.GuildMemory, () =>
         getGuildIdFromConversationName(this.name)
