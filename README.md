@@ -122,9 +122,11 @@ curl -H "content-type: application/json" \
 - Stale debug queue results are pruned after one day; normal debug requests
   delete their result after it is returned.
 - Web search and URL summarization require `KAGI_API_KEY`.
-- Code Mode is the chat model's only outer tool. It runs generated JavaScript
-  in an isolated Worker sandbox and can call Sturm's web, archive, image,
-  nickname, and memory tools.
+- Code Mode is the chat model's only outer tool. It is currently a
+  Cloudflare beta/experimental API. Sturm runs generated JavaScript in an
+  isolated Worker sandbox with direct outbound network access disabled, and
+  that sandbox can call Sturm's web, archive, image, nickname, and memory
+  tools.
 - URL archiving creates archive.today latest links from chat tool calls.
 - Image generation uses Workers AI, stores generated artifacts in the
   `sturm-artifacts` R2 bucket under `images/generated/`, and returns Discord
