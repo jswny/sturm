@@ -2,11 +2,12 @@ import type { GeneratedImage, ImageEnv } from "../images";
 import type { NicknameEnv, NicknameRequestContext } from "../nickname";
 import type { SearchEnv } from "../search";
 import { createArchiveTools } from "./archive";
+import { createDiscordCodeModeTool, type CodeModeEnv } from "./codemode";
 import { createImageTools } from "./images";
 import { createNicknameTools } from "./nickname";
 import { createSearchTools } from "./search";
 
-export type ToolEnv = SearchEnv & ImageEnv & NicknameEnv;
+export type ToolEnv = SearchEnv & ImageEnv & NicknameEnv & CodeModeEnv;
 
 export type ToolOptions = {
   discordRequest?: NicknameRequestContext;
@@ -21,3 +22,5 @@ export function createDiscordTools(env: ToolEnv, options: ToolOptions = {}) {
     ...createImageTools(env, options)
   };
 }
+
+export { createDiscordCodeModeTool };

@@ -5,7 +5,7 @@ export const COMPACTION_TAIL_TOKEN_BUDGET = 64_000;
 
 export const REPLY_PROVIDER_OPTIONS = {
   "workers-ai": {
-    reasoning_effort: "low",
+    reasoning_effort: "medium",
     chat_template_kwargs: { thinking: true }
   }
 } as const;

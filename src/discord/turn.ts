@@ -9,7 +9,7 @@ import { createWorkersAI } from "workers-ai-provider";
 import type { GeneratedImage } from "../images";
 import { CHAT_MODEL, REPLY_PROVIDER_OPTIONS } from "../model";
 import { createSystemPrompt } from "../prompts";
-import { createDiscordTools } from "../tools";
+import { createDiscordCodeModeTool, createDiscordTools } from "../tools";
 import {
   formatAssistantMessageText,
   formatDiscordResponseText,
@@ -78,6 +78,13 @@ export async function createDiscordAssistantTurn(
   const workersai = createWorkersAI({ binding: env.AI });
   const history = (await session.getHistory()) as UIMessage[];
   const imageArtifacts: GeneratedImage[] = [];
+  const directTools = {
+    ...createDiscordTools(env, {
+      discordRequest: request,
+      onImageGenerated: (artifact) => imageArtifacts.push(artifact)
+    }),
+    ...(await session.tools())
+  };
   const result = await generateText({
     model: workersai(CHAT_MODEL, {
       sessionAffinity
@@ -86,11 +93,7 @@ export async function createDiscordAssistantTurn(
     system: createDiscordTurnSystemPrompt(await session.refreshSystemPrompt()),
     messages: inlineDataUrls(await convertToModelMessages(history)),
     tools: {
-      ...createDiscordTools(env, {
-        discordRequest: request,
-        onImageGenerated: (artifact) => imageArtifacts.push(artifact)
-      }),
-      ...(await session.tools())
+      codemode: createDiscordCodeModeTool(env, directTools)
     },
     stopWhen: stepCountIs(5)
   });
