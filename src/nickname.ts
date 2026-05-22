@@ -2,7 +2,8 @@ import { PermissionFlagsBits } from "discord-api-types/v10";
 import {
   DiscordApiError,
   getGuildMember,
-  modifyGuildMemberNickname
+  modifyGuildMemberNickname,
+  searchGuildMembers as searchDiscordGuildMembers
 } from "./discord/api";
 import { hasDiscordPermission } from "./discord/permissions";
 import { logError, logWarn } from "./logging";
@@ -34,10 +35,98 @@ export type NicknameResponse = {
   error?: string;
 };
 
+export type GuildMemberSearchResult = {
+  ok: boolean;
+  guildId?: string;
+  query: string;
+  results?: GuildMemberSearchMatch[];
+  error?: string;
+};
+
+export type GuildMemberSearchMatch = {
+  id: string;
+  username: string;
+  globalName?: string;
+  nickname?: string;
+  displayName: string;
+  bot: boolean;
+};
+
+export async function searchGuildMembers(
+  env: NicknameEnv,
+  context: NicknameRequestContext,
+  query: string,
+  limit = 5
+): Promise<GuildMemberSearchResult> {
+  const preparedQuery = query.trim();
+  if (!preparedQuery) {
+    return {
+      ok: false,
+      guildId: context.guildId,
+      query,
+      error: "Guild member search query cannot be empty."
+    };
+  }
+
+  if (!env.DISCORD_TOKEN?.trim()) {
+    return {
+      ok: false,
+      guildId: context.guildId,
+      query: preparedQuery,
+      error: "DISCORD_TOKEN is not configured."
+    };
+  }
+
+  if (!context.guildId) {
+    return {
+      ok: false,
+      query: preparedQuery,
+      error: "Guild member search requires a server context."
+    };
+  }
+
+  const preparedLimit = Math.max(1, Math.min(limit, 10));
+
+  try {
+    const members = await searchDiscordGuildMembers(
+      env.DISCORD_TOKEN.trim(),
+      context.guildId,
+      preparedQuery,
+      preparedLimit
+    );
+
+    return {
+      ok: true,
+      guildId: context.guildId,
+      query: preparedQuery,
+      results: members.map((member) => {
+        const globalName = member.user.global_name ?? undefined;
+        const nickname = member.nick ?? undefined;
+        return {
+          id: member.user.id,
+          username: member.user.username,
+          globalName,
+          nickname,
+          displayName: nickname ?? globalName ?? member.user.username,
+          bot: member.user.bot ?? false
+        };
+      })
+    };
+  } catch (error) {
+    logGuildMemberSearchFailure(error, context, preparedQuery);
+    return {
+      ok: false,
+      guildId: context.guildId,
+      query: preparedQuery,
+      error: formatGuildMemberSearchError(error)
+    };
+  }
+}
+
 export async function setNicknamePostfix(
   env: NicknameEnv,
   context: NicknameRequestContext,
-  targetUserId: string | undefined,
+  targetUserId: string,
   postfix: string
 ): Promise<NicknameResponse> {
   const preparedPostfix = postfix.trim();
@@ -106,7 +195,7 @@ export async function setNicknamePostfix(
 export async function clearNicknamePostfix(
   env: NicknameEnv,
   context: NicknameRequestContext,
-  targetUserId?: string
+  targetUserId: string
 ): Promise<NicknameResponse> {
   const guard = validateNicknameContext(env, context, targetUserId);
   if (guard.error)
@@ -176,7 +265,7 @@ function validateNicknameContext(
   context: NicknameRequestContext,
   targetUserId: string | undefined
 ): { targetUserId: string; error?: string } {
-  const resolvedTargetUserId = targetUserId?.trim() || context.userId || "";
+  const resolvedTargetUserId = targetUserId?.trim() || "";
 
   if (!env.DISCORD_TOKEN?.trim()) {
     return {
@@ -196,6 +285,13 @@ function validateNicknameContext(
     return {
       targetUserId: resolvedTargetUserId,
       error: "Could not identify the Discord user who invoked the command."
+    };
+  }
+
+  if (!resolvedTargetUserId) {
+    return {
+      targetUserId: resolvedTargetUserId,
+      error: "targetUserId is required. Search for the user first if needed."
     };
   }
 
@@ -278,6 +374,46 @@ function logNicknameOperationFailure(
   }
 
   logError("Discord nickname operation failed", error, logContext);
+}
+
+function logGuildMemberSearchFailure(
+  error: unknown,
+  context: NicknameRequestContext,
+  query: string
+) {
+  const logContext = {
+    guildId: context.guildId,
+    callerUserId: context.userId,
+    query
+  };
+
+  if (error instanceof DiscordApiError) {
+    logWarn("Discord guild member search API request failed", {
+      ...logContext,
+      discordStatus: error.status,
+      discordCode: error.code,
+      error: formatGuildMemberSearchError(error)
+    });
+    return;
+  }
+
+  logError("Discord guild member search failed", error, logContext);
+}
+
+function formatGuildMemberSearchError(error: unknown) {
+  if (error instanceof DiscordApiError) {
+    if (error.status === 403) {
+      return "Discord rejected the guild member search. The bot may be missing access to that server.";
+    }
+
+    if (error.status === 404) {
+      return "Discord could not find that guild.";
+    }
+
+    return `Discord API error ${error.status}.`;
+  }
+
+  return error instanceof Error ? error.message : String(error);
 }
 
 function formatNicknameError(error: unknown) {

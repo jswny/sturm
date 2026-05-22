@@ -2,6 +2,7 @@ import type {
   RESTAPIPartialCurrentUserGuild,
   RESTGetAPICurrentUserGuildsResult,
   RESTGetAPIGuildMemberResult,
+  RESTGetAPIGuildMembersSearchResult,
   RESTPutAPIApplicationGuildCommandsJSONBody,
   RESTPutAPIApplicationGuildCommandsResult,
   RESTPatchAPIGuildMemberJSONBody,
@@ -61,6 +62,22 @@ export async function getGuildMember(
 ): Promise<RESTGetAPIGuildMemberResult> {
   return discordApiFetch<RESTGetAPIGuildMemberResult>(
     `/guilds/${guildId}/members/${userId}`,
+    token
+  );
+}
+
+export async function searchGuildMembers(
+  token: string,
+  guildId: string,
+  query: string,
+  limit: number
+): Promise<RESTGetAPIGuildMembersSearchResult> {
+  const params = new URLSearchParams({
+    query,
+    limit: String(limit)
+  });
+  return discordApiFetch<RESTGetAPIGuildMembersSearchResult>(
+    `/guilds/${guildId}/members/search?${params.toString()}`,
     token
   );
 }
