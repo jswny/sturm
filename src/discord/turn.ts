@@ -10,6 +10,8 @@ import type { GeneratedImage } from "../images";
 import { CHAT_MODEL, REPLY_PROVIDER_OPTIONS } from "../model";
 import { createSystemPrompt } from "../prompts";
 import { createDiscordCodeModeTool, createDiscordTools } from "../tools";
+import type { DiscordProgressReporter } from "./progress";
+import { withProgressTools } from "./progress";
 import {
   formatAssistantMessageText,
   formatDiscordResponseText,
@@ -53,13 +55,15 @@ export async function createDiscordAssistantResponse(
   env: Env,
   session: DiscordSessionMemory,
   sessionAffinity: string,
-  request: DiscordChatRequest
+  request: DiscordChatRequest,
+  progress?: DiscordProgressReporter
 ): Promise<DiscordChatResponse> {
   const turn = await createDiscordAssistantTurn(
     env,
     session,
     sessionAffinity,
-    request
+    request,
+    progress
   );
   await session.appendMessage(turn.assistantMessage);
   return turn.response;
@@ -69,22 +73,28 @@ export async function createDiscordAssistantTurn(
   env: Env,
   session: DiscordSessionMemory,
   sessionAffinity: string,
-  request: DiscordChatRequest
+  request: DiscordChatRequest,
+  progress?: DiscordProgressReporter
 ): Promise<{
   response: DiscordChatResponse;
   generatedResponse: DiscordGeneratedChatResponse;
   assistantMessage: UIMessage;
 }> {
   const workersai = createWorkersAI({ binding: env.AI });
+  await progress?.report({ type: "phase", label: "Reading channel context" });
   const history = (await session.getHistory()) as UIMessage[];
   const imageArtifacts: GeneratedImage[] = [];
-  const directTools = {
-    ...createDiscordTools(env, {
-      discordRequest: request,
-      onImageGenerated: (artifact) => imageArtifacts.push(artifact)
-    }),
-    ...(await session.tools())
-  };
+  const directTools = withProgressTools(
+    {
+      ...createDiscordTools(env, {
+        discordRequest: request,
+        onImageGenerated: (artifact) => imageArtifacts.push(artifact)
+      }),
+      ...(await session.tools())
+    },
+    progress
+  );
+  await progress?.report({ type: "phase", label: "Preparing tools" });
   const result = await generateText({
     model: workersai(CHAT_MODEL, {
       sessionAffinity
@@ -94,6 +104,29 @@ export async function createDiscordAssistantTurn(
     messages: inlineDataUrls(await convertToModelMessages(history)),
     tools: {
       codemode: createDiscordCodeModeTool(env, directTools)
+    },
+    experimental_onStepStart: async ({ stepNumber }) => {
+      await progress?.report({
+        type: "phase",
+        label:
+          stepNumber === 0
+            ? "Thinking through the request"
+            : "Reviewing tool results"
+      });
+    },
+    experimental_onToolCallStart: async ({ toolCall }) => {
+      await progress?.report({
+        type: "tool",
+        label: toolCall.toolName,
+        status: "started"
+      });
+    },
+    experimental_onToolCallFinish: async ({ toolCall, success }) => {
+      await progress?.report({
+        type: "tool",
+        label: toolCall.toolName,
+        status: success ? "finished" : "failed"
+      });
     },
     stopWhen: stepCountIs(5)
   });

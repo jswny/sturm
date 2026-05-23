@@ -25,6 +25,7 @@ import {
   hydrateDiscordGeneratedResponse
 } from "./discord/turn";
 import type { DiscordChatRequest, DiscordChatResponse } from "./discord/types";
+import { createDiscordProgressReporter } from "./discord/progress";
 import { getErrorMessage, logError, logInfo, logWarn } from "./logging";
 import { getGuildIdFromConversationName, GuildMemoryProvider } from "./memory";
 import {
@@ -507,11 +508,17 @@ export class ChatAgent extends Agent<Env> {
       "generating-response",
       attempt
     );
+    const progress = createDiscordProgressReporter(updatedJob.responseTarget, {
+      createdAt: updatedJob.createdAt,
+      interactionId: updatedJob.interactionId,
+      sequence: updatedJob.sequence
+    });
     const turn = await createDiscordAssistantTurn(
       this.env,
       this.session,
       this.sessionAffinity,
-      job.request
+      job.request,
+      progress
     );
     updatedJob = {
       ...updatedJob,
