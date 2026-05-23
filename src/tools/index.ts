@@ -11,7 +11,7 @@ export type ToolEnv = SearchEnv & ImageEnv & NicknameEnv & CodeModeEnv;
 
 export type ToolOptions = {
   discordRequest?: NicknameRequestContext;
-  onImageGenerated?: (artifact: GeneratedImage) => void;
+  onImageGenerated?: (artifact: GeneratedImage) => void | Promise<void>;
 };
 
 export function createDiscordTools(env: ToolEnv, options: ToolOptions = {}) {

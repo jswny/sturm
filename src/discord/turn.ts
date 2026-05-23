@@ -1,36 +1,16 @@
-import {
-  convertToModelMessages,
-  generateText,
-  stepCountIs,
-  type ToolSet,
-  type UIMessage
-} from "ai";
-import { createWorkersAI } from "workers-ai-provider";
+import type { UIMessage } from "ai";
 import type { GeneratedImage } from "../images";
-import { CHAT_MODEL, REPLY_PROVIDER_OPTIONS } from "../model";
-import { createSystemPrompt } from "../prompts";
-import { createDiscordCodeModeTool, createDiscordTools } from "../tools";
-import type { DiscordProgressReporter } from "./progress";
-import { withProgressTools } from "./progress";
+import type { StoredGeneratedImage } from "./delivery";
 import {
   formatAssistantMessageText,
   formatDiscordResponseText,
-  formatDiscordUserMessage,
-  inlineDataUrls
+  formatDiscordUserMessage
 } from "./format";
-import type {
-  DiscordChatRequest,
-  DiscordChatResponse,
-  DiscordGeneratedChatResponse
-} from "./types";
+import type { DiscordChatRequest, DiscordChatResponse } from "./types";
 
 export type DiscordSessionMemory = {
-  appendMessage(message: UIMessage): Promise<void>;
-  getHistory(): Promise<unknown[]>;
   getPathLength(): Promise<number>;
   clearMessages(): Promise<void>;
-  refreshSystemPrompt(): Promise<string>;
-  tools(): Promise<ToolSet>;
 };
 
 export function createDiscordUserMessage(
@@ -45,101 +25,20 @@ export function createDiscordUserMessage(
       guildId: request.guildId,
       channelId: request.channelId,
       userId: request.userId,
-      user: request.user
+      user: request.user,
+      userPermissions: request.userPermissions
     },
     parts: [{ type: "text", text: formatDiscordUserMessage(request) }]
   };
 }
 
-export async function createDiscordAssistantResponse(
-  env: Env,
-  session: DiscordSessionMemory,
-  sessionAffinity: string,
-  request: DiscordChatRequest,
-  progress?: DiscordProgressReporter
-): Promise<DiscordChatResponse> {
-  const turn = await createDiscordAssistantTurn(
-    env,
-    session,
-    sessionAffinity,
-    request,
-    progress
-  );
-  await session.appendMessage(turn.assistantMessage);
-  return turn.response;
-}
-
-export async function createDiscordAssistantTurn(
-  env: Env,
-  session: DiscordSessionMemory,
-  sessionAffinity: string,
-  request: DiscordChatRequest,
-  progress?: DiscordProgressReporter
-): Promise<{
-  response: DiscordChatResponse;
-  generatedResponse: DiscordGeneratedChatResponse;
-  assistantMessage: UIMessage;
-}> {
-  const workersai = createWorkersAI({ binding: env.AI });
-  await progress?.report({ type: "phase", label: "Reading channel context" });
-  const history = (await session.getHistory()) as UIMessage[];
-  const imageArtifacts: GeneratedImage[] = [];
-  const directTools = withProgressTools(
-    {
-      ...createDiscordTools(env, {
-        discordRequest: request,
-        onImageGenerated: (artifact) => imageArtifacts.push(artifact)
-      }),
-      ...(await session.tools())
-    },
-    progress
-  );
-  await progress?.report({ type: "phase", label: "Preparing tools" });
-  const result = await generateText({
-    model: workersai(CHAT_MODEL, {
-      sessionAffinity
-    }),
-    providerOptions: REPLY_PROVIDER_OPTIONS,
-    system: createDiscordTurnSystemPrompt(await session.refreshSystemPrompt()),
-    messages: inlineDataUrls(await convertToModelMessages(history)),
-    tools: {
-      codemode: createDiscordCodeModeTool(env, directTools)
-    },
-    experimental_onStepStart: async ({ stepNumber }) => {
-      await progress?.report({
-        type: "phase",
-        label:
-          stepNumber === 0
-            ? "Thinking through the request"
-            : "Reviewing tool results"
-      });
-    },
-    experimental_onToolCallStart: async ({ toolCall }) => {
-      await progress?.report({
-        type: "tool",
-        label: toolCall.toolName,
-        status: "started"
-      });
-    },
-    experimental_onToolCallFinish: async ({ toolCall, success }) => {
-      await progress?.report({
-        type: "tool",
-        label: toolCall.toolName,
-        status: success ? "finished" : "failed"
-      });
-    },
-    stopWhen: stepCountIs(5)
-  });
-  const assistantText = formatAssistantMessageText(result.text, imageArtifacts);
-  const responseText = formatDiscordResponseText(result.text, imageArtifacts);
-
-  const assistantMessage = createDiscordAssistantMessage(
-    request,
-    assistantText
-  );
-  const response = {
-    content: responseText,
-    attachments: imageArtifacts.map((artifact) => ({
+export function createDiscordResponseFromAssistantMessage(
+  text: string,
+  artifacts: GeneratedImage[]
+): DiscordChatResponse {
+  return {
+    content: formatDiscordResponseText(text, artifacts),
+    attachments: artifacts.map((artifact) => ({
       filename: artifact.filename,
       mimeType: artifact.mimeType,
       r2Key: artifact.r2Key,
@@ -147,67 +46,32 @@ export async function createDiscordAssistantTurn(
       description: `Generated image for: ${artifact.prompt}`
     }))
   };
-  const generatedResponse: DiscordGeneratedChatResponse = {
-    content: response.content,
-    assistantMessageText: assistantText,
-    attachments: response.attachments?.map((attachment) => {
-      if (!attachment.r2Key) {
-        throw new Error(
-          `Generated attachment ${attachment.filename} is missing an R2 key.`
-        );
-      }
-      return {
-        filename: attachment.filename,
-        mimeType: attachment.mimeType,
-        r2Key: attachment.r2Key,
-        description: attachment.description
-      };
-    }),
-    generatedAt: new Date().toISOString()
-  };
-
-  return { response, generatedResponse, assistantMessage };
 }
 
-export async function hydrateDiscordGeneratedResponse(
+export function createAssistantHistoryText(
+  text: string,
+  artifacts: GeneratedImage[]
+) {
+  return formatAssistantMessageText(text, artifacts);
+}
+
+export async function hydrateStoredGeneratedImages(
   env: Env,
-  generatedResponse: DiscordGeneratedChatResponse
-): Promise<DiscordChatResponse> {
-  return {
-    content: generatedResponse.content,
-    attachments: await Promise.all(
-      (generatedResponse.attachments ?? []).map(async (attachment) => {
-        const object = await env.ARTIFACTS_BUCKET.get(attachment.r2Key);
-        if (!object) {
-          throw new Error(`Missing R2 artifact ${attachment.r2Key}.`);
-        }
+  storedImages: StoredGeneratedImage[] = []
+): Promise<GeneratedImage[]> {
+  return Promise.all(
+    storedImages.map(async (stored) => {
+      const object = await env.ARTIFACTS_BUCKET.get(stored.r2Key);
+      if (!object) {
+        throw new Error(`Missing R2 artifact ${stored.r2Key}.`);
+      }
 
-        return {
-          ...attachment,
-          base64: bytesToBase64(new Uint8Array(await object.arrayBuffer()))
-        };
-      })
-    )
-  };
-}
-
-export function createDiscordAssistantMessage(
-  request: DiscordChatRequest,
-  text: string
-): UIMessage {
-  return {
-    id: `discord-${request.interactionId}-assistant`,
-    role: "assistant",
-    metadata: {
-      source: "discord",
-      interactionId: request.interactionId,
-      guildId: request.guildId,
-      channelId: request.channelId,
-      userId: request.userId,
-      user: request.user
-    },
-    parts: [{ type: "text", text }]
-  };
+      return {
+        ...stored,
+        base64: bytesToBase64(new Uint8Array(await object.arrayBuffer()))
+      };
+    })
+  );
 }
 
 export async function clearDiscordSession(
@@ -223,6 +87,20 @@ export async function clearDiscordSession(
   };
 }
 
+export function getDiscordMessageText(message: UIMessage) {
+  return message.parts
+    .map((part) => (part.type === "text" ? part.text : ""))
+    .join("")
+    .trim();
+}
+
+export function withAssistantText(message: UIMessage, text: string): UIMessage {
+  return {
+    ...message,
+    parts: [{ type: "text", text }]
+  };
+}
+
 function bytesToBase64(bytes: Uint8Array) {
   let binary = "";
   const chunkSize = 0x8000;
@@ -230,11 +108,4 @@ function bytesToBase64(bytes: Uint8Array) {
     binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
   }
   return btoa(binary);
-}
-
-function createDiscordTurnSystemPrompt(contextPrompt: string) {
-  if (!contextPrompt.trim()) return createSystemPrompt();
-  return `${createSystemPrompt()}
-
-${contextPrompt}`;
 }

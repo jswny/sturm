@@ -36,7 +36,7 @@ function formatGenerateImageOutput(output: GenerateImageResponse) {
 export function createImageTools(
   env: ImageEnv,
   options: {
-    onImageGenerated?: (artifact: GeneratedImage) => void;
+    onImageGenerated?: (artifact: GeneratedImage) => void | Promise<void>;
   } = {}
 ) {
   return {
@@ -65,7 +65,7 @@ export function createImageTools(
           width ? Number(width) : undefined,
           height ? Number(height) : undefined
         );
-        if (artifact) options.onImageGenerated?.(artifact);
+        if (artifact) await options.onImageGenerated?.(artifact);
         return response;
       },
       toModelOutput: ({ output }) => ({

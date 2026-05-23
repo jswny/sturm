@@ -1,113 +1,121 @@
 import {
-  Agent,
-  type FiberContext,
-  type FiberRecoveryContext,
-  type QueueItem
-} from "agents";
+  Think,
+  type ChatResponseResult,
+  type PrepareStepContext,
+  type StepContext,
+  type ThinkSubmissionInspection,
+  type ToolCallContext,
+  type ToolCallResultContext,
+  type TurnConfig,
+  type TurnContext,
+  type WorkspaceLike
+} from "@cloudflare/think";
 import { Session } from "agents/experimental/memory/session";
 import { createCompactFunction } from "agents/experimental/memory/utils";
-import { generateText } from "ai";
+import { generateText, type ToolSet } from "ai";
 import { createWorkersAI } from "workers-ai-provider";
 import { editOriginalInteractionResponse } from "./discord/api";
 import {
-  DiscordInteractionStore,
-  type DiscordInteractionChatInput,
-  type DiscordInteractionChatJob,
-  type DiscordInteractionJob,
-  type DiscordInteractionResetInput
-} from "./discord/interactions";
+  DiscordDeliveryStore,
+  type DiscordDeliveryChatInput,
+  type DiscordDeliveryRecord,
+  type DiscordDeliveryResetInput,
+  type DiscordResetDeliveryRecord
+} from "./discord/delivery";
+import { inlineDataUrls } from "./discord/format";
+import { createDiscordProgressReporter } from "./discord/progress";
+import type { DiscordProgressReporter } from "./discord/progress";
 import {
   clearDiscordSession,
-  createDiscordAssistantMessage,
-  createDiscordAssistantResponse,
-  createDiscordAssistantTurn,
+  createAssistantHistoryText,
+  createDiscordResponseFromAssistantMessage,
   createDiscordUserMessage,
-  hydrateDiscordGeneratedResponse
+  getDiscordMessageText,
+  hydrateStoredGeneratedImages,
+  withAssistantText
 } from "./discord/turn";
 import type { DiscordChatRequest, DiscordChatResponse } from "./discord/types";
-import { createDiscordProgressReporter } from "./discord/progress";
 import { getErrorMessage, logError, logInfo, logWarn } from "./logging";
 import { getGuildIdFromConversationName, GuildMemoryProvider } from "./memory";
 import {
   CHAT_MODEL,
   COMPACTION_PROVIDER_OPTIONS,
   COMPACTION_TAIL_TOKEN_BUDGET,
-  COMPACTION_TOKEN_THRESHOLD
+  COMPACTION_TOKEN_THRESHOLD,
+  REPLY_PROVIDER_OPTIONS
 } from "./model";
+import { createSystemPrompt } from "./prompts";
+import { createDiscordCodeModeTool, createDiscordTools } from "./tools";
+import { withProgressTools } from "./discord/progress";
 
-const MAX_DISCORD_JOB_ATTEMPTS = 3;
-const DISCORD_QUEUE_RETRY = {
-  maxAttempts: MAX_DISCORD_JOB_ATTEMPTS,
-  baseDelayMs: 5000,
-  maxDelayMs: 30000
-} as const;
 const DISCORD_DEBUG_RESPONSE_TIMEOUT_MS = 14 * 60 * 1000;
 const DISCORD_DEBUG_RESPONSE_POLL_MS = 100;
 const DISCORD_DEFERRED_RESPONSE_SETTLE_MS = 500;
-const DISCORD_JOB_FIBER_PREFIX = "discord-job:";
 const HOUSEKEEPING_INTERVAL_SECONDS = 24 * 60 * 60;
+const TERMINAL_SUBMISSION_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+const DISCORD_ACTIVE_TOOLS = ["codemode"];
 
-type DiscordInteractionQueuePayload = {
-  interactionId: string;
+type DiscordUserMessageMetadata = {
+  source?: unknown;
+  interactionId?: unknown;
+  guildId?: unknown;
+  channelId?: unknown;
+  userId?: unknown;
+  user?: unknown;
+  userPermissions?: unknown;
 };
 
-type DiscordJobFiberPhase =
-  | "starting"
-  | "attempt-recorded"
-  | "running"
-  | "user-message-appended"
-  | "generating-response"
-  | "generated-response-saved"
-  | "assistant-message-appended"
-  | "rehydrating-generated-response"
-  | "response-ready"
-  | "response-delivered"
-  | "completed"
-  | "retry-scheduled"
-  | "failed";
+export class ChatAgent extends Think<Env> {
+  override maxSteps = 5;
+  override sendReasoning = false;
+  override workspace: WorkspaceLike = createDisabledWorkspace();
 
-type DiscordJobFiberSnapshot = {
-  sequence: number;
-  interactionId: string;
-  jobType: DiscordInteractionJob["type"];
-  attempt?: number;
-  phase: DiscordJobFiberPhase;
-  updatedAt: string;
-};
+  private discordDeliveries = new DiscordDeliveryStore(this.ctx.storage);
+  private progressReporters = new Map<string, DiscordProgressReporter>();
 
-export class ChatAgent extends Agent<Env> {
-  private discordTurn = Promise.resolve();
-  private discordInteractions = new DiscordInteractionStore(this.ctx.storage);
-  private session = Session.create(this)
-    .withContext("guild_memory", {
-      description:
-        "Durable memory shared by Sturm across all channels in this Discord guild. Store concise, stable, reusable guild-level context, including casual server lore, running jokes, and friend-server banter. Store subjective or teasing claims about people as user-provided lore rather than verified facts.",
-      maxTokens: 2000,
-      provider: new GuildMemoryProvider(this.env.GuildMemory, () =>
-        getGuildIdFromConversationName(this.name)
-      )
-    })
-    .onCompaction(
-      createCompactFunction({
-        summarize: async (prompt) => {
-          const workersai = createWorkersAI({ binding: this.env.AI });
-          const result = await generateText({
-            model: workersai(CHAT_MODEL, {
-              sessionAffinity: this.sessionAffinity
-            }),
-            providerOptions: COMPACTION_PROVIDER_OPTIONS,
-            system:
-              "Summarize Discord conversation history for future assistant context. Preserve factual details, user preferences, decisions, current state, and open items.",
-            prompt
-          });
-          return result.text;
-        },
-        protectHead: 2,
-        tailTokenBudget: COMPACTION_TAIL_TOKEN_BUDGET,
-        minTailMessages: 6
+  override getModel() {
+    const workersai = createWorkersAI({ binding: this.env.AI });
+    return workersai(CHAT_MODEL, {
+      sessionAffinity: this.sessionAffinity
+    });
+  }
+
+  override getSystemPrompt() {
+    return createSystemPrompt();
+  }
+
+  override configureSession(session: Session) {
+    return session
+      .withContext("guild_memory", {
+        description:
+          "Durable memory shared by Sturm across all channels in this Discord guild. Store concise, stable, reusable guild-level context, including casual server lore, running jokes, and friend-server banter. Store subjective or teasing claims about people as user-provided lore rather than verified facts.",
+        maxTokens: 2000,
+        provider: new GuildMemoryProvider(this.env.GuildMemory, () =>
+          getGuildIdFromConversationName(this.name)
+        )
       })
-    )
-    .compactAfter(COMPACTION_TOKEN_THRESHOLD);
+      .onCompaction(
+        createCompactFunction({
+          summarize: async (prompt) => {
+            const workersai = createWorkersAI({ binding: this.env.AI });
+            const result = await generateText({
+              model: workersai(CHAT_MODEL, {
+                sessionAffinity: this.sessionAffinity
+              }),
+              providerOptions: COMPACTION_PROVIDER_OPTIONS,
+              system:
+                "Summarize Discord conversation history for future assistant context. Preserve factual details, user preferences, decisions, current state, and open items.",
+              prompt
+            });
+            return result.text;
+          },
+          protectHead: 2,
+          tailTokenBudget: COMPACTION_TAIL_TOKEN_BUDGET,
+          minTailMessages: 6
+        })
+      )
+      .compactAfter(COMPACTION_TOKEN_THRESHOLD);
+  }
 
   override async onStart(props?: Record<string, unknown>) {
     await super.onStart(props);
@@ -120,38 +128,174 @@ export class ChatAgent extends Agent<Env> {
     }
   }
 
-  async enqueueDiscordChat(input: DiscordInteractionChatInput) {
-    const result = await this.discordInteractions.create(input);
-    if (!result.created || !result.job) return;
+  override async beforeTurn(ctx: TurnContext): Promise<TurnConfig> {
+    const turn = this.getLatestDiscordTurn();
+    const progress = turn
+      ? this.progressReporters.get(turn.interactionId)
+      : undefined;
+    await progress?.report({
+      type: "phase",
+      label: "Reading channel context"
+    });
+    const sessionContext = await this.session.refreshSystemPrompt();
+
+    return {
+      system: createDiscordThinkSystemPrompt(sessionContext),
+      messages: inlineDataUrls(ctx.messages),
+      tools: await this.createDiscordThinkTools(turn, progress),
+      activeTools: DISCORD_ACTIVE_TOOLS,
+      maxSteps: this.maxSteps,
+      sendReasoning: false,
+      providerOptions: REPLY_PROVIDER_OPTIONS as Record<string, unknown>
+    };
+  }
+
+  override async beforeStep(ctx: PrepareStepContext) {
+    const progress = this.getActiveProgressReporter();
+    await progress?.report({
+      type: "phase",
+      label:
+        ctx.stepNumber === 0
+          ? "Thinking through the request"
+          : "Reviewing tool results"
+    });
+  }
+
+  override async beforeToolCall(ctx: ToolCallContext) {
+    if (ctx.toolName !== "codemode") return;
+    await this.getActiveProgressReporter()?.report({
+      type: "tool",
+      label: "code mode",
+      status: "started"
+    });
+  }
+
+  override async afterToolCall(ctx: ToolCallResultContext) {
+    if (ctx.toolName !== "codemode") return;
+    await this.getActiveProgressReporter()?.report({
+      type: "tool",
+      label: "code mode",
+      status: ctx.success ? "finished" : "failed"
+    });
+  }
+
+  override async onStepFinish(ctx: StepContext) {
+    const usage = ctx.usage;
+    logInfo("Think turn step finished", {
+      agentName: this.name,
+      finishReason: ctx.finishReason,
+      inputTokens: usage?.inputTokens,
+      outputTokens: usage?.outputTokens,
+      reasoningTokens: usage?.reasoningTokens,
+      totalTokens: usage?.totalTokens
+    });
+  }
+
+  override async onChatResponse(result: ChatResponseResult) {
+    const record = await this.discordDeliveries.getDelivery(result.requestId);
+    if (!record || isTerminalDelivery(record)) return;
+
+    if (result.status !== "completed") {
+      await this.failDiscordDelivery(
+        record,
+        result.error ?? `Think turn ended with status ${result.status}.`
+      );
+      return;
+    }
 
     try {
-      await this.queueDiscordInteraction(result.job.interactionId);
+      await this.deliverDiscordChatResponse(record, result);
     } catch (error) {
-      await this.discordInteractions.deleteCreatedInteraction(result.job);
-      logError("Discord interaction queue failed", error, {
-        sequence: result.job.sequence,
-        interactionId: result.job.interactionId,
-        jobType: result.job.type
+      await this.failDiscordDelivery(record, getErrorMessage(error));
+    } finally {
+      this.progressReporters.delete(record.interactionId);
+      await this.housekeeping();
+    }
+  }
+
+  override async onSubmissionStatus(submission: ThinkSubmissionInspection) {
+    const record = await this.discordDeliveries.getDelivery(
+      submission.submissionId
+    );
+    if (!record || isTerminalDelivery(record)) return;
+
+    if (submission.status === "running") {
+      await this.discordDeliveries.markRunning(record.interactionId);
+      return;
+    }
+
+    if (submission.status === "completed") {
+      await this.deliverCompletedSubmissionWithoutResponse(record);
+      return;
+    }
+
+    if (
+      submission.status === "error" ||
+      submission.status === "aborted" ||
+      submission.status === "skipped"
+    ) {
+      await this.failDiscordDelivery(
+        record,
+        submission.error ??
+          `Think submission ended with status ${submission.status}.`
+      );
+    }
+  }
+
+  override onChatError(error: unknown) {
+    logError("Think chat turn failed", error, {
+      agentName: this.name
+    });
+    return super.onChatError(error);
+  }
+
+  async enqueueDiscordChat(input: DiscordDeliveryChatInput) {
+    const result = await this.discordDeliveries.create(input);
+    if (!result.created || !result.record) return;
+
+    const record = result.record;
+    const progress = createDiscordProgressReporter(record.responseTarget, {
+      createdAt: record.createdAt,
+      interactionId: record.interactionId,
+      sequence: record.sequence
+    });
+    if (progress) this.progressReporters.set(record.interactionId, progress);
+
+    try {
+      await this.submitMessages([createDiscordUserMessage(input.request)], {
+        submissionId: input.request.interactionId,
+        idempotencyKey: input.request.interactionId,
+        metadata: {
+          source: "discord",
+          type: "chat",
+          sequence: record.sequence,
+          guildId: input.request.guildId,
+          channelId: input.request.channelId,
+          userId: input.request.userId
+        }
+      });
+    } catch (error) {
+      this.progressReporters.delete(record.interactionId);
+      await this.discordDeliveries.deleteCreatedDelivery(record);
+      logError("Discord Think submission failed", error, {
+        sequence: record.sequence,
+        interactionId: record.interactionId,
+        deliveryType: record.type
       });
       throw error;
     }
   }
 
-  async enqueueDiscordReset(input: DiscordInteractionResetInput) {
-    const result = await this.discordInteractions.create(input);
-    if (!result.created || !result.job) return;
+  async enqueueDiscordReset(input: DiscordDeliveryResetInput) {
+    const result = await this.discordDeliveries.create(input);
+    if (!result.created || !result.record) return;
 
-    try {
-      await this.queueDiscordInteraction(result.job.interactionId);
-    } catch (error) {
-      await this.discordInteractions.deleteCreatedInteraction(result.job);
-      logError("Discord interaction queue failed", error, {
-        sequence: result.job.sequence,
-        interactionId: result.job.interactionId,
-        jobType: result.job.type
-      });
-      throw error;
+    const record = result.record;
+    if (record.type !== "reset") {
+      throw new Error("Discord reset delivery record had unexpected type.");
     }
+
+    await this.processDiscordReset(record);
   }
 
   async runDebugQueuedDiscordChat(
@@ -165,7 +309,7 @@ export class ChatAgent extends Agent<Env> {
   }
 
   async runDebugQueuedDiscordReset(
-    input: Omit<DiscordInteractionResetInput, "responseTarget">
+    input: Omit<DiscordDeliveryResetInput, "responseTarget">
   ): Promise<DiscordChatResponse> {
     await this.enqueueDiscordReset({
       ...input,
@@ -176,17 +320,29 @@ export class ChatAgent extends Agent<Env> {
 
   async housekeeping() {
     try {
-      const [completedInteractionRecords, staleDebugResults] =
+      const [completedDeliveryRecords, staleDebugResults, terminalSubmissions] =
         await Promise.all([
-          this.discordInteractions.pruneCompletedInteractionRecords(),
-          this.discordInteractions.pruneStaleDebugResults()
+          this.discordDeliveries.pruneCompletedDeliveryRecords(),
+          this.discordDeliveries.pruneStaleDebugResults(),
+          this.deleteSubmissions({
+            status: ["completed", "aborted", "skipped", "error"],
+            completedBefore: new Date(
+              Date.now() - TERMINAL_SUBMISSION_RETENTION_MS
+            ),
+            limit: 100
+          })
         ]);
 
-      if (completedInteractionRecords > 0 || staleDebugResults > 0) {
+      if (
+        completedDeliveryRecords > 0 ||
+        staleDebugResults > 0 ||
+        terminalSubmissions > 0
+      ) {
         logInfo("Discord housekeeping pruned stale records", {
           agentName: this.name,
-          completedInteractionRecords,
-          staleDebugResults
+          completedDeliveryRecords,
+          staleDebugResults,
+          terminalSubmissions
         });
       }
     } catch (error) {
@@ -196,240 +352,175 @@ export class ChatAgent extends Agent<Env> {
     }
   }
 
-  async processDiscordInteraction(
-    payload: DiscordInteractionQueuePayload,
-    queueItem?: QueueItem
-  ): Promise<void> {
-    if (!payload?.interactionId) {
-      logWarn("Discord queued interaction missing interactionId", {
-        queueTaskId: queueItem?.id
-      });
-      return;
-    }
-
-    const run = this.discordTurn.then(() =>
-      this.processQueuedDiscordInteraction(payload.interactionId, queueItem)
-    );
-    this.discordTurn = run.then(
-      () => undefined,
-      () => undefined
-    );
-    return run;
-  }
-
-  askFromDiscord(request: DiscordChatRequest): Promise<DiscordChatResponse> {
-    const run = this.discordTurn.then(() => this.answerFromDiscord(request));
-    this.discordTurn = run.then(
-      () => undefined,
-      () => undefined
-    );
-    return run;
-  }
-
-  resetFromDiscord(): Promise<DiscordChatResponse> {
-    const run = this.discordTurn.then(() => clearDiscordSession(this.session));
-    this.discordTurn = run.then(
-      () => undefined,
-      () => undefined
-    );
-    return run;
-  }
-
-  override async onFiberRecovered(ctx: FiberRecoveryContext) {
-    if (!ctx.name.startsWith(DISCORD_JOB_FIBER_PREFIX)) {
-      await super.onFiberRecovered(ctx);
-      return;
-    }
-
-    const snapshot = getDiscordJobFiberSnapshot(ctx.snapshot);
-    const interactionId =
-      snapshot?.interactionId ??
-      getInteractionIdFromDiscordJobFiberName(ctx.name);
-    const active = interactionId
-      ? await this.discordInteractions.hasActiveInteraction(interactionId)
-      : false;
-    logWarn("Recovered interrupted Discord job fiber", {
-      fiberId: ctx.id,
-      fiberName: ctx.name,
-      fiberAgeMs: Date.now() - ctx.createdAt,
-      sequence: snapshot?.sequence,
-      interactionId,
-      jobType: snapshot?.jobType,
-      attempt: snapshot?.attempt,
-      phase: snapshot?.phase,
-      requeued: active
-    });
-
-    if (active && interactionId) {
-      try {
-        await this.queueDiscordInteraction(interactionId);
-      } catch (error) {
-        logError("Recovered Discord job fiber requeue failed", error, {
-          fiberId: ctx.id,
-          fiberName: ctx.name,
-          sequence: snapshot?.sequence,
-          interactionId,
-          jobType: snapshot?.jobType,
-          attempt: snapshot?.attempt,
-          phase: snapshot?.phase
-        });
-        throw error;
-      }
-    }
-  }
-
-  private async queueDiscordInteraction(interactionId: string) {
-    await this.queue(
-      "processDiscordInteraction",
-      { interactionId },
+  private async createDiscordThinkTools(
+    turn: DiscordChatRequest | undefined,
+    progress: DiscordProgressReporter | undefined
+  ): Promise<ToolSet> {
+    const directTools = withProgressTools(
       {
-        retry: DISCORD_QUEUE_RETRY
-      }
+        ...createDiscordTools(this.env, {
+          discordRequest: turn,
+          onImageGenerated: async (artifact) => {
+            if (!turn?.interactionId) return;
+            await this.discordDeliveries.addGeneratedImage(
+              turn.interactionId,
+              artifact
+            );
+          }
+        }),
+        ...(await this.session.tools())
+      },
+      progress
     );
+
+    return {
+      codemode: createDiscordCodeModeTool(this.env, directTools)
+    };
   }
 
-  private async processQueuedDiscordInteraction(
-    interactionId: string,
-    queueItem?: QueueItem
+  private async deliverDiscordChatResponse(
+    record: DiscordDeliveryRecord,
+    result: ChatResponseResult
   ) {
-    const job =
-      await this.discordInteractions.getJobByInteractionId(interactionId);
-    if (!job) {
-      logInfo("Discord queued interaction has no active job", {
-        interactionId,
-        queueTaskId: queueItem?.id
-      });
-      return;
+    if (record.type !== "chat") return;
+
+    const freshRecord =
+      (await this.discordDeliveries.getDelivery(record.interactionId)) ??
+      record;
+    if (freshRecord.type !== "chat") return;
+
+    const text = getDiscordMessageText(result.message);
+    const artifacts = await hydrateStoredGeneratedImages(
+      this.env,
+      freshRecord.generatedImages
+    );
+    const historyText = createAssistantHistoryText(text, artifacts);
+    if (historyText !== text) {
+      try {
+        await this.updateMessageInHistory(
+          withAssistantText(result.message, historyText)
+        );
+      } catch (error) {
+        logError("Discord assistant history update failed", error, {
+          sequence: freshRecord.sequence,
+          interactionId: freshRecord.interactionId
+        });
+      }
     }
+
+    const response = createDiscordResponseFromAssistantMessage(text, artifacts);
+    await this.deliverDiscordDeliveryResponse(freshRecord, response);
+    await this.discordDeliveries.completeDelivery(freshRecord, "delivered");
+  }
+
+  private async deliverCompletedSubmissionWithoutResponse(
+    record: DiscordDeliveryRecord
+  ) {
+    if (record.type !== "chat") return;
 
     try {
-      await this.runFiber(getDiscordJobFiberName(job.interactionId), (fiber) =>
-        this.processDiscordJobAttempt(job, fiber, queueItem?.id)
+      const freshRecord =
+        (await this.discordDeliveries.getDelivery(record.interactionId)) ??
+        record;
+      if (freshRecord.type !== "chat" || isTerminalDelivery(freshRecord)) {
+        return;
+      }
+
+      const artifacts = await hydrateStoredGeneratedImages(
+        this.env,
+        freshRecord.generatedImages
       );
+      const response = createDiscordResponseFromAssistantMessage("", artifacts);
+      await this.deliverDiscordDeliveryResponse(freshRecord, response);
+      await this.discordDeliveries.completeDelivery(freshRecord, "delivered");
+    } catch (error) {
+      await this.failDiscordDelivery(record, getErrorMessage(error));
+    }
+  }
+
+  private async processDiscordReset(record: DiscordResetDeliveryRecord) {
+    try {
+      await this.discordDeliveries.markRunning(record.interactionId);
+      const response = await clearDiscordSession({
+        getPathLength: () => this.session.getPathLength(),
+        clearMessages: () => this.clearMessages()
+      });
+      await this.deliverDiscordDeliveryResponse(record, response);
+      await this.discordDeliveries.completeDelivery(record, "delivered");
+    } catch (error) {
+      await this.failDiscordDelivery(record, getErrorMessage(error));
     } finally {
       await this.housekeeping();
     }
   }
 
-  private async processDiscordJobAttempt(
-    job: DiscordInteractionJob,
-    fiber: FiberContext,
-    queueTaskId?: string
-  ) {
-    this.stashDiscordJobFiber(fiber, job, "starting");
-    let updatedJob = await this.discordInteractions.recordAttempt(job);
-    if (!updatedJob) {
-      logInfo("Discord queued interaction disappeared before processing", {
-        sequence: job.sequence,
-        interactionId: job.interactionId,
-        queueTaskId
-      });
-      return;
-    }
-    const attempt = updatedJob.attempts;
-    this.stashDiscordJobFiber(fiber, updatedJob, "attempt-recorded", attempt);
-
-    try {
-      let response: DiscordChatResponse;
-      this.stashDiscordJobFiber(fiber, updatedJob, "running", attempt);
-      if (updatedJob.type === "chat") {
-        const chatJob = updatedJob;
-        const result = await this.answerQueuedDiscordChat(
-          chatJob,
-          fiber,
-          attempt
-        );
-        updatedJob = result.job;
-        response = result.response;
-      } else {
-        response = await clearDiscordSession(this.session);
-      }
-
-      this.stashDiscordJobFiber(fiber, updatedJob, "response-ready", attempt);
-      await this.deliverDiscordJobResponse(updatedJob, response);
-      this.stashDiscordJobFiber(
-        fiber,
-        updatedJob,
-        "response-delivered",
-        attempt
-      );
-      await this.discordInteractions.completeJob(updatedJob, "completed");
-      this.stashDiscordJobFiber(fiber, updatedJob, "completed", attempt);
-    } catch (error) {
-      const message = getErrorMessage(error);
-      logError("Discord queued job failed", error, {
-        sequence: updatedJob.sequence,
-        interactionId: updatedJob.interactionId,
-        attempt,
-        jobType: updatedJob.type,
-        responseTargetType: updatedJob.responseTarget.type,
-        queueTaskId
-      });
-
-      if (attempt >= MAX_DISCORD_JOB_ATTEMPTS) {
-        await this.deliverDiscordJobFailure(updatedJob, message);
-        await this.discordInteractions.completeJob(updatedJob, "failed");
-        this.stashDiscordJobFiber(fiber, updatedJob, "failed", attempt);
-        return;
-      }
-
-      await this.discordInteractions.putJob({
-        ...updatedJob,
-        lastError: message,
-        updatedAt: new Date().toISOString()
-      } satisfies DiscordInteractionJob);
-      this.stashDiscordJobFiber(fiber, updatedJob, "retry-scheduled", attempt);
-      throw error;
-    }
-  }
-
-  private async deliverDiscordJobResponse(
-    job: DiscordInteractionJob,
+  private async deliverDiscordDeliveryResponse(
+    record: DiscordDeliveryRecord,
     response: DiscordChatResponse
   ) {
-    if (job.responseTarget.type === "debug") {
-      await this.discordInteractions.putDebugResult(job.responseTarget.id, {
+    if (record.responseTarget.type === "debug") {
+      await this.discordDeliveries.putDebugResult(record.responseTarget.id, {
         status: "completed",
         response
       });
       return;
     }
 
-    await waitForDiscordDeferredResponse(job);
+    await waitForDiscordDeferredResponse(record);
     logInfo("Editing Discord interaction response", {
-      sequence: job.sequence,
-      interactionId: job.interactionId,
+      sequence: record.sequence,
+      interactionId: record.interactionId,
       attachments: response.attachments?.length ?? 0
     });
     await editOriginalInteractionResponse(
-      job.responseTarget,
+      record.responseTarget,
       response.content,
       response.attachments
     );
   }
 
-  private async deliverDiscordJobFailure(
-    job: DiscordInteractionJob,
+  private async failDiscordDelivery(
+    record: DiscordDeliveryRecord,
     error: string
   ) {
-    if (job.responseTarget.type === "debug") {
-      await this.discordInteractions.putDebugResult(job.responseTarget.id, {
+    logError("Discord delivery failed", error, {
+      sequence: record.sequence,
+      interactionId: record.interactionId,
+      deliveryType: record.type,
+      responseTargetType: record.responseTarget.type
+    });
+
+    try {
+      await this.deliverDiscordDeliveryFailure(record, error);
+    } finally {
+      this.progressReporters.delete(record.interactionId);
+      await this.discordDeliveries.completeDelivery(record, "failed", error);
+      await this.housekeeping();
+    }
+  }
+
+  private async deliverDiscordDeliveryFailure(
+    record: DiscordDeliveryRecord,
+    error: string
+  ) {
+    if (record.responseTarget.type === "debug") {
+      await this.discordDeliveries.putDebugResult(record.responseTarget.id, {
         status: "failed",
         error
       });
       return;
     }
 
-    await waitForDiscordDeferredResponse(job);
+    await waitForDiscordDeferredResponse(record);
     try {
       await editOriginalInteractionResponse(
-        job.responseTarget,
+        record.responseTarget,
         "Sorry, I could not complete that request."
       );
     } catch (editError) {
-      logError("Discord queued job failure response failed", editError, {
-        sequence: job.sequence,
-        interactionId: job.interactionId
+      logError("Discord failure response edit failed", editError, {
+        sequence: record.sequence,
+        interactionId: record.interactionId
       });
     }
   }
@@ -438,13 +529,13 @@ export class ChatAgent extends Agent<Env> {
     const deadline = Date.now() + DISCORD_DEBUG_RESPONSE_TIMEOUT_MS;
 
     while (Date.now() < deadline) {
-      const result = await this.discordInteractions.getDebugResult(targetId);
+      const result = await this.discordDeliveries.getDebugResult(targetId);
       if (!result) {
         await sleep(DISCORD_DEBUG_RESPONSE_POLL_MS);
         continue;
       }
 
-      await this.discordInteractions.deleteDebugResult(targetId);
+      await this.discordDeliveries.deleteDebugResult(targetId);
       if (result.status === "failed") {
         throw new Error(result.error);
       }
@@ -458,167 +549,77 @@ export class ChatAgent extends Agent<Env> {
     throw new Error(`Debug queued response ${targetId} was not produced.`);
   }
 
-  private async answerQueuedDiscordChat(
-    job: DiscordInteractionChatJob,
-    fiber: FiberContext,
-    attempt: number
-  ): Promise<{
-    job: DiscordInteractionChatJob;
-    response: DiscordChatResponse;
-  }> {
-    let updatedJob = job;
+  private getActiveProgressReporter() {
+    const turn = this.getLatestDiscordTurn();
+    return turn ? this.progressReporters.get(turn.interactionId) : undefined;
+  }
 
-    if (!updatedJob.userMessageAppended) {
-      await this.session.appendMessage(createDiscordUserMessage(job.request));
-      updatedJob = {
-        ...updatedJob,
-        userMessageAppended: true,
-        updatedAt: new Date().toISOString()
-      };
-      await this.discordInteractions.putJob(updatedJob);
-      this.stashDiscordJobFiber(
-        fiber,
-        updatedJob,
-        "user-message-appended",
-        attempt
-      );
-    }
+  private getLatestDiscordTurn(): DiscordChatRequest | undefined {
+    for (let index = this.messages.length - 1; index >= 0; index--) {
+      const message = this.messages[index];
+      if (message.role !== "user") continue;
 
-    if (updatedJob.generatedResponse) {
-      const generatedResponse = updatedJob.generatedResponse;
-      this.stashDiscordJobFiber(
-        fiber,
-        updatedJob,
-        "rehydrating-generated-response",
-        attempt
-      );
-      updatedJob = await this.appendQueuedDiscordAssistantMessage(updatedJob);
+      const metadata = message.metadata as DiscordUserMessageMetadata;
+      if (metadata?.source !== "discord") continue;
+      if (typeof metadata.interactionId !== "string") continue;
+
       return {
-        job: updatedJob,
-        response: await hydrateDiscordGeneratedResponse(
-          this.env,
-          generatedResponse
-        )
+        interactionId: metadata.interactionId,
+        text: "",
+        guildId:
+          typeof metadata.guildId === "string" ? metadata.guildId : undefined,
+        channelId:
+          typeof metadata.channelId === "string"
+            ? metadata.channelId
+            : undefined,
+        userId:
+          typeof metadata.userId === "string" ? metadata.userId : undefined,
+        user: getDiscordUserMetadata(metadata.user),
+        userPermissions:
+          typeof metadata.userPermissions === "string"
+            ? metadata.userPermissions
+            : undefined
       };
     }
 
-    this.stashDiscordJobFiber(
-      fiber,
-      updatedJob,
-      "generating-response",
-      attempt
-    );
-    const progress = createDiscordProgressReporter(updatedJob.responseTarget, {
-      createdAt: updatedJob.createdAt,
-      interactionId: updatedJob.interactionId,
-      sequence: updatedJob.sequence
-    });
-    const turn = await createDiscordAssistantTurn(
-      this.env,
-      this.session,
-      this.sessionAffinity,
-      job.request,
-      progress
-    );
-    updatedJob = {
-      ...updatedJob,
-      generatedResponse: turn.generatedResponse,
-      updatedAt: new Date().toISOString()
-    };
-    await this.discordInteractions.putJob(updatedJob);
-    this.stashDiscordJobFiber(
-      fiber,
-      updatedJob,
-      "generated-response-saved",
-      attempt
-    );
-
-    await this.session.appendMessage(turn.assistantMessage);
-    updatedJob = {
-      ...updatedJob,
-      assistantMessageAppended: true,
-      updatedAt: new Date().toISOString()
-    };
-    await this.discordInteractions.putJob(updatedJob);
-    this.stashDiscordJobFiber(
-      fiber,
-      updatedJob,
-      "assistant-message-appended",
-      attempt
-    );
-
-    return { job: updatedJob, response: turn.response };
-  }
-
-  private async appendQueuedDiscordAssistantMessage(
-    job: DiscordInteractionChatJob
-  ) {
-    if (job.assistantMessageAppended) return job;
-    if (!job.generatedResponse) return job;
-
-    await this.session.appendMessage(
-      createDiscordAssistantMessage(
-        job.request,
-        job.generatedResponse.assistantMessageText
-      )
-    );
-    const updatedJob = {
-      ...job,
-      assistantMessageAppended: true,
-      updatedAt: new Date().toISOString()
-    } satisfies DiscordInteractionChatJob;
-    await this.discordInteractions.putJob(updatedJob);
-    return updatedJob;
-  }
-
-  private async answerFromDiscord(
-    request: DiscordChatRequest
-  ): Promise<DiscordChatResponse> {
-    await this.session.appendMessage(createDiscordUserMessage(request));
-    return this.keepAliveWhile(() =>
-      createDiscordAssistantResponse(
-        this.env,
-        this.session,
-        this.sessionAffinity,
-        request
-      )
-    );
-  }
-
-  private stashDiscordJobFiber(
-    fiber: FiberContext,
-    job: DiscordInteractionJob,
-    phase: DiscordJobFiberPhase,
-    attempt?: number
-  ) {
-    fiber.stash({
-      sequence: job.sequence,
-      interactionId: job.interactionId,
-      jobType: job.type,
-      attempt,
-      phase,
-      updatedAt: new Date().toISOString()
-    } satisfies DiscordJobFiberSnapshot);
+    return undefined;
   }
 }
 
-function getDiscordJobFiberName(interactionId: string) {
-  return `${DISCORD_JOB_FIBER_PREFIX}${interactionId}`;
+function createDiscordThinkSystemPrompt(sessionContext: string) {
+  const sections = [createSystemPrompt()];
+  const trimmedSessionContext = sessionContext.trim();
+  if (trimmedSessionContext) sections.push(trimmedSessionContext);
+  sections.push(
+    `For Discord slash-command turns, only the codemode tool is active. Use codemode for any tool-backed work, including guild_memory updates. Do not use Think workspace file tools directly in Discord conversations.`
+  );
+
+  return sections.join("\n\n");
 }
 
-function getInteractionIdFromDiscordJobFiberName(name: string) {
-  const interactionId = name.slice(DISCORD_JOB_FIBER_PREFIX.length);
-  return interactionId || undefined;
+function getDiscordUserMetadata(value: unknown) {
+  if (!value || typeof value !== "object") return undefined;
+  const user = value as { id?: unknown; displayName?: unknown };
+  if (typeof user.id !== "string") return undefined;
+  return {
+    id: user.id,
+    displayName:
+      typeof user.displayName === "string" ? user.displayName : undefined
+  };
+}
+
+function isTerminalDelivery(record: DiscordDeliveryRecord) {
+  return record.status === "delivered" || record.status === "failed";
 }
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function waitForDiscordDeferredResponse(job: DiscordInteractionJob) {
-  if (job.responseTarget.type !== "discord") return;
+async function waitForDiscordDeferredResponse(record: DiscordDeliveryRecord) {
+  if (record.responseTarget.type !== "discord") return;
 
-  const createdAtMs = Date.parse(job.createdAt);
+  const createdAtMs = Date.parse(record.createdAt);
   if (!Number.isFinite(createdAtMs)) return;
 
   const waitMs =
@@ -626,29 +627,21 @@ async function waitForDiscordDeferredResponse(job: DiscordInteractionJob) {
   if (waitMs > 0) await sleep(waitMs);
 }
 
-function getDiscordJobFiberSnapshot(
-  snapshot: unknown
-): DiscordJobFiberSnapshot | null {
-  if (!snapshot || typeof snapshot !== "object") return null;
-  const value = snapshot as Partial<DiscordJobFiberSnapshot>;
-  if (
-    typeof value.sequence !== "number" ||
-    typeof value.interactionId !== "string" ||
-    (value.jobType !== "chat" && value.jobType !== "reset") ||
-    typeof value.phase !== "string"
-  ) {
-    return null;
-  }
-
+function createDisabledWorkspace(): WorkspaceLike {
   return {
-    sequence: value.sequence,
-    interactionId: value.interactionId,
-    jobType: value.jobType,
-    attempt: value.attempt,
-    phase: value.phase as DiscordJobFiberPhase,
-    updatedAt:
-      typeof value.updatedAt === "string"
-        ? value.updatedAt
-        : new Date(0).toISOString()
+    readFile: async () => null,
+    readFileBytes: async () => null,
+    writeFile: async () => {
+      throw new Error("Think workspace tools are disabled for Sturm.");
+    },
+    readDir: async () => [],
+    rm: async () => {
+      throw new Error("Think workspace tools are disabled for Sturm.");
+    },
+    glob: async () => [],
+    mkdir: async () => {
+      throw new Error("Think workspace tools are disabled for Sturm.");
+    },
+    stat: async () => null
   };
 }

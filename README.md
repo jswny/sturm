@@ -3,9 +3,9 @@
 A webhook-based Discord bot on Cloudflare Workers.
 
 Discord sends interactions to `/discord`. The Worker verifies Discord request
-signatures, handles slash commands, and enqueues chat messages in a Cloudflare
-Agent Durable Object. Conversations persist per Discord guild channel. DMs are
-not supported right now.
+signatures, handles slash commands, and submits chat messages to a Cloudflare
+Think Agent Durable Object. Conversations persist per Discord guild channel. DMs
+are not supported right now.
 
 ## Setup
 
@@ -85,7 +85,7 @@ Debug locally without Discord:
 
 `npm run dev` enables debug endpoints by passing
 `STURM_DEBUG_ENABLED=true` to Wrangler. Debug chat and reset requests use the
-same durable per-conversation Agents SDK queue as real Discord interactions,
+same durable per-conversation Think submission path as real Discord interactions,
 then wait for and return the queued result.
 For permission-gated tools, include a Discord permission bitfield in
 `permissions.user`; for example, Manage Nicknames is `134217728`.
@@ -107,20 +107,20 @@ curl -H "content-type: application/json" \
 - The bot supports `/c text:<message>` and `/reset`.
 - `/reset` clears the current guild channel context only. Discord limits it by
   default to members with Manage Messages. It does not clear guild memory.
-- Responses are deferred after the interaction is durably queued, then the
-  per-channel Agent processes SDK queue tasks linearly and edits the original
-  interaction response after Workers AI finishes. Discord-specific state tracks
-  dedupe, attempts, generated response checkpoints, and debug results. Each
-  queued job attempt runs in an Agent fiber so interrupted active work can
-  requeue from persisted interaction state.
+- Responses are deferred after the interaction is durably recorded, then the
+  per-channel Think Agent processes submissions linearly and edits the original
+  interaction response after Workers AI finishes. Discord-specific delivery
+  state tracks webhook/debug response targets, terminal status, generated image
+  artifact metadata, and debug results. Think owns message history, turn
+  serialization, chat recovery, and fibers for active turn recovery.
 - Guild memory is shared across channels in the same Discord guild. A
   guild-scoped `GuildMemory` Durable Object is the source of truth and handles
   concurrent writes from multiple channel Agents.
-- Completed interaction dedupe records are pruned after seven days; active jobs
-  are preserved. Each Agent also schedules daily housekeeping, with the same
-  cleanup run opportunistically after queued Discord work.
-- Stale debug queue results are pruned after one day; normal debug requests
-  delete their result after it is returned.
+- Completed delivery records are pruned after seven days; active deliveries are
+  preserved. Each Agent also schedules daily housekeeping, with the same cleanup
+  run opportunistically after Discord work.
+- Stale debug results are pruned after one day; normal debug requests delete
+  their result after it is returned.
 - Bot-token Discord REST calls route through a `DiscordRestDispatcher` Durable
   Object. The dispatcher serializes requests, tracks short-lived Discord rate
   limits, retries short 429/5xx failures within a small wait budget, and
