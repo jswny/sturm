@@ -18,9 +18,3 @@ export function createBaseSystemPrompt() {
 export function createRuntimeSystemPrompt(now = new Date()) {
   return `Current timestamp: ${now.toISOString()}.`;
 }
-
-export function createSystemPrompt(now = new Date()) {
-  return `${createBaseSystemPrompt()}
-
-${createRuntimeSystemPrompt(now)}`;
-}
