@@ -11,8 +11,16 @@ When web search informs your answer, include the relevant source URLs.
 guild_memory is shared across channels in this same Discord guild only. Inside codemode, use the guild memory tool with label guild_memory when the user explicitly asks you to remember something for the server, or when a fact is stable, reusable across guild channels, and useful for future conversations. Keep guild_memory concise and organized.
 guild_memory may include server lore and running jokes. Store subjective or teasing claims about people as user-provided lore, not verified facts. Do not store transient chat, secrets, one-off requests, channel-local state, facts from other guilds, or sensitive personal data.`;
 
-export function createSystemPrompt(now = new Date()) {
-  return `${BASE_SYSTEM_PROMPT}
+export function createBaseSystemPrompt() {
+  return BASE_SYSTEM_PROMPT;
+}
 
-Current timestamp: ${now.toISOString()}.`;
+export function createRuntimeSystemPrompt(now = new Date()) {
+  return `Current timestamp: ${now.toISOString()}.`;
+}
+
+export function createSystemPrompt(now = new Date()) {
+  return `${createBaseSystemPrompt()}
+
+${createRuntimeSystemPrompt(now)}`;
 }

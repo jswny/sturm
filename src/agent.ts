@@ -10,7 +10,10 @@ import {
   type TurnContext,
   type WorkspaceLike
 } from "@cloudflare/think";
-import { Session } from "agents/experimental/memory/session";
+import {
+  AgentContextProvider,
+  Session
+} from "agents/experimental/memory/session";
 import { createCompactFunction } from "agents/experimental/memory/utils";
 import { generateText, type ToolSet } from "ai";
 import { createWorkersAI } from "workers-ai-provider";
@@ -44,10 +47,28 @@ import {
   COMPACTION_TOKEN_THRESHOLD,
   REPLY_PROVIDER_OPTIONS
 } from "./model";
-import { createSystemPrompt } from "./prompts";
+import { createBaseSystemPrompt, createRuntimeSystemPrompt } from "./prompts";
 import { createDiscordCodeModeTool, createDiscordTools } from "./tools";
 import { withProgressTools } from "./discord/progress";
 
+const SESSION_CONTEXT_PROMPT_RENDERER_NAME = "sturm-session-context-prompt";
+const GUILD_MEMORY_CONTEXT_LABEL = "guild_memory";
+const GUILD_MEMORY_CONTEXT_DESCRIPTION =
+  "Durable memory shared by Sturm across all channels in this Discord guild. Store concise, stable, reusable guild-level context, including casual server lore, running jokes, and friend-server banter. Store subjective or teasing claims about people as user-provided lore rather than verified facts.";
+const GUILD_MEMORY_CONTEXT_MAX_TOKENS = 2000;
+const SESSION_CONTEXT_PROMPT_STORAGE_KEY = `session-context-prompt:${stableHash(
+  JSON.stringify({
+    rendererName: SESSION_CONTEXT_PROMPT_RENDERER_NAME,
+    contexts: [
+      {
+        label: GUILD_MEMORY_CONTEXT_LABEL,
+        description: GUILD_MEMORY_CONTEXT_DESCRIPTION,
+        maxTokens: GUILD_MEMORY_CONTEXT_MAX_TOKENS
+      }
+    ]
+  })
+)}`;
+const GUILD_MEMORY_PROMPT_VERSION_KEY = "guild-memory-prompt-version";
 const DISCORD_DEBUG_RESPONSE_TIMEOUT_MS = 14 * 60 * 1000;
 const DISCORD_DEBUG_RESPONSE_POLL_MS = 100;
 const DISCORD_DEFERRED_RESPONSE_SETTLE_MS = 500;
@@ -72,6 +93,7 @@ export class ChatAgent extends Think<Env> {
 
   private discordDeliveries = new DiscordDeliveryStore(this.ctx.storage);
   private progressReporters = new Map<string, DiscordProgressReporter>();
+  private guildMemoryProvider?: GuildMemoryProvider;
 
   override getModel() {
     const workersai = createWorkersAI({ binding: this.env.AI });
@@ -81,19 +103,24 @@ export class ChatAgent extends Think<Env> {
   }
 
   override getSystemPrompt() {
-    return createSystemPrompt();
+    return createBaseSystemPrompt();
   }
 
   override configureSession(session: Session) {
+    this.guildMemoryProvider = new GuildMemoryProvider(
+      this.env.GuildMemory,
+      () => getGuildIdFromConversationName(this.name)
+    );
+
     return session
-      .withContext("guild_memory", {
-        description:
-          "Durable memory shared by Sturm across all channels in this Discord guild. Store concise, stable, reusable guild-level context, including casual server lore, running jokes, and friend-server banter. Store subjective or teasing claims about people as user-provided lore rather than verified facts.",
-        maxTokens: 2000,
-        provider: new GuildMemoryProvider(this.env.GuildMemory, () =>
-          getGuildIdFromConversationName(this.name)
-        )
+      .withContext(GUILD_MEMORY_CONTEXT_LABEL, {
+        description: GUILD_MEMORY_CONTEXT_DESCRIPTION,
+        maxTokens: GUILD_MEMORY_CONTEXT_MAX_TOKENS,
+        provider: this.guildMemoryProvider
       })
+      .withCachedPrompt(
+        new AgentContextProvider(this, SESSION_CONTEXT_PROMPT_STORAGE_KEY)
+      )
       .onCompaction(
         createCompactFunction({
           summarize: async (prompt) => {
@@ -137,7 +164,7 @@ export class ChatAgent extends Think<Env> {
       type: "phase",
       label: "Reading channel context"
     });
-    const sessionContext = await this.session.refreshSystemPrompt();
+    const sessionContext = await this.getFreshSessionContextPrompt();
 
     return {
       system: createDiscordThinkSystemPrompt(sessionContext),
@@ -378,6 +405,26 @@ export class ChatAgent extends Think<Env> {
     };
   }
 
+  private async getFreshSessionContextPrompt() {
+    const provider = this.guildMemoryProvider;
+    if (!provider) return this.session.freezeSystemPrompt();
+
+    const currentVersion = await provider.getCurrentVersion();
+    const cachedVersion = await this.ctx.storage.get<number>(
+      GUILD_MEMORY_PROMPT_VERSION_KEY
+    );
+    if (cachedVersion === currentVersion) {
+      return this.session.freezeSystemPrompt();
+    }
+
+    const prompt = await this.session.refreshSystemPrompt();
+    await this.ctx.storage.put(
+      GUILD_MEMORY_PROMPT_VERSION_KEY,
+      provider.getLastReadVersion() ?? currentVersion
+    );
+    return prompt;
+  }
+
   private async deliverDiscordChatResponse(
     record: DiscordDeliveryRecord,
     result: ChatResponseResult
@@ -587,14 +634,21 @@ export class ChatAgent extends Think<Env> {
 }
 
 function createDiscordThinkSystemPrompt(sessionContext: string) {
-  const sections = [createSystemPrompt()];
+  const sections = [createBaseSystemPrompt()];
   const trimmedSessionContext = sessionContext.trim();
   if (trimmedSessionContext) sections.push(trimmedSessionContext);
-  sections.push(
-    `For Discord slash-command turns, only the codemode tool is active. Use codemode for any tool-backed work, including guild_memory updates. Do not use Think workspace file tools directly in Discord conversations.`
-  );
+  sections.push(createRuntimeSystemPrompt());
 
   return sections.join("\n\n");
+}
+
+function stableHash(input: string) {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < input.length; index++) {
+    hash ^= input.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(36);
 }
 
 function getDiscordUserMetadata(value: unknown) {

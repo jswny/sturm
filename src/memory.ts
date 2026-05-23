@@ -31,6 +31,15 @@ export class GuildMemoryProvider implements WritableContextProvider {
     return snapshot.content;
   }
 
+  async getCurrentVersion() {
+    const guildId = this.requireGuildId();
+    return this.getObject(guildId).getMemoryVersion();
+  }
+
+  getLastReadVersion() {
+    return this.lastRead?.version;
+  }
+
   async set(content: string): Promise<void> {
     const guildId = this.requireGuildId();
     const object = this.getObject(guildId);
@@ -60,6 +69,11 @@ export class GuildMemoryProvider implements WritableContextProvider {
 export class GuildMemoryObject extends DurableObject<Env> {
   async getMemory(): Promise<GuildMemorySnapshot> {
     return this.readMemory();
+  }
+
+  async getMemoryVersion(): Promise<number> {
+    const snapshot = await this.readMemory();
+    return snapshot.version;
   }
 
   async setMemory(update: GuildMemoryUpdate): Promise<GuildMemorySnapshot> {
