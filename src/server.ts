@@ -14,7 +14,7 @@ type ServerEnv = Env & {
 };
 
 export default {
-  async fetch(request: Request, env: ServerEnv) {
+  async fetch(request: Request, env: ServerEnv, ctx: ExecutionContext) {
     const url = new URL(request.url);
     try {
       if (url.pathname === "/" && request.method === "GET") {
@@ -29,7 +29,7 @@ export default {
       return (
         (await handleAdminRequest(request, env)) ||
         (await handleDebugRequest(request, env)) ||
-        (await handleDiscordRequest(request, env)) ||
+        (await handleDiscordRequest(request, env, ctx)) ||
         new Response("Not found", { status: 404 })
       );
     } catch (error) {

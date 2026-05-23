@@ -10,9 +10,10 @@ import {
 } from "discord-api-types/v10";
 import { verifyKey } from "discord-interactions";
 import { getAgentByName } from "agents";
+import { editOriginalInteractionResponse } from "./discord/api";
 import { C_COMMAND, RESET_COMMAND } from "./discord/commands";
 import type {
-  DiscordResponseTarget,
+  DiscordWebhookResponseTarget,
   DiscordUserContext
 } from "./discord/types";
 import { logError, logWarn } from "./logging";
@@ -32,7 +33,8 @@ type DiscordEnv = Env & {
 
 export async function handleDiscordRequest(
   request: Request,
-  env: DiscordEnv
+  env: DiscordEnv,
+  ctx: ExecutionContext
 ): Promise<Response | null> {
   const url = new URL(request.url);
   if (url.pathname !== "/discord" && url.pathname !== "/discord/") return null;
@@ -112,12 +114,9 @@ export async function handleDiscordRequest(
       return guildOnlyInteractionResponse();
     }
 
-    try {
-      await enqueueCommand(interaction, text, env);
-    } catch (error) {
-      logDiscordCommandError("Discord /c enqueue failed", error, interaction);
-      throw error;
-    }
+    deferDiscordWork(ctx, interaction, "Discord /c enqueue failed", () =>
+      enqueueCommand(interaction, text, env)
+    );
 
     return interactionJson({
       type: InteractionResponseType.DeferredChannelMessageWithSource
@@ -129,16 +128,9 @@ export async function handleDiscordRequest(
       return guildOnlyInteractionResponse();
     }
 
-    try {
-      await enqueueResetCommand(interaction, env);
-    } catch (error) {
-      logDiscordCommandError(
-        "Discord /reset enqueue failed",
-        error,
-        interaction
-      );
-      throw error;
-    }
+    deferDiscordWork(ctx, interaction, "Discord /reset enqueue failed", () =>
+      enqueueResetCommand(interaction, env)
+    );
 
     return interactionJson({
       type: InteractionResponseType.DeferredChannelMessageWithSource,
@@ -156,6 +148,41 @@ export async function handleDiscordRequest(
     },
     { status: 200 }
   );
+}
+
+function deferDiscordWork(
+  ctx: ExecutionContext,
+  interaction: APIChatInputApplicationCommandInteraction,
+  failureLogMessage: string,
+  work: () => Promise<unknown>
+) {
+  ctx.waitUntil(
+    (async () => {
+      try {
+        await work();
+      } catch (error) {
+        logDiscordCommandError(failureLogMessage, error, interaction);
+        await deliverDeferredInteractionFailure(interaction);
+      }
+    })()
+  );
+}
+
+async function deliverDeferredInteractionFailure(
+  interaction: APIChatInputApplicationCommandInteraction
+) {
+  try {
+    await editOriginalInteractionResponse(
+      getResponseTarget(interaction),
+      "Sorry, I could not queue that request."
+    );
+  } catch (error) {
+    logDiscordCommandError(
+      "Discord deferred enqueue failure response failed",
+      error,
+      interaction
+    );
+  }
 }
 
 function isChatInputApplicationCommandInteraction(
@@ -263,7 +290,7 @@ function getStringOption(
 
 function getResponseTarget(
   interaction: APIChatInputApplicationCommandInteraction
-): DiscordResponseTarget {
+): DiscordWebhookResponseTarget {
   return {
     type: "discord",
     applicationId: interaction.application_id,
