@@ -7,16 +7,13 @@ import {
   type ToolCallContext,
   type ToolCallResultContext,
   type TurnConfig,
-  type TurnContext,
-  type WorkspaceLike
+  type TurnContext
 } from "@cloudflare/think";
-import {
-  AgentContextProvider,
-  Session
-} from "agents/experimental/memory/session";
+import { Session } from "agents/experimental/memory/session";
 import { createCompactFunction } from "agents/experimental/memory/utils";
 import { generateText, type ToolSet } from "ai";
 import { createWorkersAI } from "workers-ai-provider";
+import { createDisabledWorkspace } from "./disabled-workspace";
 import { editOriginalInteractionResponse } from "./discord/api";
 import {
   DiscordDeliveryStore,
@@ -26,7 +23,10 @@ import {
   type DiscordResetDeliveryRecord
 } from "./discord/delivery";
 import { inlineDataUrls } from "./discord/format";
-import { createDiscordProgressReporter } from "./discord/progress";
+import {
+  createDiscordProgressReporter,
+  withProgressTools
+} from "./discord/progress";
 import type { DiscordProgressReporter } from "./discord/progress";
 import {
   clearDiscordSession,
@@ -47,28 +47,17 @@ import {
   COMPACTION_TOKEN_THRESHOLD,
   REPLY_PROVIDER_OPTIONS
 } from "./model";
-import { createBaseSystemPrompt, createRuntimeSystemPrompt } from "./prompts";
+import { createBaseSystemPrompt } from "./prompts";
+import {
+  createDiscordThinkSystemPrompt,
+  createSessionContextPromptProvider,
+  getFreshSessionContextPrompt,
+  GUILD_MEMORY_CONTEXT_DESCRIPTION,
+  GUILD_MEMORY_CONTEXT_LABEL,
+  GUILD_MEMORY_CONTEXT_MAX_TOKENS
+} from "./session-context";
 import { createDiscordCodeModeTool, createDiscordTools } from "./tools";
-import { withProgressTools } from "./discord/progress";
 
-const SESSION_CONTEXT_PROMPT_RENDERER_NAME = "sturm-session-context-prompt";
-const GUILD_MEMORY_CONTEXT_LABEL = "guild_memory";
-const GUILD_MEMORY_CONTEXT_DESCRIPTION =
-  "Durable memory shared by Sturm across all channels in this Discord guild. Store concise, stable, reusable guild-level context, including casual server lore, running jokes, and friend-server banter. Store subjective or teasing claims about people as user-provided lore rather than verified facts.";
-const GUILD_MEMORY_CONTEXT_MAX_TOKENS = 2000;
-const SESSION_CONTEXT_PROMPT_STORAGE_KEY = `session-context-prompt:${stableHash(
-  JSON.stringify({
-    rendererName: SESSION_CONTEXT_PROMPT_RENDERER_NAME,
-    contexts: [
-      {
-        label: GUILD_MEMORY_CONTEXT_LABEL,
-        description: GUILD_MEMORY_CONTEXT_DESCRIPTION,
-        maxTokens: GUILD_MEMORY_CONTEXT_MAX_TOKENS
-      }
-    ]
-  })
-)}`;
-const GUILD_MEMORY_PROMPT_VERSION_KEY = "guild-memory-prompt-version";
 const DISCORD_DEBUG_RESPONSE_TIMEOUT_MS = 14 * 60 * 1000;
 const DISCORD_DEBUG_RESPONSE_POLL_MS = 100;
 const DISCORD_DEFERRED_RESPONSE_SETTLE_MS = 500;
@@ -89,7 +78,7 @@ type DiscordUserMessageMetadata = {
 export class ChatAgent extends Think<Env> {
   override maxSteps = 5;
   override sendReasoning = false;
-  override workspace: WorkspaceLike = createDisabledWorkspace();
+  override workspace = createDisabledWorkspace();
 
   private discordDeliveries = new DiscordDeliveryStore(this.ctx.storage);
   private progressReporters = new Map<string, DiscordProgressReporter>();
@@ -118,9 +107,7 @@ export class ChatAgent extends Think<Env> {
         maxTokens: GUILD_MEMORY_CONTEXT_MAX_TOKENS,
         provider: this.guildMemoryProvider
       })
-      .withCachedPrompt(
-        new AgentContextProvider(this, SESSION_CONTEXT_PROMPT_STORAGE_KEY)
-      )
+      .withCachedPrompt(createSessionContextPromptProvider(this))
       .onCompaction(
         createCompactFunction({
           summarize: async (prompt) => {
@@ -164,7 +151,11 @@ export class ChatAgent extends Think<Env> {
       type: "phase",
       label: "Reading channel context"
     });
-    const sessionContext = await this.getFreshSessionContextPrompt();
+    const sessionContext = await getFreshSessionContextPrompt(
+      this.session,
+      this.ctx.storage,
+      this.guildMemoryProvider
+    );
 
     return {
       system: createDiscordThinkSystemPrompt(sessionContext),
@@ -405,26 +396,6 @@ export class ChatAgent extends Think<Env> {
     };
   }
 
-  private async getFreshSessionContextPrompt() {
-    const provider = this.guildMemoryProvider;
-    if (!provider) return this.session.freezeSystemPrompt();
-
-    const currentVersion = await provider.getCurrentVersion();
-    const cachedVersion = await this.ctx.storage.get<number>(
-      GUILD_MEMORY_PROMPT_VERSION_KEY
-    );
-    if (cachedVersion === currentVersion) {
-      return this.session.freezeSystemPrompt();
-    }
-
-    const prompt = await this.session.refreshSystemPrompt();
-    await this.ctx.storage.put(
-      GUILD_MEMORY_PROMPT_VERSION_KEY,
-      provider.getLastReadVersion() ?? currentVersion
-    );
-    return prompt;
-  }
-
   private async deliverDiscordChatResponse(
     record: DiscordDeliveryRecord,
     result: ChatResponseResult
@@ -633,24 +604,6 @@ export class ChatAgent extends Think<Env> {
   }
 }
 
-function createDiscordThinkSystemPrompt(sessionContext: string) {
-  const sections = [createBaseSystemPrompt()];
-  const trimmedSessionContext = sessionContext.trim();
-  if (trimmedSessionContext) sections.push(trimmedSessionContext);
-  sections.push(createRuntimeSystemPrompt());
-
-  return sections.join("\n\n");
-}
-
-function stableHash(input: string) {
-  let hash = 0x811c9dc5;
-  for (let index = 0; index < input.length; index++) {
-    hash ^= input.charCodeAt(index);
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return (hash >>> 0).toString(36);
-}
-
 function getDiscordUserMetadata(value: unknown) {
   if (!value || typeof value !== "object") return undefined;
   const user = value as { id?: unknown; displayName?: unknown };
@@ -679,23 +632,4 @@ async function waitForDiscordDeferredResponse(record: DiscordDeliveryRecord) {
   const waitMs =
     DISCORD_DEFERRED_RESPONSE_SETTLE_MS - (Date.now() - createdAtMs);
   if (waitMs > 0) await sleep(waitMs);
-}
-
-function createDisabledWorkspace(): WorkspaceLike {
-  return {
-    readFile: async () => null,
-    readFileBytes: async () => null,
-    writeFile: async () => {
-      throw new Error("Think workspace tools are disabled for Sturm.");
-    },
-    readDir: async () => [],
-    rm: async () => {
-      throw new Error("Think workspace tools are disabled for Sturm.");
-    },
-    glob: async () => [],
-    mkdir: async () => {
-      throw new Error("Think workspace tools are disabled for Sturm.");
-    },
-    stat: async () => null
-  };
 }
