@@ -121,6 +121,10 @@ curl -H "content-type: application/json" \
   cleanup run opportunistically after queued Discord work.
 - Stale debug queue results are pruned after one day; normal debug requests
   delete their result after it is returned.
+- Bot-token Discord REST calls route through a `DiscordRestDispatcher` Durable
+  Object. The dispatcher serializes requests, tracks short-lived Discord rate
+  limits, retries short 429/5xx failures within a small wait budget, and
+  returns retryable failures instead of hiding delayed writes.
 - Web search and URL summarization require `KAGI_API_KEY`.
 - Code Mode is the chat model's only outer tool. It is currently a
   Cloudflare beta/experimental API. Sturm runs generated JavaScript in an

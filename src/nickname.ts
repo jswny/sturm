@@ -5,14 +5,13 @@ import {
   modifyGuildMemberNickname,
   searchGuildMembers as searchDiscordGuildMembers
 } from "./discord/api";
+import type { DiscordApiEnv } from "./discord/api";
 import { hasDiscordPermission } from "./discord/permissions";
 import { logError, logWarn } from "./logging";
 
 const SPECIAL_SPACE = " ";
 
-export type NicknameEnv = {
-  DISCORD_TOKEN?: string;
-};
+export type NicknameEnv = DiscordApiEnv;
 
 export type NicknameRequestContext = {
   guildId?: string;
@@ -89,7 +88,7 @@ export async function searchGuildMembers(
 
   try {
     const members = await searchDiscordGuildMembers(
-      env.DISCORD_TOKEN.trim(),
+      env,
       context.guildId,
       preparedQuery,
       preparedLimit
@@ -144,9 +143,8 @@ export async function setNicknamePostfix(
     return failure("set", context, guard.targetUserId, guard.error);
 
   try {
-    const token = env.DISCORD_TOKEN?.trim() ?? "";
     const guildId = context.guildId ?? "";
-    const member = await getGuildMember(token, guildId, guard.targetUserId);
+    const member = await getGuildMember(env, guildId, guard.targetUserId);
     const oldNickname =
       member.nick ?? member.user.global_name ?? member.user.username;
     const baseNickname = parseBaseNickname(oldNickname);
@@ -162,7 +160,7 @@ export async function setNicknamePostfix(
     const convertedPostfix = convertPostfix(preparedPostfix);
     const newNickname = `${baseNickname}${SPECIAL_SPACE}${convertedPostfix}`;
     await modifyGuildMemberNickname(
-      token,
+      env,
       guildId,
       guard.targetUserId,
       newNickname
@@ -202,9 +200,8 @@ export async function clearNicknamePostfix(
     return failure("cleared", context, guard.targetUserId, guard.error);
 
   try {
-    const token = env.DISCORD_TOKEN?.trim() ?? "";
     const guildId = context.guildId ?? "";
-    const member = await getGuildMember(token, guildId, guard.targetUserId);
+    const member = await getGuildMember(env, guildId, guard.targetUserId);
     const oldNickname =
       member.nick ?? member.user.global_name ?? member.user.username;
     const baseNickname = parseBaseNickname(oldNickname);
@@ -232,7 +229,7 @@ export async function clearNicknamePostfix(
     }
 
     await modifyGuildMemberNickname(
-      token,
+      env,
       guildId,
       guard.targetUserId,
       baseNickname

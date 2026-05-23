@@ -13,16 +13,29 @@ import type {
   DiscordResponseAttachment,
   DiscordWebhookResponseTarget
 } from "./types";
+import {
+  getDiscordRestDispatcher,
+  type DiscordRestResult
+} from "./rest-dispatcher";
 
 const DISCORD_API_BASE = "https://discord.com/api/v10";
 const MAX_DISCORD_CONTENT_LENGTH = 2000;
+
+export type DiscordApiEnv = Env & {
+  DISCORD_TOKEN?: string;
+  DiscordRest: DurableObjectNamespace<
+    import("./rest-dispatcher").DiscordRestDispatcher
+  >;
+};
 
 export class DiscordApiError extends Error {
   constructor(
     message: string,
     readonly status: number,
     readonly body: string,
-    readonly code?: number
+    readonly code?: number,
+    readonly retryable = false,
+    readonly retryAfterMs?: number
   ) {
     super(message);
     this.name = "DiscordApiError";
@@ -56,18 +69,18 @@ export async function editOriginalInteractionResponse(
 }
 
 export async function getGuildMember(
-  token: string,
+  env: DiscordApiEnv,
   guildId: string,
   userId: string
 ): Promise<RESTGetAPIGuildMemberResult> {
   return discordApiFetch<RESTGetAPIGuildMemberResult>(
-    `/guilds/${guildId}/members/${userId}`,
-    token
+    env,
+    `/guilds/${guildId}/members/${userId}`
   );
 }
 
 export async function searchGuildMembers(
-  token: string,
+  env: DiscordApiEnv,
   guildId: string,
   query: string,
   limit: number
@@ -77,13 +90,13 @@ export async function searchGuildMembers(
     limit: String(limit)
   });
   return discordApiFetch<RESTGetAPIGuildMembersSearchResult>(
-    `/guilds/${guildId}/members/search?${params.toString()}`,
-    token
+    env,
+    `/guilds/${guildId}/members/search?${params.toString()}`
   );
 }
 
 export async function getCurrentUserGuilds(
-  token: string
+  env: DiscordApiEnv
 ): Promise<RESTGetAPICurrentUserGuildsResult> {
   const guilds: RESTAPIPartialCurrentUserGuild[] = [];
   let after: string | undefined;
@@ -93,8 +106,8 @@ export async function getCurrentUserGuilds(
     if (after) query.set("after", after);
 
     const page = await discordApiFetch<RESTGetAPICurrentUserGuildsResult>(
-      `/users/@me/guilds?${query.toString()}`,
-      token
+      env,
+      `/users/@me/guilds?${query.toString()}`
     );
     guilds.push(...page);
 
@@ -105,14 +118,14 @@ export async function getCurrentUserGuilds(
 }
 
 export async function overwriteGuildApplicationCommands(
-  token: string,
+  env: DiscordApiEnv,
   applicationId: string,
   guildId: string,
   commands: RESTPutAPIApplicationGuildCommandsJSONBody
 ): Promise<RESTPutAPIApplicationGuildCommandsResult> {
   return discordApiFetch<RESTPutAPIApplicationGuildCommandsResult>(
+    env,
     `/applications/${applicationId}/guilds/${guildId}/commands`,
-    token,
     {
       method: "PUT",
       headers: { "content-type": "application/json" },
@@ -122,15 +135,15 @@ export async function overwriteGuildApplicationCommands(
 }
 
 export async function modifyGuildMemberNickname(
-  token: string,
+  env: DiscordApiEnv,
   guildId: string,
   userId: string,
   nick: string | null
 ): Promise<RESTPatchAPIGuildMemberResult> {
   const body: RESTPatchAPIGuildMemberJSONBody = { nick };
   return discordApiFetch<RESTPatchAPIGuildMemberResult>(
+    env,
     `/guilds/${guildId}/members/${userId}`,
-    token,
     {
       method: "PATCH",
       headers: { "content-type": "application/json" },
@@ -140,29 +153,49 @@ export async function modifyGuildMemberNickname(
 }
 
 async function discordApiFetch<T>(
+  env: DiscordApiEnv,
   path: string,
-  token: string,
   init: RequestInit = {}
 ): Promise<T> {
-  const response = await fetch(`${DISCORD_API_BASE}${path}`, {
-    ...init,
-    headers: {
-      authorization: `Bot ${token}`,
-      ...init.headers
-    }
+  const result = await getDiscordRestDispatcher(env.DiscordRest).request({
+    method: init.method ?? "GET",
+    path,
+    headers: normalizeHeaders(init.headers),
+    body: typeof init.body === "string" ? init.body : undefined
   });
 
-  const body = await response.text();
-  if (!response.ok) {
-    throw new DiscordApiError(
-      `Discord API request failed: ${response.status} ${body}`,
-      response.status,
-      body,
-      getDiscordErrorCode(body)
-    );
+  if (!result.ok) {
+    throw createDiscordApiError(result);
   }
 
-  return JSON.parse(body) as T;
+  return JSON.parse(result.body) as T;
+}
+
+function normalizeHeaders(headers: HeadersInit | undefined) {
+  if (!headers) return undefined;
+
+  if (headers instanceof Headers) {
+    return Object.fromEntries(headers.entries());
+  }
+
+  if (Array.isArray(headers)) {
+    return Object.fromEntries(headers);
+  }
+
+  return headers;
+}
+
+function createDiscordApiError(
+  result: Extract<DiscordRestResult, { ok: false }>
+) {
+  return new DiscordApiError(
+    result.error,
+    result.status ?? 0,
+    result.body ?? "",
+    result.code,
+    result.retryable,
+    result.retryAfterMs
+  );
 }
 
 function createDiscordResponseBody(

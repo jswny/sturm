@@ -32,6 +32,10 @@
       {
         "class_name": "GuildMemoryObject",
         "name": "GuildMemory"
+      },
+      {
+        "class_name": "DiscordRestDispatcher",
+        "name": "DiscordRest"
       }
     ]
   },
@@ -43,6 +47,10 @@
     {
       "new_sqlite_classes": ["GuildMemoryObject"],
       "tag": "v2"
+    },
+    {
+      "new_sqlite_classes": ["DiscordRestDispatcher"],
+      "tag": "v3"
     }
   ],
   "observability": {

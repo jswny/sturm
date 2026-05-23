@@ -1,14 +1,14 @@
 import {
   DiscordApiError,
+  type DiscordApiEnv,
   getCurrentUserGuilds,
   overwriteGuildApplicationCommands
 } from "./discord/api";
 import { GUILD_COMMANDS } from "./discord/commands";
 import { logError, logInfo, logWarn } from "./logging";
 
-type AdminEnv = Env & {
+type AdminEnv = DiscordApiEnv & {
   DISCORD_APPLICATION_ID?: string;
-  DISCORD_TOKEN?: string;
 };
 
 type RegisterCommandsResult = {
@@ -60,7 +60,7 @@ async function registerCommandsInAllGuilds(env: AdminEnv) {
 
   let guilds: Awaited<ReturnType<typeof getCurrentUserGuilds>>;
   try {
-    guilds = await getCurrentUserGuilds(token);
+    guilds = await getCurrentUserGuilds(env);
   } catch (error) {
     logDiscordAdminFailure("Discord guild list fetch failed", error, {
       operation: "registerCommands"
@@ -81,7 +81,7 @@ async function registerCommandsInAllGuilds(env: AdminEnv) {
   for (const guild of guilds) {
     try {
       const commands = await overwriteGuildApplicationCommands(
-        token,
+        env,
         applicationId,
         guild.id,
         GUILD_COMMANDS
