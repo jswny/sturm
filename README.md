@@ -1,11 +1,11 @@
 # Sturm
 
-A webhook-based Discord bot on Cloudflare Workers.
+A Discord bot on Cloudflare Workers.
 
-Discord sends interactions to `/discord`. The Worker verifies Discord request
-signatures, handles slash commands, and submits chat messages to a Cloudflare
-Think Agent Durable Object. Conversations persist per Discord guild channel. DMs
-are not supported right now.
+Sturm responds to `/c text:<message>` in Discord guild channels. It keeps
+conversation context per channel, shares durable memory across the guild, and can
+use tools for web search, URL summaries, archiving, image generation, member
+lookup, and nickname postfix changes. DMs are not supported.
 
 ## Setup
 
@@ -23,9 +23,9 @@ DISCORD_TOKEN=
 KAGI_API_KEY=
 ```
 
-Restart `npm run dev` after changing `.dev.vars`.
+Restart local development after changing `.dev.vars`.
 
-For production, set secrets in Cloudflare:
+Set production secrets in Cloudflare:
 
 ```bash
 npx wrangler secret put DISCORD_PUBLIC_KEY
@@ -39,21 +39,6 @@ Create the R2 bucket used for generated image artifacts before deploying:
 npx wrangler r2 bucket create sturm-artifacts
 ```
 
-`DISCORD_APPLICATION_ID` is used for health output and command registration.
-`DISCORD_TOKEN` is used by the Worker for authenticated Discord bot API tools
-and command registration.
-
-## Commands
-
-Register `/c` and `/reset` in every guild the bot is in:
-
-```bash
-curl -X POST http://localhost:8787/api/admin/register-commands
-```
-
-Sturm only registers guild-scoped commands. Guild command updates propagate
-quickly, and DM commands are intentionally not supported right now.
-
 Run locally:
 
 ```bash
@@ -66,80 +51,34 @@ Deploy:
 npm run deploy
 ```
 
+## Discord
+
 Set the Discord Developer Portal Interactions Endpoint URL to:
 
 ```text
 https://<worker-host>/discord
 ```
 
-For the deployed bot:
+Register `/c` and `/reset` in every guild the bot is in:
 
 ```bash
 curl -X POST https://<worker-host>/api/admin/register-commands
 ```
 
-This admin endpoint is intended to be protected by Cloudflare Access. It does
-not implement its own bearer-token authentication.
-
-Debug locally without Discord:
-
-`npm run dev` enables debug endpoints by passing
-`STURM_DEBUG_ENABLED=true` to Wrangler. Debug chat and reset requests use the
-same durable per-conversation Think submission path as real Discord interactions,
-then wait for and return the queued result.
-For permission-gated tools, include a Discord permission bitfield in
-`permissions.user`; for example, Manage Nicknames is `134217728`.
+For local development, use the local Worker URL instead:
 
 ```bash
-curl -H "content-type: application/json" \
-  -d '{"surface":{"type":"guild_channel","guildId":"test-guild","channelId":"test-channel"},"user":{"id":"test-user","displayName":"Test User"},"text":"hello"}' \
-  http://localhost:8787/debug/chat
+curl -X POST http://localhost:8787/api/admin/register-commands
 ```
 
-```bash
-curl -H "content-type: application/json" \
-  -d '{"surface":{"type":"guild_channel","guildId":"test-guild","channelId":"test-channel"}}' \
-  http://localhost:8787/debug/reset
-```
+The admin endpoint is intended to be protected by Cloudflare Access. Sturm only
+registers guild-scoped commands.
 
-## Notes
+## Commands
 
-- The bot supports `/c text:<message>` and `/reset`.
-- `/reset` clears the current guild channel context only. Discord limits it by
-  default to members with Manage Messages. It does not clear guild memory.
-- Responses are deferred after the interaction is durably recorded, then the
-  per-channel Think Agent processes submissions linearly and edits the original
-  interaction response after Workers AI finishes. Discord-specific delivery
-  state tracks webhook/debug response targets, terminal status, generated image
-  artifact metadata, and debug results. Think owns message history, turn
-  serialization, chat recovery, and fibers for active turn recovery.
-- Guild memory is shared across channels in the same Discord guild. A
-  guild-scoped `GuildMemory` Durable Object is the source of truth and handles
-  concurrent writes from multiple channel Agents.
-- Completed delivery records are pruned after seven days; active deliveries are
-  preserved. Each Agent also schedules daily housekeeping, with the same cleanup
-  run opportunistically after Discord work.
-- Stale debug results are pruned after one day; normal debug requests delete
-  their result after it is returned.
-- Bot-token Discord REST calls route through a `DiscordRestDispatcher` Durable
-  Object. The dispatcher serializes requests, tracks short-lived Discord rate
-  limits, retries short 429/5xx failures within a small wait budget, and
-  returns retryable failures instead of hiding delayed writes.
-- Web search and URL summarization require `KAGI_API_KEY`.
-- Code Mode is the chat model's only outer tool. It is currently a
-  Cloudflare beta/experimental API. Sturm runs generated JavaScript in an
-  isolated Worker sandbox with direct outbound network access disabled, and
-  that sandbox can call Sturm's web, archive, image, Discord member lookup,
-  nickname, and memory tools.
-- URL archiving creates archive.today latest links from chat tool calls.
-- Image generation uses Workers AI, stores generated artifacts in the
-  `sturm-artifacts` R2 bucket under `images/generated/`, and returns Discord
-  attachments.
-- Discord member lookup searches current-guild users by username or nickname
-  prefix. Nickname postfix changes require a target Discord user ID,
-  `DISCORD_TOKEN`, and Discord Manage Nicknames permission for the `/c` caller.
-  Discord API errors are surfaced when bot permissions or role hierarchy block
-  a target.
+- `/c text:<message>` chats with Sturm.
+- `/reset` clears the current channel context only; it does not clear guild
+  memory. Discord limits it by default to members with Manage Messages.
 
 ## License
 
