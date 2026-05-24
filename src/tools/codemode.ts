@@ -1,5 +1,4 @@
-import { DynamicWorkerExecutor } from "@cloudflare/codemode";
-import { createCodeTool } from "@cloudflare/codemode/ai";
+import { createExecuteTool } from "@cloudflare/think/tools/execute";
 import type { ToolSet } from "ai";
 
 export type CodeModeEnv = {
@@ -17,15 +16,11 @@ Available tool API:
 {{types}}`;
 
 export function createDiscordCodeModeTool(env: CodeModeEnv, tools: ToolSet) {
-  const executor = new DynamicWorkerExecutor({
+  return createExecuteTool({
+    tools,
     loader: env.LOADER,
     timeout: CODEMODE_TIMEOUT_MS,
-    globalOutbound: null
-  });
-
-  return createCodeTool({
-    tools,
-    executor,
+    globalOutbound: null,
     description: CODEMODE_DESCRIPTION
   });
 }
