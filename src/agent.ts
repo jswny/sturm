@@ -422,6 +422,11 @@ export class ChatAgent extends Think<Env> {
     return entries.length;
   }
 
+  private async clearMessagesAndStreams() {
+    await this.clearMessages();
+    this._resumableStream.clearAll();
+  }
+
   private async deliverDiscordChatResponse(
     record: DiscordDeliveryRecord,
     result: ChatResponseResult
@@ -487,7 +492,7 @@ export class ChatAgent extends Think<Env> {
       await this.discordDeliveries.markRunning(record.interactionId);
       const response = await clearDiscordSession({
         getPathLength: () => this.session.getPathLength(),
-        clearMessages: () => this.clearMessages(),
+        clearMessages: () => this.clearMessagesAndStreams(),
         clearWorkspace: () => this.clearWorkspace()
       });
       await this.deliverDiscordDeliveryResponse(record, response);
