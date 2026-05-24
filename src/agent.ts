@@ -190,6 +190,15 @@ export class ChatAgent extends Think<Env> {
 
   override async afterToolCall(ctx: ToolCallResultContext) {
     if (ctx.toolName !== "codemode") return;
+    if (!ctx.success) {
+      logWarn("Code mode tool call failed", {
+        agentName: this.name,
+        toolName: ctx.toolName,
+        stepNumber: ctx.stepNumber,
+        durationMs: ctx.durationMs,
+        error: getErrorMessage(ctx.error)
+      });
+    }
     await this.getActiveProgressReporter()?.report({
       type: "tool",
       label: "code mode",
