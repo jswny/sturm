@@ -14,7 +14,10 @@ import { createCompactFunction } from "agents/experimental/memory/utils";
 import { generateText, type ToolSet } from "ai";
 import { createWorkersAI } from "workers-ai-provider";
 import { createDisabledWorkspace } from "./disabled-workspace";
-import { editOriginalInteractionResponse } from "./discord/api";
+import {
+  deliverInteractionResponse,
+  editOriginalInteractionResponse
+} from "./discord/api";
 import {
   DiscordDeliveryStore,
   type DiscordDeliveryChatInput,
@@ -497,13 +500,21 @@ export class ChatAgent extends Think<Env> {
     logInfo("Editing Discord interaction response", {
       sequence: record.sequence,
       interactionId: record.interactionId,
+      contentLength: response.content.length,
       attachments: response.attachments?.length ?? 0
     });
-    await editOriginalInteractionResponse(
+    const messageCount = await deliverInteractionResponse(
       record.responseTarget,
       response.content,
       response.attachments
     );
+    logInfo("Delivered Discord interaction response", {
+      sequence: record.sequence,
+      interactionId: record.interactionId,
+      contentLength: response.content.length,
+      messageCount,
+      attachments: response.attachments?.length ?? 0
+    });
   }
 
   private async failDiscordDelivery(

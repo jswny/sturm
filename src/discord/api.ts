@@ -7,6 +7,7 @@ import type {
   RESTPutAPIApplicationGuildCommandsResult,
   RESTPatchAPIGuildMemberJSONBody,
   RESTPatchAPIGuildMemberResult,
+  RESTPostAPIWebhookWithTokenJSONBody,
   RESTPatchAPIWebhookWithTokenMessageJSONBody
 } from "discord-api-types/v10";
 import type {
@@ -20,6 +21,7 @@ import {
 
 const DISCORD_API_BASE = "https://discord.com/api/v10";
 const MAX_DISCORD_CONTENT_LENGTH = 2000;
+const MIN_DISCORD_SPLIT_LENGTH = 1200;
 
 export type DiscordApiEnv = Env & {
   DISCORD_TOKEN?: string;
@@ -61,6 +63,50 @@ export async function editOriginalInteractionResponse(
     const body = await response.text();
     throw new DiscordApiError(
       `Discord original response edit failed: ${response.status} ${body}`,
+      response.status,
+      body,
+      getDiscordErrorCode(body)
+    );
+  }
+}
+
+export async function deliverInteractionResponse(
+  target: DiscordWebhookResponseTarget,
+  content: string,
+  attachments: DiscordResponseAttachment[] = []
+) {
+  const chunks = splitDiscordContent(content);
+  const [firstChunk = "", ...followupChunks] = chunks;
+
+  await editOriginalInteractionResponse(target, firstChunk, attachments);
+  for (const chunk of followupChunks) {
+    await createInteractionFollowup(target, chunk);
+  }
+
+  return chunks.length;
+}
+
+async function createInteractionFollowup(
+  target: DiscordWebhookResponseTarget,
+  content: string
+) {
+  const payload: RESTPostAPIWebhookWithTokenJSONBody = {
+    content,
+    allowed_mentions: { parse: [] }
+  };
+  const response = await fetch(
+    `${DISCORD_API_BASE}/webhooks/${target.applicationId}/${target.token}`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload)
+    }
+  );
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new DiscordApiError(
+      `Discord followup response failed: ${response.status} ${body}`,
       response.status,
       body,
       getDiscordErrorCode(body)
@@ -202,8 +248,9 @@ function createDiscordResponseBody(
   content: string,
   attachments: DiscordResponseAttachment[]
 ) {
+  assertDiscordContentLength(content);
   const payload: RESTPatchAPIWebhookWithTokenMessageJSONBody = {
-    content: truncateDiscordContent(content),
+    content,
     allowed_mentions: { parse: [] },
     attachments: attachments.map((attachment, index) => ({
       id: String(index),
@@ -237,9 +284,43 @@ function base64ToBytes(base64: string) {
   return Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
 }
 
-function truncateDiscordContent(content: string) {
-  if (content.length <= MAX_DISCORD_CONTENT_LENGTH) return content;
-  return `${content.slice(0, MAX_DISCORD_CONTENT_LENGTH - 3)}...`;
+export function splitDiscordContent(content: string) {
+  if (content.length <= MAX_DISCORD_CONTENT_LENGTH) {
+    return content ? [content] : [""];
+  }
+
+  const chunks: string[] = [];
+  let remaining = content.trim();
+
+  while (remaining.length > MAX_DISCORD_CONTENT_LENGTH) {
+    const splitIndex = findDiscordSplitIndex(remaining);
+    const chunk = remaining.slice(0, splitIndex).trimEnd();
+    if (chunk) chunks.push(chunk);
+    remaining = remaining.slice(splitIndex).trimStart();
+  }
+
+  if (remaining || chunks.length === 0) chunks.push(remaining);
+  return chunks;
+}
+
+function findDiscordSplitIndex(content: string) {
+  const limit = Math.min(content.length, MAX_DISCORD_CONTENT_LENGTH);
+  const candidate = content.slice(0, limit);
+  for (const separator of ["\n\n", "\n", ". ", " "]) {
+    const index = candidate.lastIndexOf(separator);
+    if (index >= MIN_DISCORD_SPLIT_LENGTH) {
+      return index + separator.length;
+    }
+  }
+  return limit;
+}
+
+function assertDiscordContentLength(content: string) {
+  if (content.length > MAX_DISCORD_CONTENT_LENGTH) {
+    throw new Error(
+      `Discord message content exceeds ${MAX_DISCORD_CONTENT_LENGTH} characters.`
+    );
+  }
 }
 
 function getDiscordErrorCode(body: string) {
