@@ -17,6 +17,10 @@
       "binding": "LOADER"
     }
   ],
+  "browser": {
+    "binding": "BROWSER",
+    "remote": true
+  },
   "r2_buckets": [
     {
       "binding": "ARTIFACTS_BUCKET",

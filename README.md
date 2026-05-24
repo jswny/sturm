@@ -4,7 +4,7 @@ A Discord bot on Cloudflare Workers.
 
 Sturm responds to `/c text:<message>` in Discord guild channels. It keeps
 conversation context per channel, shares durable memory across the guild, and can
-use tools for web search, URL summaries, archiving, image generation, member
+use tools for web search, page inspection, URL summaries, archiving, image generation, member
 lookup, and nickname postfix changes. DMs are not supported.
 
 ## Setup
