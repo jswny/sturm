@@ -52,6 +52,7 @@ If the application uses Durable Objects or Workflows, refer to the relevant best
 ## Project Architecture
 
 - This repo is a Discord webhook bot, not a web UI.
+- Commits to `main` auto-deploy the bot to `sturm.j1.io`.
 - Keep `README.md` slim and user/operator-facing. Do not duplicate architecture, local debug workflows, or agent-maintainer guidance there; put that in `AGENTS.md` instead.
 - Treat each Discord conversation Agent as a long-running Cloudflare Agent: it should be a durable identity that wakes on Discord interactions or schedules, persists any work that matters, and must not rely on in-memory flags, timers, open requests, or closures surviving hibernation/eviction. Follow the Long-running Agents doc above when changing queueing, scheduling, recovery, memory, or multi-step tool work.
 - Sturm is guild-only for now. Do not add bot DM support, DM command contexts, or `discord:dm:*` conversation keys unless explicitly requested.
