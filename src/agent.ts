@@ -9,11 +9,11 @@ import {
   type TurnConfig,
   type TurnContext
 } from "@cloudflare/think";
+import { Workspace } from "@cloudflare/shell";
 import { Session } from "agents/experimental/memory/session";
 import { createCompactFunction } from "agents/experimental/memory/utils";
 import { generateText, type ToolSet } from "ai";
 import { createWorkersAI } from "workers-ai-provider";
-import { createDisabledWorkspace } from "./disabled-workspace";
 import {
   deliverInteractionResponse,
   editOriginalInteractionResponse
@@ -81,7 +81,11 @@ type DiscordUserMessageMetadata = {
 export class ChatAgent extends Think<Env> {
   override maxSteps = 5;
   override sendReasoning = false;
-  override workspace = createDisabledWorkspace();
+  override workspace = new Workspace({
+    sql: this.ctx.storage.sql,
+    namespace: "codemode",
+    name: () => this.name
+  });
 
   private discordDeliveries = new DiscordDeliveryStore(this.ctx.storage);
   private progressReporters = new Map<string, DiscordProgressReporter>();
@@ -404,8 +408,18 @@ export class ChatAgent extends Think<Env> {
     );
 
     return {
-      codemode: createDiscordCodeModeTool(this.env, directTools)
+      codemode: createDiscordCodeModeTool(this.env, directTools, this.workspace)
     };
+  }
+
+  private async clearWorkspace() {
+    const entries = await this.workspace.readDir("/");
+    await Promise.all(
+      entries.map((entry) =>
+        this.workspace.rm(entry.path, { recursive: true, force: true })
+      )
+    );
+    return entries.length;
   }
 
   private async deliverDiscordChatResponse(
@@ -473,7 +487,8 @@ export class ChatAgent extends Think<Env> {
       await this.discordDeliveries.markRunning(record.interactionId);
       const response = await clearDiscordSession({
         getPathLength: () => this.session.getPathLength(),
-        clearMessages: () => this.clearMessages()
+        clearMessages: () => this.clearMessages(),
+        clearWorkspace: () => this.clearWorkspace()
       });
       await this.deliverDiscordDeliveryResponse(record, response);
       await this.discordDeliveries.completeDelivery(record, "delivered");

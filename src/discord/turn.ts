@@ -11,6 +11,7 @@ import type { DiscordChatRequest, DiscordChatResponse } from "./types";
 export type DiscordSessionMemory = {
   getPathLength(): Promise<number>;
   clearMessages(): Promise<void>;
+  clearWorkspace?(): Promise<number>;
 };
 
 export function createDiscordUserMessage(
@@ -79,12 +80,31 @@ export async function clearDiscordSession(
 ): Promise<DiscordChatResponse> {
   const messageCount = await session.getPathLength();
   await session.clearMessages();
+  const workspaceRootEntries = await session.clearWorkspace?.();
   return {
-    content:
-      messageCount === 1
-        ? "Reset context. Cleared 1 message."
-        : `Reset context. Cleared ${messageCount} messages.`
+    content: formatResetResponse(messageCount, workspaceRootEntries)
   };
+}
+
+function formatResetResponse(
+  messageCount: number,
+  workspaceRootEntries: number | undefined
+) {
+  const messageText =
+    messageCount === 1
+      ? "Cleared 1 message"
+      : `Cleared ${messageCount} messages`;
+
+  if (workspaceRootEntries === undefined) {
+    return `Reset context. ${messageText}.`;
+  }
+
+  const workspaceText =
+    workspaceRootEntries === 0
+      ? "channel workspace was already empty"
+      : "cleared channel workspace";
+
+  return `Reset context. ${messageText}; ${workspaceText}.`;
 }
 
 export function getDiscordMessageText(message: UIMessage) {
