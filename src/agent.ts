@@ -37,7 +37,7 @@ import {
   createDiscordResponseFromAssistantMessage,
   createDiscordUserMessage,
   getDiscordMessageText,
-  hydrateStoredGeneratedImages,
+  hydrateStoredResponseArtifacts,
   withAssistantText
 } from "./discord/turn";
 import type { DiscordChatRequest, DiscordChatResponse } from "./discord/types";
@@ -394,9 +394,10 @@ export class ChatAgent extends Think<Env> {
       {
         ...createDiscordTools(this.env, {
           discordRequest: turn,
-          onImageGenerated: async (artifact) => {
+          workspace: this.workspace,
+          onArtifactCreated: async (artifact) => {
             if (!turn?.interactionId) return;
-            await this.discordDeliveries.addGeneratedImage(
+            await this.discordDeliveries.addArtifact(
               turn.interactionId,
               artifact
             );
@@ -439,9 +440,9 @@ export class ChatAgent extends Think<Env> {
     if (freshRecord.type !== "chat") return;
 
     const text = getDiscordMessageText(result.message);
-    const artifacts = await hydrateStoredGeneratedImages(
+    const artifacts = await hydrateStoredResponseArtifacts(
       this.env,
-      freshRecord.generatedImages
+      freshRecord.artifacts
     );
     const historyText = createAssistantHistoryText(text, artifacts);
     if (historyText !== text) {
@@ -475,9 +476,9 @@ export class ChatAgent extends Think<Env> {
         return;
       }
 
-      const artifacts = await hydrateStoredGeneratedImages(
+      const artifacts = await hydrateStoredResponseArtifacts(
         this.env,
-        freshRecord.generatedImages
+        freshRecord.artifacts
       );
       const response = createDiscordResponseFromAssistantMessage("", artifacts);
       await this.deliverDiscordDeliveryResponse(freshRecord, response);

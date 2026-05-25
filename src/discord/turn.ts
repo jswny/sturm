@@ -1,6 +1,9 @@
 import type { UIMessage } from "ai";
-import type { GeneratedImage } from "../images";
-import type { StoredGeneratedImage } from "./delivery";
+import {
+  hydrateStoredArtifacts,
+  type ResponseArtifact,
+  type StoredResponseArtifact
+} from "../artifacts";
 import {
   formatAssistantMessageText,
   formatDiscordResponseText,
@@ -35,44 +38,33 @@ export function createDiscordUserMessage(
 
 export function createDiscordResponseFromAssistantMessage(
   text: string,
-  artifacts: GeneratedImage[]
+  artifacts: ResponseArtifact[]
 ): DiscordChatResponse {
   return {
     content: formatDiscordResponseText(text, artifacts),
     attachments: artifacts.map((artifact) => ({
       filename: artifact.filename,
       mimeType: artifact.mimeType,
-      r2Key: artifact.r2Key,
+      artifactKey: artifact.artifactKey,
+      sha256: artifact.sha256,
       base64: artifact.base64,
-      description: `Generated image for: ${artifact.prompt}`
+      description: formatAttachmentDescription(artifact)
     }))
   };
 }
 
 export function createAssistantHistoryText(
   text: string,
-  artifacts: GeneratedImage[]
+  artifacts: ResponseArtifact[]
 ) {
   return formatAssistantMessageText(text, artifacts);
 }
 
-export async function hydrateStoredGeneratedImages(
+export async function hydrateStoredResponseArtifacts(
   env: Env,
-  storedImages: StoredGeneratedImage[] = []
-): Promise<GeneratedImage[]> {
-  return Promise.all(
-    storedImages.map(async (stored) => {
-      const object = await env.ARTIFACTS_BUCKET.get(stored.r2Key);
-      if (!object) {
-        throw new Error(`Missing R2 artifact ${stored.r2Key}.`);
-      }
-
-      return {
-        ...stored,
-        base64: bytesToBase64(new Uint8Array(await object.arrayBuffer()))
-      };
-    })
-  );
+  storedArtifacts: StoredResponseArtifact[] = []
+): Promise<ResponseArtifact[]> {
+  return hydrateStoredArtifacts(env, storedArtifacts);
 }
 
 export async function clearDiscordSession(
@@ -107,6 +99,16 @@ function formatResetResponse(
   return `Reset context. ${messageText}; ${workspaceText}.`;
 }
 
+function formatAttachmentDescription(artifact: ResponseArtifact) {
+  const description =
+    artifact.description ??
+    (artifact.source === "image_generation"
+      ? `Generated image for: ${artifact.metadata.prompt}`
+      : `Sturm artifact: ${artifact.filename}`);
+
+  return description.slice(0, 1024);
+}
+
 export function getDiscordMessageText(message: UIMessage) {
   return message.parts
     .map((part) => (part.type === "text" ? part.text : ""))
@@ -119,13 +121,4 @@ export function withAssistantText(message: UIMessage, text: string): UIMessage {
     ...message,
     parts: [{ type: "text", text }]
   };
-}
-
-function bytesToBase64(bytes: Uint8Array) {
-  let binary = "";
-  const chunkSize = 0x8000;
-  for (let index = 0; index < bytes.length; index += chunkSize) {
-    binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
-  }
-  return btoa(binary);
 }

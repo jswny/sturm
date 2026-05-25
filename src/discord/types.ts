@@ -38,16 +38,17 @@ export type DiscordDebugResponseTarget = {
 export type DiscordResponseAttachment = {
   filename: string;
   mimeType: string;
-  r2Key?: string;
+  artifactKey?: string;
+  sha256?: string;
   base64: string;
   description?: string;
 };
 
 export type DiscordGeneratedResponseAttachment = Omit<
   DiscordResponseAttachment,
-  "base64" | "r2Key"
+  "base64" | "artifactKey"
 > & {
-  r2Key: string;
+  artifactKey: string;
 };
 
 export type DiscordUserContext = {

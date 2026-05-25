@@ -1,24 +1,20 @@
 import { logError, logWarn } from "./logging";
+import {
+  base64ToBytes,
+  storeResponseArtifact,
+  type ArtifactEnv,
+  type ResponseArtifact,
+  type ImageGenerationArtifactMetadata
+} from "./artifacts";
 
-export type ImageEnv = Env & {
-  ARTIFACTS_BUCKET: R2Bucket;
-};
+export type ImageEnv = ArtifactEnv;
 
-export type GeneratedImage = {
-  id: string;
-  prompt: string;
-  model: string;
-  mimeType: string;
-  filename: string;
-  r2Key: string;
-  base64: string;
-  width: number;
-  height: number;
-};
+export type GeneratedImage = ResponseArtifact<"image_generation">;
 
 export type GenerateImageResponse = {
   id?: string;
-  r2Key?: string;
+  artifactKey?: string;
+  sha256?: string;
   prompt: string;
   model: string;
   width: number;
@@ -120,33 +116,44 @@ export async function generateImage(
 
   const id = crypto.randomUUID();
   const format = getImageFormat(result.image);
-  const filename = `sturm-${id}.${format.extension}`;
-  const artifact = {
-    id,
-    prompt,
-    model: IMAGE_MODEL,
-    mimeType: format.mimeType,
-    filename,
-    r2Key: createGeneratedImageKey(id, format.extension),
-    base64: result.image,
-    width,
-    height
-  };
+  const filename = `${id}-generated-image.${format.extension}`;
+  const bytes = base64ToBytes(result.image);
 
   try {
-    await env.ARTIFACTS_BUCKET.put(
-      artifact.r2Key,
-      base64ToBytes(artifact.base64),
-      {
-        httpMetadata: {
-          contentType: artifact.mimeType
-        }
+    const artifact = (await storeResponseArtifact(env, {
+      id,
+      source: "image_generation",
+      mimeType: format.mimeType,
+      filename,
+      artifactKey: createGeneratedImageArtifactKey(filename),
+      keyPrefix: "images/generated",
+      base64: result.image,
+      bytes,
+      metadata: {
+        prompt,
+        model: IMAGE_MODEL,
+        width,
+        height
+      } satisfies ImageGenerationArtifactMetadata,
+      description: `Generated image for: ${prompt}`
+    })) as GeneratedImage;
+
+    return {
+      artifact,
+      response: {
+        id,
+        artifactKey: artifact.artifactKey,
+        sha256: artifact.sha256,
+        prompt,
+        model: IMAGE_MODEL,
+        width,
+        height
       }
-    );
+    };
   } catch (error) {
-    logError("Generated image R2 storage failed", error, {
+    logError("Generated image artifact storage failed", error, {
       model: IMAGE_MODEL,
-      r2Key: artifact.r2Key,
+      artifactKey: createGeneratedImageArtifactKey(filename),
       width,
       height
     });
@@ -160,25 +167,9 @@ export async function generateImage(
       }
     };
   }
-
-  return {
-    artifact,
-    response: {
-      id,
-      r2Key: artifact.r2Key,
-      prompt,
-      model: IMAGE_MODEL,
-      width,
-      height
-    }
-  };
 }
 
-function createGeneratedImageKey(id: string, extension: string) {
+function createGeneratedImageArtifactKey(filename: string) {
   const date = new Date().toISOString().slice(0, 10);
-  return `images/generated/${date}/${id}.${extension}`;
-}
-
-function base64ToBytes(base64: string) {
-  return Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
+  return `images/generated/${date}/${filename}`;
 }

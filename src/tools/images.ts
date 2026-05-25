@@ -2,14 +2,15 @@ import { tool } from "ai";
 import { z } from "zod";
 import {
   generateImage,
-  type GeneratedImage,
   type GenerateImageResponse,
   type ImageEnv
 } from "../images";
+import type { ResponseArtifact } from "../artifacts";
 
 const generateImageResponseSchema = z.object({
   id: z.string().optional().describe("Generated image artifact ID"),
-  r2Key: z.string().optional().describe("Stored image object key"),
+  artifactKey: z.string().optional().describe("Generated image artifact key"),
+  sha256: z.string().optional().describe("Generated image SHA-256 hash"),
   prompt: z.string().describe("The prompt used to generate the image"),
   model: z.string().describe("The image generation model"),
   width: z.number().describe("Generated image width in pixels"),
@@ -29,14 +30,17 @@ function formatGenerateImageOutput(output: GenerateImageResponse) {
     `Size: ${output.width}x${output.height}`,
     "The image will be attached to the response. Do not include raw image data in the chat response."
   ];
-  if (output.r2Key) lines.splice(1, 0, `Stored image key: ${output.r2Key}`);
+  if (output.artifactKey) {
+    lines.splice(1, 0, `Image artifact key: ${output.artifactKey}`);
+  }
+  if (output.sha256) lines.splice(2, 0, `SHA-256: ${output.sha256}`);
   return lines.join("\n");
 }
 
 export function createImageTools(
   env: ImageEnv,
   options: {
-    onImageGenerated?: (artifact: GeneratedImage) => void | Promise<void>;
+    onArtifactCreated?: (artifact: ResponseArtifact) => void | Promise<void>;
   } = {}
 ) {
   return {
@@ -65,7 +69,7 @@ export function createImageTools(
           width ? Number(width) : undefined,
           height ? Number(height) : undefined
         );
-        if (artifact) await options.onImageGenerated?.(artifact);
+        if (artifact) await options.onArtifactCreated?.(artifact);
         return response;
       },
       toModelOutput: ({ output }) => ({

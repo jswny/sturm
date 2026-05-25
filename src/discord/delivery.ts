@@ -1,4 +1,8 @@
-import type { GeneratedImage } from "../images";
+import {
+  toStoredResponseArtifact,
+  type ResponseArtifact,
+  type StoredResponseArtifact
+} from "../artifacts";
 import type {
   DiscordChatRequest,
   DiscordChatResponse,
@@ -12,8 +16,6 @@ type DiscordDeliveryMeta = {
 
 type DiscordDeliveryStatus = "pending" | "running" | "delivered" | "failed";
 
-export type StoredGeneratedImage = Omit<GeneratedImage, "base64">;
-
 export type DiscordChatDeliveryRecord = {
   type: "chat";
   sequence: number;
@@ -23,7 +25,7 @@ export type DiscordChatDeliveryRecord = {
   status: DiscordDeliveryStatus;
   createdAt: string;
   updatedAt: string;
-  generatedImages?: StoredGeneratedImage[];
+  artifacts?: StoredResponseArtifact[];
   error?: string;
 };
 
@@ -146,7 +148,7 @@ export class DiscordDeliveryStore {
     );
   }
 
-  async addGeneratedImage(interactionId: string, artifact: GeneratedImage) {
+  async addArtifact(interactionId: string, artifact: ResponseArtifact) {
     await this.updateDelivery(interactionId, (record) => {
       if (record.type !== "chat" || isTerminalDeliveryStatus(record.status)) {
         return record;
@@ -154,9 +156,9 @@ export class DiscordDeliveryStore {
 
       return {
         ...record,
-        generatedImages: [
-          ...(record.generatedImages ?? []),
-          toStoredGeneratedImage(artifact)
+        artifacts: [
+          ...(record.artifacts ?? []),
+          toStoredResponseArtifact(artifact)
         ],
         updatedAt: new Date().toISOString()
       };
@@ -298,13 +300,6 @@ function createDiscordDeliveryRecord(
     createdAt: now,
     updatedAt: now
   };
-}
-
-function toStoredGeneratedImage(
-  artifact: GeneratedImage
-): StoredGeneratedImage {
-  const { base64: _base64, ...stored } = artifact;
-  return stored;
 }
 
 function getDefaultDeliveryMeta(): DiscordDeliveryMeta {
