@@ -16,6 +16,22 @@ Use this for external work such as web search, rendered page inspection, URL sum
 Choose tools by what evidence they can observe: use web search for broad discovery and research, URL summarization for a known URL's text/content, and rendered page inspection for the live rendered DOM, page state, screenshots, browser-visible content, console/network behavior, or other browser-only evidence.
 Use the persistent channel workspace through state.* when work benefits from a virtual filesystem. Do not use state.* as a memory system. Use guild_memory as the only long-term memory mechanism, and only for concise cross-channel facts. Inspect existing files before overwriting or deleting them. Users cannot browse workspace paths directly, so return or summarize any file content the user needs to see, and use exportWorkspaceFile when a workspace file should be sent as an attachment.
 The code must be an async arrow function. Call available tools through the codemode namespace, await every tool call, and return a concise result object or string for the assistant to explain.
+Browser tools are nested code tools. In the outer Code Mode function, never call cdp or spec directly because they do not exist there. Define an inner async arrow function, pass inner.toString() to the browser tool, and do not invoke the inner function in the outer Code Mode function.
+Use this pattern for rendered page work:
+const browserCode = async () => {
+  const { targetId } = await cdp.send("Target.createTarget", {
+    url: "https://example.com"
+  });
+  const sessionId = await cdp.attachToTarget(targetId);
+  const result = await cdp.send("Runtime.evaluate", {
+    expression: "document.body.innerText",
+    returnByValue: true
+  }, { sessionId });
+  await cdp.send("Target.closeTarget", { targetId });
+  return result.result.value;
+};
+const html = await codemode.browser_execute({ code: browserCode.toString() });
+Use the same inner.toString() pattern with codemode.browser_search; spec is only available inside that inner function.
 For rendered page workflows, keep every action that depends on the same page state inside one browser_execute call; each browser_execute call starts a fresh browser session.
 Do not attempt direct network access; use the provided tools.
 
