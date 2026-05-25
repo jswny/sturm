@@ -79,7 +79,6 @@ type DiscordUserMessageMetadata = {
 };
 
 export class ChatAgent extends Think<Env> {
-  override maxSteps = 5;
   override sendReasoning = false;
   override workspace = new Workspace({
     sql: this.ctx.storage.sql,
