@@ -3,6 +3,8 @@ export type DiscordChatRequest = {
   text: string;
   guildId?: string;
   channelId?: string;
+  channel?: DiscordChannelContext;
+  appPermissions?: DiscordPermissionContext;
   userId?: string;
   user?: DiscordUserContext;
   userPermissions?: string;
@@ -54,4 +56,21 @@ export type DiscordGeneratedResponseAttachment = Omit<
 export type DiscordUserContext = {
   id: string;
   displayName?: string;
+};
+
+export type DiscordChannelContext = {
+  id: string;
+  guildId?: string;
+  name?: string;
+  type?: number;
+  typeName?: string;
+  topic?: string;
+  parentId?: string;
+  nsfw?: boolean;
+  slowmodeSeconds?: number;
+};
+
+export type DiscordPermissionContext = {
+  raw: string;
+  names: string[];
 };

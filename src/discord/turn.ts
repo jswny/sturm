@@ -28,6 +28,8 @@ export function createDiscordUserMessage(
       interactionId: request.interactionId,
       guildId: request.guildId,
       channelId: request.channelId,
+      channel: request.channel,
+      appPermissions: request.appPermissions,
       userId: request.userId,
       user: request.user,
       userPermissions: request.userPermissions

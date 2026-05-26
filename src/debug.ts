@@ -1,4 +1,9 @@
 import { getAgentByName } from "agents";
+import { createDiscordPermissionContext } from "./discord/permissions";
+import type {
+  DiscordChannelContext,
+  DiscordPermissionContext
+} from "./discord/types";
 import { logWarn } from "./logging";
 
 type DebugEnv = Env & {
@@ -21,8 +26,11 @@ type DebugChatPayload = {
   user: DebugUser;
   text: string;
   interactionId?: string;
+  channel?: Partial<DiscordChannelContext>;
   permissions?: {
     user?: string;
+    app?: string;
+    appNames?: string[];
   };
 };
 
@@ -78,6 +86,8 @@ async function replyToDebugChat(payload: DebugChatPayload, env: DebugEnv) {
     text: payload.text.trim(),
     guildId: payload.surface.guildId,
     channelId: payload.surface.channelId,
+    channel: createDebugChannelContext(payload),
+    appPermissions: createDebugAppPermissions(payload),
     userId: payload.user.id,
     user: payload.user,
     userPermissions: payload.permissions?.user
@@ -167,6 +177,34 @@ function validateDebugSurface(surface: DebugSurface | undefined) {
 
 function getDebugConversationName(surface: DebugSurface) {
   return `discord:guild:${surface.guildId}:channel:${surface.channelId}`;
+}
+
+function createDebugChannelContext(
+  payload: DebugChatPayload
+): DiscordChannelContext {
+  return {
+    type: 0,
+    typeName: "guild_text",
+    ...payload.channel,
+    id: payload.surface.channelId,
+    guildId: payload.surface.guildId
+  };
+}
+
+function createDebugAppPermissions(
+  payload: DebugChatPayload
+): DiscordPermissionContext | undefined {
+  const raw = payload.permissions?.app;
+  if (!raw) return undefined;
+
+  if (!payload.permissions?.appNames) {
+    return createDiscordPermissionContext(raw);
+  }
+
+  return {
+    raw,
+    names: payload.permissions.appNames
+  };
 }
 
 function json(body: unknown, init?: ResponseInit) {

@@ -18,6 +18,7 @@ import {
   deliverInteractionResponse,
   editOriginalInteractionResponse
 } from "./discord/api";
+import { formatDiscordRuntimeContext } from "./discord/context";
 import {
   DiscordDeliveryStore,
   type DiscordDeliveryChatInput,
@@ -73,6 +74,8 @@ type DiscordUserMessageMetadata = {
   interactionId?: unknown;
   guildId?: unknown;
   channelId?: unknown;
+  channel?: unknown;
+  appPermissions?: unknown;
   userId?: unknown;
   user?: unknown;
   userPermissions?: unknown;
@@ -164,7 +167,10 @@ export class ChatAgent extends Think<Env> {
     );
 
     return {
-      system: createDiscordThinkSystemPrompt(sessionContext),
+      system: createDiscordThinkSystemPrompt(
+        sessionContext,
+        turn ? formatDiscordRuntimeContext(turn) : undefined
+      ),
       messages: inlineDataUrls(ctx.messages),
       tools: await this.createDiscordThinkTools(turn, progress),
       activeTools: DISCORD_ACTIVE_TOOLS,
@@ -630,6 +636,8 @@ export class ChatAgent extends Think<Env> {
           typeof metadata.channelId === "string"
             ? metadata.channelId
             : undefined,
+        channel: getDiscordChannelMetadata(metadata.channel),
+        appPermissions: getDiscordPermissionMetadata(metadata.appPermissions),
         userId:
           typeof metadata.userId === "string" ? metadata.userId : undefined,
         user: getDiscordUserMetadata(metadata.user),
@@ -652,6 +660,52 @@ function getDiscordUserMetadata(value: unknown) {
     id: user.id,
     displayName:
       typeof user.displayName === "string" ? user.displayName : undefined
+  };
+}
+
+function getDiscordChannelMetadata(value: unknown) {
+  if (!value || typeof value !== "object") return undefined;
+  const channel = value as {
+    id?: unknown;
+    guildId?: unknown;
+    name?: unknown;
+    type?: unknown;
+    typeName?: unknown;
+    topic?: unknown;
+    parentId?: unknown;
+    nsfw?: unknown;
+    slowmodeSeconds?: unknown;
+  };
+  if (typeof channel.id !== "string") return undefined;
+
+  return {
+    id: channel.id,
+    guildId: typeof channel.guildId === "string" ? channel.guildId : undefined,
+    name: typeof channel.name === "string" ? channel.name : undefined,
+    type: typeof channel.type === "number" ? channel.type : undefined,
+    typeName:
+      typeof channel.typeName === "string" ? channel.typeName : undefined,
+    topic: typeof channel.topic === "string" ? channel.topic : undefined,
+    parentId:
+      typeof channel.parentId === "string" ? channel.parentId : undefined,
+    nsfw: typeof channel.nsfw === "boolean" ? channel.nsfw : undefined,
+    slowmodeSeconds:
+      typeof channel.slowmodeSeconds === "number"
+        ? channel.slowmodeSeconds
+        : undefined
+  };
+}
+
+function getDiscordPermissionMetadata(value: unknown) {
+  if (!value || typeof value !== "object") return undefined;
+  const permissions = value as { raw?: unknown; names?: unknown };
+  if (typeof permissions.raw !== "string") return undefined;
+
+  return {
+    raw: permissions.raw,
+    names: Array.isArray(permissions.names)
+      ? permissions.names.filter((name) => typeof name === "string")
+      : []
   };
 }
 

@@ -12,6 +12,7 @@ import { verifyKey } from "discord-interactions";
 import { getAgentByName } from "agents";
 import { editOriginalInteractionResponse } from "./discord/api";
 import { C_COMMAND, RESET_COMMAND } from "./discord/commands";
+import { createDiscordRuntimeContext } from "./discord/context";
 import type {
   DiscordWebhookResponseTarget,
   DiscordUserContext
@@ -213,6 +214,7 @@ async function enqueueCommand(
       text,
       guildId: location.guildId,
       channelId: location.channelId,
+      ...createDiscordRuntimeContext(interaction),
       userId: getUserId(interaction),
       user: getUserContext(interaction),
       userPermissions: interaction.member?.permissions

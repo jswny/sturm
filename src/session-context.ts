@@ -56,10 +56,15 @@ export async function getFreshSessionContextPrompt(
   return prompt;
 }
 
-export function createDiscordThinkSystemPrompt(sessionContext: string) {
+export function createDiscordThinkSystemPrompt(
+  sessionContext: string,
+  runtimeContext?: string
+) {
   const sections = [createBaseSystemPrompt()];
   const trimmedSessionContext = sessionContext.trim();
   if (trimmedSessionContext) sections.push(trimmedSessionContext);
+  const trimmedRuntimeContext = runtimeContext?.trim();
+  if (trimmedRuntimeContext) sections.push(trimmedRuntimeContext);
   sections.push(createRuntimeSystemPrompt());
 
   return sections.join("\n\n");
