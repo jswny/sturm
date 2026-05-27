@@ -68,6 +68,7 @@ If the application uses Durable Objects or Workflows, refer to the relevant best
 - Completed/failed Discord delivery records are pruned by `DiscordDeliveryStore.pruneCompletedDeliveryRecords()`. Do not prune active records.
 - Stale debug queue results are pruned by `DiscordDeliveryStore.pruneStaleDebugResults()`. Normal debug requests should still delete their own result after reading it.
 - Keep Agent housekeeping centralized in `ChatAgent.housekeeping()`. Register recurring cleanup from `ChatAgent.onStart()` with the idempotent Agents SDK `scheduleEvery()` API, and reuse that same method for opportunistic cleanup after queued Discord work.
+- User-created scheduled channel tasks should use the current channel `ChatAgent` schedule APIs and must re-enter Think through `submitMessages()` when they fire, using a synthetic scheduled user message and the same per-channel serialization path as `/c`. Deliver scheduled task output as bot-token channel messages, not interaction-token webhook edits.
 - Keep Workers AI model settings, compaction settings, and provider options in `src/model.ts`.
 - Keep assistant prompt text in `src/prompts.ts`.
 - Keep Session context-block configuration, Session prompt-cache key computation, and final Think system-prompt assembly in `src/session-context.ts`.

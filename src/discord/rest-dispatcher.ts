@@ -17,7 +17,15 @@ export type DiscordRestRequest = {
   path: string;
   headers?: Record<string, string>;
   body?: string;
+  files?: DiscordRestFile[];
   maxWaitMs?: number;
+};
+
+export type DiscordRestFile = {
+  fieldName: string;
+  filename: string;
+  mimeType: string;
+  base64: string;
 };
 
 export type DiscordRestResult =
@@ -146,13 +154,17 @@ export class DiscordRestDispatcher extends DurableObject<DiscordRestEnv> {
       let response: Response;
       let body: string;
       try {
+        const headers = new Headers(input.headers);
+        headers.set("authorization", `Bot ${token}`);
+        const fetchBody = createDiscordRestBody(input);
+        if (fetchBody instanceof FormData) {
+          headers.delete("content-type");
+        }
+
         response = await fetch(`${DISCORD_API_BASE}${input.path}`, {
           method: job.method,
-          headers: {
-            authorization: `Bot ${token}`,
-            ...input.headers
-          },
-          body: input.body
+          headers,
+          body: fetchBody
         });
         body = await response.text();
       } catch (error) {
@@ -392,6 +404,26 @@ function getJobKey(id: string) {
 
 function getRateLimitKey(key: string) {
   return `rate:${key}`;
+}
+
+function createDiscordRestBody(input: DiscordRestRequest) {
+  if (!input.files?.length) return input.body;
+
+  const form = new FormData();
+  if (input.body !== undefined) form.append("payload_json", input.body);
+  for (const file of input.files) {
+    form.append(
+      file.fieldName,
+      new File([base64ToBytes(file.base64)], file.filename, {
+        type: file.mimeType
+      })
+    );
+  }
+  return form;
+}
+
+function base64ToBytes(base64: string) {
+  return Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
 }
 
 function getRouteKey(method: string, path: string) {

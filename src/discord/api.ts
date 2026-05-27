@@ -5,6 +5,7 @@ import type {
   RESTGetAPIGuildMembersSearchResult,
   RESTPutAPIApplicationGuildCommandsJSONBody,
   RESTPutAPIApplicationGuildCommandsResult,
+  RESTPostAPIChannelMessageJSONBody,
   RESTPatchAPIGuildMemberJSONBody,
   RESTPatchAPIGuildMemberResult,
   RESTPostAPIWebhookWithTokenJSONBody,
@@ -16,6 +17,7 @@ import type {
 } from "./types";
 import {
   getDiscordRestDispatcher,
+  type DiscordRestFile,
   type DiscordRestResult
 } from "./rest-dispatcher";
 
@@ -86,6 +88,23 @@ export async function deliverInteractionResponse(
   return chunks.length;
 }
 
+export async function deliverChannelMessage(
+  env: DiscordApiEnv,
+  channelId: string,
+  content: string,
+  attachments: DiscordResponseAttachment[] = []
+) {
+  const chunks = splitDiscordContent(content);
+  const [firstChunk = "", ...followupChunks] = chunks;
+
+  await createChannelMessage(env, channelId, firstChunk, attachments);
+  for (const chunk of followupChunks) {
+    await createChannelMessage(env, channelId, chunk);
+  }
+
+  return chunks.length;
+}
+
 async function createInteractionFollowup(
   target: DiscordWebhookResponseTarget,
   content: string
@@ -111,6 +130,24 @@ async function createInteractionFollowup(
       body,
       getDiscordErrorCode(body)
     );
+  }
+}
+
+async function createChannelMessage(
+  env: DiscordApiEnv,
+  channelId: string,
+  content: string,
+  attachments: DiscordResponseAttachment[] = []
+) {
+  const request = createDiscordRestMessageRequest(content, attachments);
+  const result = await getDiscordRestDispatcher(env.DiscordRest).request({
+    method: "POST",
+    path: `/channels/${channelId}/messages`,
+    ...request
+  });
+
+  if (!result.ok) {
+    throw createDiscordApiError(result);
   }
 }
 
@@ -249,15 +286,7 @@ function createDiscordResponseBody(
   attachments: DiscordResponseAttachment[]
 ) {
   assertDiscordContentLength(content);
-  const payload: RESTPatchAPIWebhookWithTokenMessageJSONBody = {
-    content,
-    allowed_mentions: { parse: [] },
-    attachments: attachments.map((attachment, index) => ({
-      id: String(index),
-      filename: attachment.filename,
-      description: attachment.description
-    }))
-  };
+  const payload = createDiscordMessagePayload(content, attachments);
 
   if (attachments.length === 0) {
     return {
@@ -278,6 +307,52 @@ function createDiscordResponseBody(
   }
 
   return { headers: undefined, body: form };
+}
+
+function createDiscordRestMessageRequest(
+  content: string,
+  attachments: DiscordResponseAttachment[]
+) {
+  assertDiscordContentLength(content);
+  const payload = createDiscordMessagePayload(content, attachments);
+  const body = JSON.stringify(payload);
+
+  if (attachments.length === 0) {
+    return {
+      headers: { "content-type": "application/json" },
+      body
+    };
+  }
+
+  return {
+    body,
+    files: attachments.map(
+      (attachment, index) =>
+        ({
+          fieldName: `files[${index}]`,
+          filename: attachment.filename,
+          mimeType: attachment.mimeType,
+          base64: attachment.base64
+        }) satisfies DiscordRestFile
+    )
+  };
+}
+
+function createDiscordMessagePayload(
+  content: string,
+  attachments: DiscordResponseAttachment[]
+):
+  | RESTPatchAPIWebhookWithTokenMessageJSONBody
+  | RESTPostAPIChannelMessageJSONBody {
+  return {
+    content,
+    allowed_mentions: { parse: [] },
+    attachments: attachments.map((attachment, index) => ({
+      id: String(index),
+      filename: attachment.filename,
+      description: attachment.description
+    }))
+  };
 }
 
 function base64ToBytes(base64: string) {

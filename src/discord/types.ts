@@ -24,7 +24,8 @@ export type DiscordGeneratedChatResponse = {
 
 export type DiscordResponseTarget =
   | DiscordWebhookResponseTarget
-  | DiscordDebugResponseTarget;
+  | DiscordDebugResponseTarget
+  | DiscordChannelMessageTarget;
 
 export type DiscordWebhookResponseTarget = {
   type: "discord";
@@ -35,6 +36,11 @@ export type DiscordWebhookResponseTarget = {
 export type DiscordDebugResponseTarget = {
   type: "debug";
   id: string;
+};
+
+export type DiscordChannelMessageTarget = {
+  type: "channel_message";
+  channelId: string;
 };
 
 export type DiscordResponseAttachment = {
