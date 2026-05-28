@@ -1,6 +1,8 @@
 import {
   Think,
   type ChatResponseResult,
+  type FiberContext,
+  type FiberRecoveryContext,
   type PrepareStepContext,
   type StepContext,
   type ThinkSubmissionInspection,
@@ -48,6 +50,7 @@ import { getErrorMessage, logError, logInfo, logWarn } from "./logging";
 import { getGuildIdFromConversationName, GuildMemoryProvider } from "./memory";
 import {
   GuildMemoryReflectionStore,
+  type GuildMemoryReflectionResult,
   reflectGuildMemoryAfterTurn
 } from "./memory-reflection";
 import {
@@ -89,6 +92,7 @@ const HOUSEKEEPING_INTERVAL_SECONDS = 24 * 60 * 60;
 const TERMINAL_SUBMISSION_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const DISCORD_ACTIVE_TOOLS = ["codemode"];
 const MIN_RECURRING_SCHEDULE_SECONDS = 60 * 60;
+const GUILD_MEMORY_REFLECTION_FIBER_PREFIX = "guild-memory-reflection:";
 
 type DiscordUserMessageMetadata = {
   source?: unknown;
@@ -100,6 +104,25 @@ type DiscordUserMessageMetadata = {
   userId?: unknown;
   user?: unknown;
   userPermissions?: unknown;
+};
+
+type GuildMemoryReflectionFiberPhase =
+  | "input"
+  | "reflected"
+  | "written"
+  | "completed";
+
+type GuildMemoryReflectionSnapshot = {
+  kind: "guild_memory_reflection";
+  version: 1;
+  phase: GuildMemoryReflectionFiberPhase;
+  interactionId: string;
+  request: DiscordChatRequest;
+  assistantText: string;
+  reflection?: Pick<
+    GuildMemoryReflectionResult,
+    "changed" | "operation" | "reason" | "attempts"
+  >;
 };
 
 export class ChatAgent extends Think<Env> {
@@ -323,6 +346,45 @@ export class ChatAgent extends Think<Env> {
       agentName: this.name
     });
     return super.onChatError(error);
+  }
+
+  override async onFiberRecovered(ctx: FiberRecoveryContext) {
+    const interactionId = getGuildMemoryReflectionInteractionId(ctx.name);
+    if (!interactionId) return super.onFiberRecovered(ctx);
+
+    const snapshot = parseGuildMemoryReflectionSnapshot(ctx.snapshot);
+    if (!snapshot) {
+      const message =
+        "Guild memory reflection recovery could not resume without a valid checkpoint.";
+      await this.memoryReflections.fail(interactionId, message);
+      logWarn(message, {
+        agentName: this.name,
+        interactionId,
+        fiberId: ctx.id,
+        fiberName: ctx.name,
+        fiberAgeMs: Date.now() - ctx.createdAt
+      });
+      return;
+    }
+
+    try {
+      const reflection = await this.runGuildMemoryReflection(snapshot);
+      if (reflection?.changed) {
+        logInfo("Recovered guild memory reflection updated memory", {
+          agentName: this.name,
+          interactionId,
+          operation: reflection.operation,
+          attempts: reflection.attempts
+        });
+      }
+    } catch (error) {
+      logWarn("Recovered guild memory reflection failed", {
+        agentName: this.name,
+        interactionId,
+        fiberId: ctx.id,
+        error: getErrorMessage(error)
+      });
+    }
   }
 
   async enqueueDiscordChat(input: DiscordDeliveryChatInput) {
@@ -706,44 +768,20 @@ export class ChatAgent extends Think<Env> {
     if (record.responseTarget.type === "channel_message") return;
     if (!record.request.guildId) return;
 
-    const started = await this.memoryReflections.markRunning(
-      record.interactionId
-    );
-    if (!started.started) return;
-
     try {
       const reflection = await this.runFiber(
-        `guild-memory-reflection:${record.interactionId}`,
-        async () => {
-          const provider = this.requireGuildMemoryProvider();
-          const currentMemory = (await provider.get()) ?? "";
-          const workersai = createWorkersAI({ binding: this.env.AI });
-          const reflection = await reflectGuildMemoryAfterTurn({
-            model: workersai(CHAT_MODEL, {
-              sessionAffinity: this.sessionAffinity
-            }),
-            currentMemory,
-            request: record.request,
-            assistantText: getDiscordMessageText(result.message),
-            providerOptions: MEMORY_REFLECTION_PROVIDER_OPTIONS
-          });
-
-          if (reflection.changed && reflection.nextMemory !== undefined) {
-            await provider.set(reflection.nextMemory);
-          }
-
-          return reflection;
-        }
+        getGuildMemoryReflectionFiberName(record.interactionId),
+        async (ctx) =>
+          this.runGuildMemoryReflection(
+            createGuildMemoryReflectionSnapshot(
+              record.request,
+              getDiscordMessageText(result.message)
+            ),
+            ctx
+          )
       );
 
-      await this.memoryReflections.complete(
-        record.interactionId,
-        reflection.changed,
-        reflection.operation,
-        reflection.attempts
-      );
-
-      if (reflection.changed) {
+      if (reflection?.changed) {
         logInfo("Guild memory reflection updated memory", {
           agentName: this.name,
           interactionId: record.interactionId,
@@ -756,6 +794,89 @@ export class ChatAgent extends Think<Env> {
       await this.memoryReflections.fail(record.interactionId, message);
       throw error;
     }
+  }
+
+  private async runGuildMemoryReflection(
+    snapshot: GuildMemoryReflectionSnapshot,
+    fiber?: FiberContext
+  ) {
+    const stash = (
+      phase: GuildMemoryReflectionFiberPhase,
+      reflection?: GuildMemoryReflectionSnapshot["reflection"]
+    ) =>
+      fiber?.stash({
+        ...snapshot,
+        phase,
+        reflection
+      } satisfies GuildMemoryReflectionSnapshot);
+
+    stash(snapshot.phase, snapshot.reflection);
+    const started = await this.memoryReflections.markRunning(
+      snapshot.interactionId
+    );
+    if (!started.started) return null;
+
+    try {
+      if (
+        (snapshot.phase === "written" || snapshot.phase === "completed") &&
+        snapshot.reflection
+      ) {
+        await this.completeGuildMemoryReflection(
+          snapshot.interactionId,
+          snapshot.reflection
+        );
+        stash("completed", snapshot.reflection);
+        return snapshot.reflection;
+      }
+
+      const provider = this.requireGuildMemoryProvider();
+      const currentMemory = (await provider.get()) ?? "";
+      const workersai = createWorkersAI({ binding: this.env.AI });
+      const reflection = await reflectGuildMemoryAfterTurn({
+        model: workersai(CHAT_MODEL, {
+          sessionAffinity: this.sessionAffinity
+        }),
+        currentMemory,
+        request: snapshot.request,
+        assistantText: snapshot.assistantText,
+        providerOptions: MEMORY_REFLECTION_PROVIDER_OPTIONS
+      });
+      const reflectionSummary = getGuildMemoryReflectionSummary(reflection);
+      stash("reflected", reflectionSummary);
+
+      if (reflection.changed && reflection.nextMemory !== undefined) {
+        await provider.set(reflection.nextMemory);
+        stash("written", reflectionSummary);
+      }
+
+      await this.completeGuildMemoryReflection(
+        snapshot.interactionId,
+        reflection
+      );
+      stash("completed", reflectionSummary);
+      return reflection;
+    } catch (error) {
+      await this.memoryReflections.fail(
+        snapshot.interactionId,
+        getErrorMessage(error)
+      );
+      throw error;
+    }
+  }
+
+  private async completeGuildMemoryReflection(
+    interactionId: string,
+    reflection: Pick<
+      GuildMemoryReflectionResult,
+      "changed" | "operation" | "attempts"
+    >
+  ) {
+    await this.memoryReflections.complete(
+      interactionId,
+      reflection.changed,
+      reflection.operation,
+      reflection.attempts
+    );
   }
 
   private requireGuildMemoryProvider() {
@@ -1112,6 +1233,111 @@ function getScheduleWhen(
       return { ok: true, value: intervalSeconds };
     }
   }
+}
+
+function getGuildMemoryReflectionFiberName(interactionId: string) {
+  return `${GUILD_MEMORY_REFLECTION_FIBER_PREFIX}${interactionId}`;
+}
+
+function getGuildMemoryReflectionInteractionId(name: string) {
+  if (!name.startsWith(GUILD_MEMORY_REFLECTION_FIBER_PREFIX)) return undefined;
+  const interactionId = name.slice(GUILD_MEMORY_REFLECTION_FIBER_PREFIX.length);
+  return interactionId || undefined;
+}
+
+function createGuildMemoryReflectionSnapshot(
+  request: DiscordChatRequest,
+  assistantText: string
+): GuildMemoryReflectionSnapshot {
+  return {
+    kind: "guild_memory_reflection",
+    version: 1,
+    phase: "input",
+    interactionId: request.interactionId,
+    request,
+    assistantText
+  };
+}
+
+function parseGuildMemoryReflectionSnapshot(
+  value: unknown
+): GuildMemoryReflectionSnapshot | null {
+  if (!isObject(value)) return null;
+  if (value.kind !== "guild_memory_reflection") return null;
+  if (value.version !== 1) return null;
+  if (!isGuildMemoryReflectionPhase(value.phase)) return null;
+  if (typeof value.interactionId !== "string") return null;
+  if (typeof value.assistantText !== "string") return null;
+  if (!isObject(value.request)) return null;
+  if (typeof value.request.interactionId !== "string") return null;
+  if (typeof value.request.text !== "string") return null;
+
+  const reflection = parseGuildMemoryReflectionSummary(value.reflection);
+  if (value.reflection !== undefined && !reflection) return null;
+
+  return {
+    kind: "guild_memory_reflection",
+    version: 1,
+    phase: value.phase,
+    interactionId: value.interactionId,
+    request: value.request as DiscordChatRequest,
+    assistantText: value.assistantText,
+    ...(reflection ? { reflection } : {})
+  };
+}
+
+function parseGuildMemoryReflectionSummary(value: unknown) {
+  if (value === undefined) return undefined;
+  if (!isObject(value)) return null;
+  if (typeof value.changed !== "boolean") return null;
+  if (!isGuildMemoryReflectionOperation(value.operation)) return null;
+  if (value.reason !== undefined && typeof value.reason !== "string") {
+    return null;
+  }
+  if (value.attempts !== undefined && typeof value.attempts !== "number") {
+    return null;
+  }
+
+  return {
+    changed: value.changed,
+    operation: value.operation,
+    ...(typeof value.reason === "string" ? { reason: value.reason } : {}),
+    ...(typeof value.attempts === "number" ? { attempts: value.attempts } : {})
+  } satisfies GuildMemoryReflectionSnapshot["reflection"];
+}
+
+function getGuildMemoryReflectionSummary(
+  reflection: GuildMemoryReflectionResult
+): GuildMemoryReflectionSnapshot["reflection"] {
+  return {
+    changed: reflection.changed,
+    operation: reflection.operation,
+    ...(reflection.reason ? { reason: reflection.reason } : {}),
+    ...(reflection.attempts !== undefined
+      ? { attempts: reflection.attempts }
+      : {})
+  };
+}
+
+function isGuildMemoryReflectionPhase(
+  value: unknown
+): value is GuildMemoryReflectionFiberPhase {
+  return (
+    value === "input" ||
+    value === "reflected" ||
+    value === "written" ||
+    value === "completed"
+  );
+}
+
+function isGuildMemoryReflectionOperation(
+  value: unknown
+): value is GuildMemoryReflectionResult["operation"] {
+  return value === "no_change" || value === "append" || value === "replace";
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }
 
 function getPositiveInteger(value: number | undefined) {
