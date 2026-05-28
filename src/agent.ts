@@ -47,10 +47,15 @@ import type { DiscordChatRequest, DiscordChatResponse } from "./discord/types";
 import { getErrorMessage, logError, logInfo, logWarn } from "./logging";
 import { getGuildIdFromConversationName, GuildMemoryProvider } from "./memory";
 import {
+  GuildMemoryReflectionStore,
+  reflectGuildMemoryAfterTurn
+} from "./memory-reflection";
+import {
   CHAT_MODEL,
   COMPACTION_PROVIDER_OPTIONS,
   COMPACTION_TAIL_TOKEN_BUDGET,
   COMPACTION_TOKEN_THRESHOLD,
+  MEMORY_REFLECTION_PROVIDER_OPTIONS,
   REPLY_PROVIDER_OPTIONS
 } from "./model";
 import { createBaseSystemPrompt } from "./prompts";
@@ -106,6 +111,7 @@ export class ChatAgent extends Think<Env> {
   });
 
   private discordDeliveries = new DiscordDeliveryStore(this.ctx.storage);
+  private memoryReflections = new GuildMemoryReflectionStore(this.ctx.storage);
   private progressReporters = new Map<string, DiscordProgressReporter>();
   private guildMemoryProvider?: GuildMemoryProvider;
 
@@ -130,7 +136,9 @@ export class ChatAgent extends Think<Env> {
       .withContext(GUILD_MEMORY_CONTEXT_LABEL, {
         description: GUILD_MEMORY_CONTEXT_DESCRIPTION,
         maxTokens: GUILD_MEMORY_CONTEXT_MAX_TOKENS,
-        provider: this.guildMemoryProvider
+        provider: {
+          get: () => this.guildMemoryProvider?.get() ?? Promise.resolve(null)
+        }
       })
       .withCachedPrompt(createSessionContextPromptProvider(this))
       .onCompaction(
@@ -259,9 +267,22 @@ export class ChatAgent extends Think<Env> {
     }
 
     try {
-      await this.deliverDiscordChatResponse(record, result);
-    } catch (error) {
-      await this.failDiscordDelivery(record, getErrorMessage(error));
+      try {
+        await this.deliverDiscordChatResponse(record, result);
+      } catch (error) {
+        await this.failDiscordDelivery(record, getErrorMessage(error));
+        return;
+      }
+
+      try {
+        await this.reflectGuildMemoryAfterDiscordChat(record, result);
+      } catch (error) {
+        logWarn("Guild memory reflection failed after Discord delivery", {
+          agentName: this.name,
+          interactionId: record.interactionId,
+          error: getErrorMessage(error)
+        });
+      }
     } finally {
       this.progressReporters.delete(record.interactionId);
       await this.housekeeping();
@@ -412,29 +433,38 @@ export class ChatAgent extends Think<Env> {
 
   async housekeeping() {
     try {
-      const [completedDeliveryRecords, staleDebugResults, terminalSubmissions] =
-        await Promise.all([
-          this.discordDeliveries.pruneCompletedDeliveryRecords(),
-          this.discordDeliveries.pruneStaleDebugResults(),
-          this.deleteSubmissions({
-            status: ["completed", "aborted", "skipped", "error"],
-            completedBefore: new Date(
-              Date.now() - TERMINAL_SUBMISSION_RETENTION_MS
-            ),
-            limit: 100
-          })
-        ]);
+      const [
+        completedDeliveryRecords,
+        staleDebugResults,
+        terminalSubmissions,
+        memoryReflectionRecords
+      ] = await Promise.all([
+        this.discordDeliveries.pruneCompletedDeliveryRecords(),
+        this.discordDeliveries.pruneStaleDebugResults(),
+        this.deleteSubmissions({
+          status: ["completed", "aborted", "skipped", "error"],
+          completedBefore: new Date(
+            Date.now() - TERMINAL_SUBMISSION_RETENTION_MS
+          ),
+          limit: 100
+        }),
+        this.memoryReflections.pruneTerminalRecords(
+          TERMINAL_SUBMISSION_RETENTION_MS
+        )
+      ]);
 
       if (
         completedDeliveryRecords > 0 ||
         staleDebugResults > 0 ||
-        terminalSubmissions > 0
+        terminalSubmissions > 0 ||
+        memoryReflectionRecords > 0
       ) {
         logInfo("Discord housekeeping pruned stale records", {
           agentName: this.name,
           completedDeliveryRecords,
           staleDebugResults,
-          terminalSubmissions
+          terminalSubmissions,
+          memoryReflectionRecords
         });
       }
     } catch (error) {
@@ -463,8 +493,7 @@ export class ChatAgent extends Think<Env> {
               artifact
             );
           }
-        }),
-        ...(await this.session.tools())
+        })
       },
       progress
     );
@@ -667,6 +696,77 @@ export class ChatAgent extends Think<Env> {
   private async clearMessagesAndStreams() {
     await this.clearMessages();
     this._resumableStream.clearAll();
+  }
+
+  private async reflectGuildMemoryAfterDiscordChat(
+    record: DiscordDeliveryRecord,
+    result: ChatResponseResult
+  ) {
+    if (record.type !== "chat") return;
+    if (record.responseTarget.type === "channel_message") return;
+    if (!record.request.guildId) return;
+
+    const started = await this.memoryReflections.markRunning(
+      record.interactionId
+    );
+    if (!started.started) return;
+
+    try {
+      const reflection = await this.runFiber(
+        `guild-memory-reflection:${record.interactionId}`,
+        async () => {
+          const provider = this.requireGuildMemoryProvider();
+          const currentMemory = (await provider.get()) ?? "";
+          const workersai = createWorkersAI({ binding: this.env.AI });
+          const reflection = await reflectGuildMemoryAfterTurn({
+            model: workersai(CHAT_MODEL, {
+              sessionAffinity: this.sessionAffinity
+            }),
+            currentMemory,
+            request: record.request,
+            assistantText: getDiscordMessageText(result.message),
+            providerOptions: MEMORY_REFLECTION_PROVIDER_OPTIONS
+          });
+
+          if (reflection.changed && reflection.nextMemory !== undefined) {
+            await provider.set(reflection.nextMemory);
+          }
+
+          return reflection;
+        }
+      );
+
+      await this.memoryReflections.complete(
+        record.interactionId,
+        reflection.changed,
+        reflection.operation,
+        reflection.attempts
+      );
+
+      if (reflection.changed) {
+        logInfo("Guild memory reflection updated memory", {
+          agentName: this.name,
+          interactionId: record.interactionId,
+          operation: reflection.operation,
+          attempts: reflection.attempts
+        });
+      }
+    } catch (error) {
+      const message = getErrorMessage(error);
+      await this.memoryReflections.fail(record.interactionId, message);
+      throw error;
+    }
+  }
+
+  private requireGuildMemoryProvider() {
+    if (!this.guildMemoryProvider) {
+      this.guildMemoryProvider = new GuildMemoryProvider(
+        this.env.GuildMemory,
+        () => getGuildIdFromConversationName(this.name)
+      );
+    }
+
+    return this.guildMemoryProvider;
   }
 
   private async deliverDiscordChatResponse(

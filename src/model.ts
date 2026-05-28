@@ -16,3 +16,15 @@ export const COMPACTION_PROVIDER_OPTIONS = {
     chat_template_kwargs: { thinking: false }
   }
 } as const;
+
+export const MEMORY_REFLECTION_PROVIDER_OPTIONS = {
+  "workers-ai": {
+    reasoning_effort: "low",
+    chat_template_kwargs: { thinking: true }
+  }
+} as const;
+
+export type ModelProviderOptions =
+  | typeof REPLY_PROVIDER_OPTIONS
+  | typeof COMPACTION_PROVIDER_OPTIONS
+  | typeof MEMORY_REFLECTION_PROVIDER_OPTIONS;

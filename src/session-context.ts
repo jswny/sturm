@@ -17,7 +17,8 @@ const SESSION_CONTEXT_PROMPT_STORAGE_KEY = `session-context-prompt:${stableHash(
       {
         label: GUILD_MEMORY_CONTEXT_LABEL,
         description: GUILD_MEMORY_CONTEXT_DESCRIPTION,
-        maxTokens: GUILD_MEMORY_CONTEXT_MAX_TOKENS
+        maxTokens: GUILD_MEMORY_CONTEXT_MAX_TOKENS,
+        writable: false
       }
     ]
   })
