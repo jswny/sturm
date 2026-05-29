@@ -6,7 +6,7 @@ import {
   type ModelProviderOptions
 } from "./model";
 
-const MEMORY_REFLECTION_RECORD_PREFIX = "guild-memory-reflection:";
+const GUILD_MEMORY_REFLECTION_PREFIX = "guild-memory-reflection:";
 const MEMORY_REFLECTION_RECORD_PRUNE_BATCH_SIZE = 100;
 const MEMORY_REFLECTION_MODEL_ATTEMPTS = 2;
 
@@ -54,6 +54,27 @@ export type GuildMemoryReflectionResult = {
   nextMemory?: string;
   reason?: string;
   attempts?: number;
+};
+
+export type GuildMemoryReflectionSummary = Pick<
+  GuildMemoryReflectionResult,
+  "changed" | "operation" | "reason" | "attempts"
+>;
+
+export type GuildMemoryReflectionFiberPhase =
+  | "input"
+  | "reflected"
+  | "written"
+  | "completed";
+
+export type GuildMemoryReflectionSnapshot = {
+  kind: "guild_memory_reflection";
+  version: 1;
+  phase: GuildMemoryReflectionFiberPhase;
+  interactionId: string;
+  request: DiscordChatRequest;
+  assistantText: string;
+  reflection?: GuildMemoryReflectionSummary;
 };
 
 export type ReflectGuildMemoryInput = {
@@ -111,7 +132,7 @@ export class GuildMemoryReflectionStore {
   async pruneTerminalRecords(retentionMs: number) {
     const cutoffMs = Date.now() - retentionMs;
     const records = await this.storage.list<GuildMemoryReflectionRecord>({
-      prefix: MEMORY_REFLECTION_RECORD_PREFIX,
+      prefix: GUILD_MEMORY_REFLECTION_PREFIX,
       limit: MEMORY_REFLECTION_RECORD_PRUNE_BATCH_SIZE
     });
     const keysToDelete: string[] = [];
@@ -232,6 +253,70 @@ export function applyGuildMemoryReflectionDecision(
   };
 }
 
+export function getGuildMemoryReflectionFiberName(interactionId: string) {
+  return `${GUILD_MEMORY_REFLECTION_PREFIX}${interactionId}`;
+}
+
+export function getGuildMemoryReflectionInteractionId(name: string) {
+  if (!name.startsWith(GUILD_MEMORY_REFLECTION_PREFIX)) return undefined;
+  const interactionId = name.slice(GUILD_MEMORY_REFLECTION_PREFIX.length);
+  return interactionId || undefined;
+}
+
+export function createGuildMemoryReflectionSnapshot(
+  request: DiscordChatRequest,
+  assistantText: string
+): GuildMemoryReflectionSnapshot {
+  return {
+    kind: "guild_memory_reflection",
+    version: 1,
+    phase: "input",
+    interactionId: request.interactionId,
+    request,
+    assistantText
+  };
+}
+
+export function parseGuildMemoryReflectionSnapshot(
+  value: unknown
+): GuildMemoryReflectionSnapshot | null {
+  if (!isObject(value)) return null;
+  if (value.kind !== "guild_memory_reflection") return null;
+  if (value.version !== 1) return null;
+  if (!isGuildMemoryReflectionPhase(value.phase)) return null;
+  if (typeof value.interactionId !== "string") return null;
+  if (typeof value.assistantText !== "string") return null;
+  if (!isObject(value.request)) return null;
+  if (typeof value.request.interactionId !== "string") return null;
+  if (typeof value.request.text !== "string") return null;
+
+  const reflection = parseGuildMemoryReflectionSummary(value.reflection);
+  if (value.reflection !== undefined && !reflection) return null;
+
+  return {
+    kind: "guild_memory_reflection",
+    version: 1,
+    phase: value.phase,
+    interactionId: value.interactionId,
+    request: value.request as DiscordChatRequest,
+    assistantText: value.assistantText,
+    ...(reflection ? { reflection } : {})
+  };
+}
+
+export function getGuildMemoryReflectionSummary(
+  reflection: GuildMemoryReflectionResult
+): GuildMemoryReflectionSummary {
+  return {
+    changed: reflection.changed,
+    operation: reflection.operation,
+    ...(reflection.reason ? { reason: reflection.reason } : {}),
+    ...(reflection.attempts !== undefined
+      ? { attempts: reflection.attempts }
+      : {})
+  };
+}
+
 async function generateMemoryReflectionDecision(
   input: ReflectGuildMemoryInput
 ) {
@@ -313,7 +398,48 @@ function getAppendMemoryEntries(decision: GuildMemoryReflectionDecision) {
 }
 
 function getMemoryReflectionRecordKey(interactionId: string) {
-  return `${MEMORY_REFLECTION_RECORD_PREFIX}${interactionId}`;
+  return `${GUILD_MEMORY_REFLECTION_PREFIX}${interactionId}`;
+}
+
+function parseGuildMemoryReflectionSummary(value: unknown) {
+  if (value === undefined) return undefined;
+  if (!isObject(value)) return null;
+  if (typeof value.changed !== "boolean") return null;
+  if (!isGuildMemoryReflectionOperation(value.operation)) return null;
+  if (value.reason !== undefined && typeof value.reason !== "string") {
+    return null;
+  }
+  if (value.attempts !== undefined && typeof value.attempts !== "number") {
+    return null;
+  }
+
+  return {
+    changed: value.changed,
+    operation: value.operation,
+    ...(typeof value.reason === "string" ? { reason: value.reason } : {}),
+    ...(typeof value.attempts === "number" ? { attempts: value.attempts } : {})
+  } satisfies GuildMemoryReflectionSummary;
+}
+
+function isGuildMemoryReflectionPhase(
+  value: unknown
+): value is GuildMemoryReflectionFiberPhase {
+  return (
+    value === "input" ||
+    value === "reflected" ||
+    value === "written" ||
+    value === "completed"
+  );
+}
+
+function isGuildMemoryReflectionOperation(
+  value: unknown
+): value is GuildMemoryReflectionResult["operation"] {
+  return value === "no_change" || value === "append" || value === "replace";
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }
 
 const MEMORY_REFLECTION_SYSTEM_PROMPT = `You are Sturm's private guild memory extractor. The main assistant has already replied to the Discord user. Extract durable guild_memory updates for future turns.

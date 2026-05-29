@@ -49,8 +49,15 @@ import type { DiscordChatRequest, DiscordChatResponse } from "./discord/types";
 import { getErrorMessage, logError, logInfo, logWarn } from "./logging";
 import { getGuildIdFromConversationName, GuildMemoryProvider } from "./memory";
 import {
+  createGuildMemoryReflectionSnapshot,
+  getGuildMemoryReflectionFiberName,
+  getGuildMemoryReflectionInteractionId,
+  getGuildMemoryReflectionSummary,
   GuildMemoryReflectionStore,
-  type GuildMemoryReflectionResult,
+  type GuildMemoryReflectionFiberPhase,
+  type GuildMemoryReflectionSnapshot,
+  type GuildMemoryReflectionSummary,
+  parseGuildMemoryReflectionSnapshot,
   reflectGuildMemoryAfterTurn
 } from "./memory-reflection";
 import {
@@ -92,7 +99,6 @@ const HOUSEKEEPING_INTERVAL_SECONDS = 24 * 60 * 60;
 const TERMINAL_SUBMISSION_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const DISCORD_ACTIVE_TOOLS = ["codemode"];
 const MIN_RECURRING_SCHEDULE_SECONDS = 60 * 60;
-const GUILD_MEMORY_REFLECTION_FIBER_PREFIX = "guild-memory-reflection:";
 
 type DiscordUserMessageMetadata = {
   source?: unknown;
@@ -104,25 +110,6 @@ type DiscordUserMessageMetadata = {
   userId?: unknown;
   user?: unknown;
   userPermissions?: unknown;
-};
-
-type GuildMemoryReflectionFiberPhase =
-  | "input"
-  | "reflected"
-  | "written"
-  | "completed";
-
-type GuildMemoryReflectionSnapshot = {
-  kind: "guild_memory_reflection";
-  version: 1;
-  phase: GuildMemoryReflectionFiberPhase;
-  interactionId: string;
-  request: DiscordChatRequest;
-  assistantText: string;
-  reflection?: Pick<
-    GuildMemoryReflectionResult,
-    "changed" | "operation" | "reason" | "attempts"
-  >;
 };
 
 export class ChatAgent extends Think<Env> {
@@ -802,7 +789,7 @@ export class ChatAgent extends Think<Env> {
   ) {
     const stash = (
       phase: GuildMemoryReflectionFiberPhase,
-      reflection?: GuildMemoryReflectionSnapshot["reflection"]
+      reflection?: GuildMemoryReflectionSummary
     ) =>
       fiber?.stash({
         ...snapshot,
@@ -866,10 +853,7 @@ export class ChatAgent extends Think<Env> {
 
   private async completeGuildMemoryReflection(
     interactionId: string,
-    reflection: Pick<
-      GuildMemoryReflectionResult,
-      "changed" | "operation" | "attempts"
-    >
+    reflection: GuildMemoryReflectionSummary
   ) {
     await this.memoryReflections.complete(
       interactionId,
@@ -1233,111 +1217,6 @@ function getScheduleWhen(
       return { ok: true, value: intervalSeconds };
     }
   }
-}
-
-function getGuildMemoryReflectionFiberName(interactionId: string) {
-  return `${GUILD_MEMORY_REFLECTION_FIBER_PREFIX}${interactionId}`;
-}
-
-function getGuildMemoryReflectionInteractionId(name: string) {
-  if (!name.startsWith(GUILD_MEMORY_REFLECTION_FIBER_PREFIX)) return undefined;
-  const interactionId = name.slice(GUILD_MEMORY_REFLECTION_FIBER_PREFIX.length);
-  return interactionId || undefined;
-}
-
-function createGuildMemoryReflectionSnapshot(
-  request: DiscordChatRequest,
-  assistantText: string
-): GuildMemoryReflectionSnapshot {
-  return {
-    kind: "guild_memory_reflection",
-    version: 1,
-    phase: "input",
-    interactionId: request.interactionId,
-    request,
-    assistantText
-  };
-}
-
-function parseGuildMemoryReflectionSnapshot(
-  value: unknown
-): GuildMemoryReflectionSnapshot | null {
-  if (!isObject(value)) return null;
-  if (value.kind !== "guild_memory_reflection") return null;
-  if (value.version !== 1) return null;
-  if (!isGuildMemoryReflectionPhase(value.phase)) return null;
-  if (typeof value.interactionId !== "string") return null;
-  if (typeof value.assistantText !== "string") return null;
-  if (!isObject(value.request)) return null;
-  if (typeof value.request.interactionId !== "string") return null;
-  if (typeof value.request.text !== "string") return null;
-
-  const reflection = parseGuildMemoryReflectionSummary(value.reflection);
-  if (value.reflection !== undefined && !reflection) return null;
-
-  return {
-    kind: "guild_memory_reflection",
-    version: 1,
-    phase: value.phase,
-    interactionId: value.interactionId,
-    request: value.request as DiscordChatRequest,
-    assistantText: value.assistantText,
-    ...(reflection ? { reflection } : {})
-  };
-}
-
-function parseGuildMemoryReflectionSummary(value: unknown) {
-  if (value === undefined) return undefined;
-  if (!isObject(value)) return null;
-  if (typeof value.changed !== "boolean") return null;
-  if (!isGuildMemoryReflectionOperation(value.operation)) return null;
-  if (value.reason !== undefined && typeof value.reason !== "string") {
-    return null;
-  }
-  if (value.attempts !== undefined && typeof value.attempts !== "number") {
-    return null;
-  }
-
-  return {
-    changed: value.changed,
-    operation: value.operation,
-    ...(typeof value.reason === "string" ? { reason: value.reason } : {}),
-    ...(typeof value.attempts === "number" ? { attempts: value.attempts } : {})
-  } satisfies GuildMemoryReflectionSnapshot["reflection"];
-}
-
-function getGuildMemoryReflectionSummary(
-  reflection: GuildMemoryReflectionResult
-): GuildMemoryReflectionSnapshot["reflection"] {
-  return {
-    changed: reflection.changed,
-    operation: reflection.operation,
-    ...(reflection.reason ? { reason: reflection.reason } : {}),
-    ...(reflection.attempts !== undefined
-      ? { attempts: reflection.attempts }
-      : {})
-  };
-}
-
-function isGuildMemoryReflectionPhase(
-  value: unknown
-): value is GuildMemoryReflectionFiberPhase {
-  return (
-    value === "input" ||
-    value === "reflected" ||
-    value === "written" ||
-    value === "completed"
-  );
-}
-
-function isGuildMemoryReflectionOperation(
-  value: unknown
-): value is GuildMemoryReflectionResult["operation"] {
-  return value === "no_change" || value === "append" || value === "replace";
-}
-
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
 }
 
 function getPositiveInteger(value: number | undefined) {
