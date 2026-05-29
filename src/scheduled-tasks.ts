@@ -32,6 +32,12 @@ export type ScheduleChannelTaskInput = {
   intervalSeconds?: number;
 };
 
+export type ScheduledTaskController = {
+  schedule(input: ScheduleChannelTaskInput): Promise<ScheduleChannelTaskResult>;
+  list(): Promise<ListScheduledChannelTasksResult>;
+  cancel(scheduleId: string): Promise<CancelScheduledChannelTaskResult>;
+};
+
 export type ScheduleChannelTaskResult = {
   ok: boolean;
   scheduleId?: string;

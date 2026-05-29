@@ -3,15 +3,9 @@ import { z } from "zod";
 import type {
   CancelScheduledChannelTaskResult,
   ListScheduledChannelTasksResult,
-  ScheduleChannelTaskInput,
-  ScheduleChannelTaskResult
+  ScheduleChannelTaskResult,
+  ScheduledTaskController
 } from "../scheduled-tasks";
-
-export type ScheduledTaskController = {
-  schedule(input: ScheduleChannelTaskInput): Promise<ScheduleChannelTaskResult>;
-  list(): Promise<ListScheduledChannelTasksResult>;
-  cancel(scheduleId: string): Promise<CancelScheduledChannelTaskResult>;
-};
 
 const scheduleResultSchema = z.object({
   ok: z.boolean(),

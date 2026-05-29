@@ -2,7 +2,7 @@ import type { WorkspaceFsLike } from "@cloudflare/shell";
 import type { ArtifactEnv, ResponseArtifact } from "../artifacts";
 import type { ImageEnv } from "../images";
 import type { NicknameEnv, NicknameRequestContext } from "../nickname";
-import type { ScheduledTaskController } from "./scheduled-tasks";
+import type { ScheduledTaskController } from "../scheduled-tasks";
 import type { SearchEnv } from "../search";
 import { createArchiveTools } from "./archive";
 import { createArtifactTools } from "./artifacts";
