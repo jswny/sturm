@@ -1,7 +1,6 @@
 import {
   Think,
   type ChatResponseResult,
-  type FiberContext,
   type FiberRecoveryContext,
   type PrepareStepContext,
   type StepContext,
@@ -38,19 +37,15 @@ import {
   getDiscordMessageText
 } from "./discord/turn";
 import type { DiscordChatRequest, DiscordChatResponse } from "./discord/types";
+import { GuildMemoryReflectionRunner } from "./guild-memory-reflection-runner";
 import { getErrorMessage, logError, logInfo, logWarn } from "./logging";
 import { getGuildIdFromConversationName, GuildMemoryProvider } from "./memory";
 import {
   createGuildMemoryReflectionSnapshot,
   getGuildMemoryReflectionFiberName,
   getGuildMemoryReflectionInteractionId,
-  getGuildMemoryReflectionSummary,
   GuildMemoryReflectionStore,
-  type GuildMemoryReflectionFiberPhase,
-  type GuildMemoryReflectionSnapshot,
-  type GuildMemoryReflectionSummary,
-  parseGuildMemoryReflectionSnapshot,
-  reflectGuildMemoryAfterTurn
+  parseGuildMemoryReflectionSnapshot
 } from "./memory-reflection";
 import {
   CHAT_MODEL,
@@ -344,7 +339,8 @@ export class ChatAgent extends Think<Env> {
     }
 
     try {
-      const reflection = await this.runGuildMemoryReflection(snapshot);
+      const reflection =
+        await this.createGuildMemoryReflectionRunner().run(snapshot);
       if (reflection?.changed) {
         logInfo("Recovered guild memory reflection updated memory", {
           agentName: this.name,
@@ -592,7 +588,7 @@ export class ChatAgent extends Think<Env> {
       const reflection = await this.runFiber(
         getGuildMemoryReflectionFiberName(record.interactionId),
         async (ctx) =>
-          this.runGuildMemoryReflection(
+          this.createGuildMemoryReflectionRunner().run(
             createGuildMemoryReflectionSnapshot(
               record.request,
               getDiscordMessageText(result.message)
@@ -616,86 +612,6 @@ export class ChatAgent extends Think<Env> {
     }
   }
 
-  private async runGuildMemoryReflection(
-    snapshot: GuildMemoryReflectionSnapshot,
-    fiber?: FiberContext
-  ) {
-    const stash = (
-      phase: GuildMemoryReflectionFiberPhase,
-      reflection?: GuildMemoryReflectionSummary
-    ) =>
-      fiber?.stash({
-        ...snapshot,
-        phase,
-        reflection
-      } satisfies GuildMemoryReflectionSnapshot);
-
-    stash(snapshot.phase, snapshot.reflection);
-    const started = await this.memoryReflections.markRunning(
-      snapshot.interactionId
-    );
-    if (!started.started) return null;
-
-    try {
-      if (
-        (snapshot.phase === "written" || snapshot.phase === "completed") &&
-        snapshot.reflection
-      ) {
-        await this.completeGuildMemoryReflection(
-          snapshot.interactionId,
-          snapshot.reflection
-        );
-        stash("completed", snapshot.reflection);
-        return snapshot.reflection;
-      }
-
-      const provider = this.requireGuildMemoryProvider();
-      const currentMemory = (await provider.get()) ?? "";
-      const workersai = createWorkersAI({ binding: this.env.AI });
-      const reflection = await reflectGuildMemoryAfterTurn({
-        model: workersai(CHAT_MODEL, {
-          sessionAffinity: this.sessionAffinity
-        }),
-        currentMemory,
-        request: snapshot.request,
-        assistantText: snapshot.assistantText,
-        providerOptions: MEMORY_REFLECTION_PROVIDER_OPTIONS
-      });
-      const reflectionSummary = getGuildMemoryReflectionSummary(reflection);
-      stash("reflected", reflectionSummary);
-
-      if (reflection.changed && reflection.nextMemory !== undefined) {
-        await provider.set(reflection.nextMemory);
-        stash("written", reflectionSummary);
-      }
-
-      await this.completeGuildMemoryReflection(
-        snapshot.interactionId,
-        reflection
-      );
-      stash("completed", reflectionSummary);
-      return reflection;
-    } catch (error) {
-      await this.memoryReflections.fail(
-        snapshot.interactionId,
-        getErrorMessage(error)
-      );
-      throw error;
-    }
-  }
-
-  private async completeGuildMemoryReflection(
-    interactionId: string,
-    reflection: GuildMemoryReflectionSummary
-  ) {
-    await this.memoryReflections.complete(
-      interactionId,
-      reflection.changed,
-      reflection.operation,
-      reflection.attempts
-    );
-  }
-
   private requireGuildMemoryProvider() {
     if (!this.guildMemoryProvider) {
       this.guildMemoryProvider = new GuildMemoryProvider(
@@ -705,6 +621,19 @@ export class ChatAgent extends Think<Env> {
     }
 
     return this.guildMemoryProvider;
+  }
+
+  private createGuildMemoryReflectionRunner() {
+    const workersai = createWorkersAI({ binding: this.env.AI });
+    return new GuildMemoryReflectionRunner({
+      store: this.memoryReflections,
+      getProvider: () => this.requireGuildMemoryProvider(),
+      createModel: () =>
+        workersai(CHAT_MODEL, {
+          sessionAffinity: this.sessionAffinity
+        }),
+      providerOptions: MEMORY_REFLECTION_PROVIDER_OPTIONS
+    });
   }
 
   private createDiscordDeliveryRunner() {
