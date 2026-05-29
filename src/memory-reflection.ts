@@ -1,4 +1,4 @@
-import { generateText, Output, type LanguageModel } from "ai";
+import { generateText, tool, type LanguageModel } from "ai";
 import { z } from "zod";
 import type { DiscordChatRequest } from "./discord/types";
 import {
@@ -10,24 +10,38 @@ const GUILD_MEMORY_REFLECTION_PREFIX = "guild-memory-reflection:";
 const MEMORY_REFLECTION_RECORD_PRUNE_BATCH_SIZE = 100;
 const MEMORY_REFLECTION_MODEL_ATTEMPTS = 2;
 
-const appendOnlyMemoryReflectionDecisionSchema = z.object({
+const appendGuildMemoryInputSchema = z.object({
+  memories: z
+    .array(z.string().min(1))
+    .min(1)
+    .describe("Concise complete memory entries to append.")
+});
+
+const replaceGuildMemoryInputSchema = z.object({
+  content: z
+    .string()
+    .min(1)
+    .describe(
+      "The complete replacement guild_memory text, preserving unrelated existing entries."
+    )
+});
+
+const noMemoryUpdateInputSchema = z.object({});
+
+const memoryReflectionDecisionSchema = z.object({
   appendMemories: z
     .array(z.string().min(1))
     .describe(
       "Concise complete memory entries to append. Use an empty array only when there is no new durable memory to store."
+    ),
+  replaceMemory: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      "The complete replacement guild_memory text. Only set this to correct, update, consolidate, or remove existing memory."
     )
 });
-
-const memoryReflectionDecisionSchema =
-  appendOnlyMemoryReflectionDecisionSchema.extend({
-    replaceMemory: z
-      .string()
-      .min(1)
-      .optional()
-      .describe(
-        "The complete replacement guild_memory text. Only set this to correct, update, consolidate, or remove existing memory."
-      )
-  });
 
 export type GuildMemoryReflectionOperation = "no_change" | "append" | "replace";
 
@@ -292,27 +306,68 @@ export function getGuildMemoryReflectionSummary(
 async function generateMemoryReflectionDecision(
   input: ReflectGuildMemoryInput
 ) {
-  const result = await generateText({
+  const decisions: GuildMemoryReflectionDecision[] = [];
+  const recordDecision = (decision: GuildMemoryReflectionDecision) => {
+    decisions.push(decision);
+  };
+
+  await generateText({
     model: input.model,
     system: MEMORY_REFLECTION_SYSTEM_PROMPT,
     prompt: createMemoryReflectionPrompt(input),
-    output: Output.object({
-      schema: getMemoryReflectionDecisionSchema(input.currentMemory),
-      name: "GuildMemoryReflection",
-      description: "Durable guild memory entries extracted from a Discord turn"
-    }),
+    tools: createMemoryReflectionTools(input.currentMemory, recordDecision),
+    toolChoice: "required",
     providerOptions: input.providerOptions ?? MEMORY_REFLECTION_PROVIDER_OPTIONS
   });
 
-  return result.output;
-}
-
-function getMemoryReflectionDecisionSchema(currentMemory: string) {
-  if (!normalizeMemory(currentMemory)) {
-    return appendOnlyMemoryReflectionDecisionSchema;
+  if (decisions.length !== 1) {
+    throw new Error(
+      `Guild memory reflection expected exactly one tool call, received ${decisions.length}.`
+    );
   }
 
-  return memoryReflectionDecisionSchema;
+  return decisions[0];
+}
+
+function createMemoryReflectionTools(
+  currentMemory: string,
+  recordDecision: (decision: GuildMemoryReflectionDecision) => void
+) {
+  const baseTools = {
+    appendGuildMemory: tool({
+      description:
+        "Append new durable guild memory entries. Use this for explicit remember requests and new stable facts not already present.",
+      inputSchema: appendGuildMemoryInputSchema,
+      execute: ({ memories }) => {
+        recordDecision({ appendMemories: memories });
+        return "Memory append proposal recorded.";
+      }
+    }),
+    noMemoryUpdate: tool({
+      description:
+        "Record that this turn should not change guild memory because it is ordinary chat, excluded, transient, or already present.",
+      inputSchema: noMemoryUpdateInputSchema,
+      execute: () => {
+        recordDecision({ appendMemories: [] });
+        return "No guild memory update recorded.";
+      }
+    })
+  };
+
+  if (!normalizeMemory(currentMemory)) return baseTools;
+
+  return {
+    ...baseTools,
+    replaceGuildMemory: tool({
+      description:
+        "Replace the complete guild_memory text to correct, update, consolidate, or remove existing memory. Preserve unrelated existing entries. Never write placeholders like old, current, or unchanged.",
+      inputSchema: replaceGuildMemoryInputSchema,
+      execute: ({ content }) => {
+        recordDecision({ appendMemories: [], replaceMemory: content });
+        return "Memory replacement proposal recorded.";
+      }
+    })
+  };
 }
 
 function createMemoryReflectionPrompt(input: ReflectGuildMemoryInput) {
@@ -429,18 +484,19 @@ const MEMORY_REFLECTION_SYSTEM_PROMPT = `You are Sturm's private guild memory ex
 
 guild_memory is concise, durable context shared across channels in one Discord guild. It should contain stable preferences, personal settings, identities, aliases, server conventions, server lore, running jokes, and durable facts that will likely help future turns.
 
-Prefer an empty appendMemories array for ordinary chat. An explicit request to remember, store, keep in mind, or use a fact later is not ordinary chat. For those turns, extract one or more appendMemories entries unless the requested content is excluded below or already present in current guild_memory. If the assistant acknowledged remembering a user-provided fact, treat that as confirmation that an update is needed; do not assume the assistant response already persisted the memory.
+Call exactly one memory decision tool. Use noMemoryUpdate for ordinary chat. An explicit request to remember, store, keep in mind, or use a fact later is not ordinary chat. For those turns, call appendGuildMemory with one or more entries unless the requested content is excluded below or already present in current guild_memory. If the assistant acknowledged remembering a user-provided fact, treat that as confirmation that an update is needed; do not assume the assistant response already persisted the memory.
 
 Do not skip a memory update because the fact is mundane, playful, synthetic-looking, test data, or phrased as a guild motto, inside joke, nickname, preference, or casual server lore. The user's request to remember is the durable signal. This includes low-sensitivity user-specific facts volunteered in the chat.
 
 Do not store one-off requests, transient task details, secrets, private or high-sensitivity personal data, channel-local state, facts from other guilds, or assistant guesses. Do not treat ordinary volunteered preferences, aliases, time zones, casual server lore, or friend-server banter as sensitive by default. Store subjective or teasing claims about people only as user-provided lore, not verified facts.
 
-Use appendMemories for new durable facts that are not already present. Each entry must be complete and independently understandable. Use replaceMemory only to correct, update, consolidate, or remove existing memory. Do not rewrite memory just for style. If memory is user-specific, include the Discord user ID. If memory is guild-wide, write it as guild-wide. Normalize clear aliases into concise future-useful wording.
+Use appendGuildMemory for new durable facts that are not already present. Each entry must be complete and independently understandable. Use replaceGuildMemory only to correct, update, consolidate, or remove existing memory. When replacing, pass the complete new guild_memory text and preserve unrelated existing entries. Do not rewrite memory just for style. If memory is user-specific, include the Discord user ID. If memory is guild-wide, write it as guild-wide. Normalize clear aliases into concise future-useful wording.
 
 Examples:
-- User u1 says "please remember that my favorite color is green" and the assistant says it will remember. Return appendMemories ["User u1's favorite color is green."].
-- User u1 says "please remember that the guild test motto is silver sunrise" and the assistant says it will remember. Return appendMemories ["The guild test motto is silver sunrise."].
-- User u1 says "remember that Chris is the server movie-night villain" and the assistant says it will remember. Return appendMemories ["User u1 said that Chris is the server movie-night villain."]. This records user-provided server lore, not a verified fact.
-- User u1 asks "what is 2 + 2?" and the assistant answers. Return an empty appendMemories array and omit replaceMemory.
+- User u1 says "please remember that my favorite color is green" and the assistant says it will remember. Call appendGuildMemory with memories ["User u1's favorite color is green."].
+- User u1 says "please remember that the guild test motto is silver sunrise" and the assistant says it will remember. Call appendGuildMemory with memories ["The guild test motto is silver sunrise."].
+- User u1 says "remember that Chris is the server movie-night villain" and the assistant says it will remember. Call appendGuildMemory with memories ["User u1 said that Chris is the server movie-night villain."]. This records user-provided server lore, not a verified fact.
+- Existing memory says "The guild raid night is Tuesday." User says "Actually, update that: the guild raid night is Thursday." Call replaceGuildMemory with content "The guild raid night is Thursday.".
+- User u1 asks "what is 2 + 2?" and the assistant answers. Call noMemoryUpdate.
 
-For no change, return an empty appendMemories array and omit replaceMemory.`;
+For no change, call noMemoryUpdate.`;
