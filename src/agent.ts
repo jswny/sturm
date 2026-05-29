@@ -17,19 +17,15 @@ import { createCompactFunction } from "agents/experimental/memory/utils";
 import { generateText, type ToolSet } from "ai";
 import { createWorkersAI } from "workers-ai-provider";
 import { createChannelScheduledTaskController } from "./channel-scheduler";
-import {
-  deliverChannelMessage,
-  deliverInteractionResponse,
-  editOriginalInteractionResponse
-} from "./discord/api";
 import { formatDiscordRuntimeContext } from "./discord/context";
 import {
   DiscordDeliveryStore,
+  isTerminalDelivery,
   type DiscordDeliveryChatInput,
   type DiscordDeliveryRecord,
-  type DiscordDeliveryResetInput,
-  type DiscordResetDeliveryRecord
+  type DiscordDeliveryResetInput
 } from "./discord/delivery";
+import { DiscordDeliveryRunner } from "./discord/delivery-runner";
 import { inlineDataUrls } from "./discord/format";
 import {
   createDiscordProgressReporter,
@@ -38,12 +34,8 @@ import {
 import type { DiscordProgressReporter } from "./discord/progress";
 import {
   clearDiscordSession,
-  createAssistantHistoryText,
-  createDiscordResponseFromAssistantMessage,
   createDiscordUserMessage,
-  getDiscordMessageText,
-  hydrateStoredResponseArtifacts,
-  withAssistantText
+  getDiscordMessageText
 } from "./discord/turn";
 import type { DiscordChatRequest, DiscordChatResponse } from "./discord/types";
 import { getErrorMessage, logError, logInfo, logWarn } from "./logging";
@@ -85,9 +77,6 @@ import {
 } from "./session-context";
 import { createDiscordCodeModeTool, createDiscordTools } from "./tools";
 
-const DISCORD_DEBUG_RESPONSE_TIMEOUT_MS = 14 * 60 * 1000;
-const DISCORD_DEBUG_RESPONSE_POLL_MS = 100;
-const DISCORD_DEFERRED_RESPONSE_SETTLE_MS = 500;
 const HOUSEKEEPING_INTERVAL_SECONDS = 24 * 60 * 60;
 const TERMINAL_SUBMISSION_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const DISCORD_ACTIVE_TOOLS = ["codemode"];
@@ -261,7 +250,7 @@ export class ChatAgent extends Think<Env> {
     if (!record || isTerminalDelivery(record)) return;
 
     if (result.status !== "completed") {
-      await this.failDiscordDelivery(
+      await this.createDiscordDeliveryRunner().failDelivery(
         record,
         result.error ?? `Think turn ended with status ${result.status}.`
       );
@@ -270,9 +259,15 @@ export class ChatAgent extends Think<Env> {
 
     try {
       try {
-        await this.deliverDiscordChatResponse(record, result);
+        await this.createDiscordDeliveryRunner().deliverChatResponse(
+          record,
+          result
+        );
       } catch (error) {
-        await this.failDiscordDelivery(record, getErrorMessage(error));
+        await this.createDiscordDeliveryRunner().failDelivery(
+          record,
+          getErrorMessage(error)
+        );
         return;
       }
 
@@ -303,7 +298,9 @@ export class ChatAgent extends Think<Env> {
     }
 
     if (submission.status === "completed") {
-      await this.deliverCompletedSubmissionWithoutResponse(record);
+      await this.createDiscordDeliveryRunner().deliverCompletedSubmissionWithoutResponse(
+        record
+      );
       return;
     }
 
@@ -312,7 +309,7 @@ export class ChatAgent extends Think<Env> {
       submission.status === "aborted" ||
       submission.status === "skipped"
     ) {
-      await this.failDiscordDelivery(
+      await this.createDiscordDeliveryRunner().failDelivery(
         record,
         submission.error ??
           `Think submission ended with status ${submission.status}.`
@@ -412,7 +409,7 @@ export class ChatAgent extends Think<Env> {
       throw new Error("Discord reset delivery record had unexpected type.");
     }
 
-    await this.processDiscordReset(record);
+    await this.createDiscordDeliveryRunner().processReset(record);
   }
 
   async runDebugQueuedDiscordChat(
@@ -422,7 +419,9 @@ export class ChatAgent extends Think<Env> {
       responseTarget: { type: "debug", id: request.interactionId },
       request
     });
-    return this.waitForDebugQueuedResponse(request.interactionId);
+    return this.createDiscordDeliveryRunner().waitForDebugQueuedResponse(
+      request.interactionId
+    );
   }
 
   async runDebugQueuedDiscordReset(
@@ -432,7 +431,9 @@ export class ChatAgent extends Think<Env> {
       ...input,
       responseTarget: { type: "debug", id: input.interactionId }
     });
-    return this.waitForDebugQueuedResponse(input.interactionId);
+    return this.createDiscordDeliveryRunner().waitForDebugQueuedResponse(
+      input.interactionId
+    );
   }
 
   async runScheduledChannelTask(payload: ScheduledChannelTaskPayload) {
@@ -706,211 +707,25 @@ export class ChatAgent extends Think<Env> {
     return this.guildMemoryProvider;
   }
 
-  private async deliverDiscordChatResponse(
-    record: DiscordDeliveryRecord,
-    result: ChatResponseResult
-  ) {
-    if (record.type !== "chat") return;
-
-    const freshRecord =
-      (await this.discordDeliveries.getDelivery(record.interactionId)) ??
-      record;
-    if (freshRecord.type !== "chat") return;
-
-    const text = getDiscordMessageText(result.message);
-    const artifacts = await hydrateStoredResponseArtifacts(
-      this.env,
-      freshRecord.artifacts
-    );
-    const historyText = createAssistantHistoryText(text, artifacts);
-    if (historyText !== text) {
-      try {
-        await this.updateMessageInHistory(
-          withAssistantText(result.message, historyText)
-        );
-      } catch (error) {
-        logError("Discord assistant history update failed", error, {
-          sequence: freshRecord.sequence,
-          interactionId: freshRecord.interactionId
-        });
-      }
-    }
-
-    const response = createDiscordResponseFromAssistantMessage(text, artifacts);
-    await this.deliverDiscordDeliveryResponse(freshRecord, response);
-    await this.discordDeliveries.completeDelivery(freshRecord, "delivered");
-  }
-
-  private async deliverCompletedSubmissionWithoutResponse(
-    record: DiscordDeliveryRecord
-  ) {
-    if (record.type !== "chat") return;
-
-    try {
-      const freshRecord =
-        (await this.discordDeliveries.getDelivery(record.interactionId)) ??
-        record;
-      if (freshRecord.type !== "chat" || isTerminalDelivery(freshRecord)) {
-        return;
-      }
-
-      const artifacts = await hydrateStoredResponseArtifacts(
-        this.env,
-        freshRecord.artifacts
-      );
-      const response = createDiscordResponseFromAssistantMessage("", artifacts);
-      await this.deliverDiscordDeliveryResponse(freshRecord, response);
-      await this.discordDeliveries.completeDelivery(freshRecord, "delivered");
-    } catch (error) {
-      await this.failDiscordDelivery(record, getErrorMessage(error));
-    }
-  }
-
-  private async processDiscordReset(record: DiscordResetDeliveryRecord) {
-    try {
-      await this.discordDeliveries.markRunning(record.interactionId);
-      const response = await clearDiscordSession({
-        getPathLength: () => this.session.getPathLength(),
-        clearMessages: () => this.clearMessagesAndStreams(),
-        clearWorkspace: () => this.clearWorkspace()
-      });
-      await this.deliverDiscordDeliveryResponse(record, response);
-      await this.discordDeliveries.completeDelivery(record, "delivered");
-    } catch (error) {
-      await this.failDiscordDelivery(record, getErrorMessage(error));
-    } finally {
-      await this.housekeeping();
-    }
-  }
-
-  private async deliverDiscordDeliveryResponse(
-    record: DiscordDeliveryRecord,
-    response: DiscordChatResponse
-  ) {
-    if (record.responseTarget.type === "debug") {
-      await this.discordDeliveries.putDebugResult(record.responseTarget.id, {
-        status: "completed",
-        response
-      });
-      return;
-    }
-
-    if (record.responseTarget.type === "channel_message") {
-      logInfo("Sending Discord channel message", {
-        sequence: record.sequence,
-        interactionId: record.interactionId,
-        channelId: record.responseTarget.channelId,
-        contentLength: response.content.length,
-        attachments: response.attachments?.length ?? 0
-      });
-      const messageCount = await deliverChannelMessage(
-        this.env,
-        record.responseTarget.channelId,
-        response.content,
-        response.attachments
-      );
-      logInfo("Sent Discord channel message", {
-        sequence: record.sequence,
-        interactionId: record.interactionId,
-        channelId: record.responseTarget.channelId,
-        contentLength: response.content.length,
-        messageCount,
-        attachments: response.attachments?.length ?? 0
-      });
-      return;
-    }
-
-    await waitForDiscordDeferredResponse(record);
-    logInfo("Editing Discord interaction response", {
-      sequence: record.sequence,
-      interactionId: record.interactionId,
-      contentLength: response.content.length,
-      attachments: response.attachments?.length ?? 0
+  private createDiscordDeliveryRunner() {
+    return new DiscordDeliveryRunner({
+      env: this.env,
+      deliveries: this.discordDeliveries,
+      updateMessageInHistory: async (message) => {
+        await this.updateMessageInHistory(message);
+      },
+      resetSession: () =>
+        clearDiscordSession({
+          getPathLength: () => this.session.getPathLength(),
+          clearMessages: () => this.clearMessagesAndStreams(),
+          clearWorkspace: () => this.clearWorkspace()
+        }),
+      afterFailedDelivery: async (record) => {
+        this.progressReporters.delete(record.interactionId);
+        await this.housekeeping();
+      },
+      afterReset: () => this.housekeeping()
     });
-    const messageCount = await deliverInteractionResponse(
-      record.responseTarget,
-      response.content,
-      response.attachments
-    );
-    logInfo("Delivered Discord interaction response", {
-      sequence: record.sequence,
-      interactionId: record.interactionId,
-      contentLength: response.content.length,
-      messageCount,
-      attachments: response.attachments?.length ?? 0
-    });
-  }
-
-  private async failDiscordDelivery(
-    record: DiscordDeliveryRecord,
-    error: string
-  ) {
-    logError("Discord delivery failed", error, {
-      sequence: record.sequence,
-      interactionId: record.interactionId,
-      deliveryType: record.type,
-      responseTargetType: record.responseTarget.type
-    });
-
-    try {
-      await this.deliverDiscordDeliveryFailure(record, error);
-    } finally {
-      this.progressReporters.delete(record.interactionId);
-      await this.discordDeliveries.completeDelivery(record, "failed", error);
-      await this.housekeeping();
-    }
-  }
-
-  private async deliverDiscordDeliveryFailure(
-    record: DiscordDeliveryRecord,
-    error: string
-  ) {
-    if (record.responseTarget.type === "debug") {
-      await this.discordDeliveries.putDebugResult(record.responseTarget.id, {
-        status: "failed",
-        error
-      });
-      return;
-    }
-
-    if (record.responseTarget.type === "channel_message") return;
-
-    await waitForDiscordDeferredResponse(record);
-    try {
-      await editOriginalInteractionResponse(
-        record.responseTarget,
-        "Sorry, I could not complete that request."
-      );
-    } catch (editError) {
-      logError("Discord failure response edit failed", editError, {
-        sequence: record.sequence,
-        interactionId: record.interactionId
-      });
-    }
-  }
-
-  private async waitForDebugQueuedResponse(targetId: string) {
-    const deadline = Date.now() + DISCORD_DEBUG_RESPONSE_TIMEOUT_MS;
-
-    while (Date.now() < deadline) {
-      const result = await this.discordDeliveries.getDebugResult(targetId);
-      if (!result) {
-        await sleep(DISCORD_DEBUG_RESPONSE_POLL_MS);
-        continue;
-      }
-
-      await this.discordDeliveries.deleteDebugResult(targetId);
-      if (result.status === "failed") {
-        throw new Error(result.error);
-      }
-      return result.response;
-    }
-
-    logWarn("Debug queued response timed out", {
-      targetId,
-      timeoutMs: DISCORD_DEBUG_RESPONSE_TIMEOUT_MS
-    });
-    throw new Error(`Debug queued response ${targetId} was not produced.`);
   }
 
   private getActiveProgressReporter() {
@@ -1007,23 +822,4 @@ function getDiscordPermissionMetadata(value: unknown) {
       ? permissions.names.filter((name) => typeof name === "string")
       : []
   };
-}
-
-function isTerminalDelivery(record: DiscordDeliveryRecord) {
-  return record.status === "delivered" || record.status === "failed";
-}
-
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function waitForDiscordDeferredResponse(record: DiscordDeliveryRecord) {
-  if (record.responseTarget.type !== "discord") return;
-
-  const createdAtMs = Date.parse(record.createdAt);
-  if (!Number.isFinite(createdAtMs)) return;
-
-  const waitMs =
-    DISCORD_DEFERRED_RESPONSE_SETTLE_MS - (Date.now() - createdAtMs);
-  if (waitMs > 0) await sleep(waitMs);
 }

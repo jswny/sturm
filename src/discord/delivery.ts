@@ -312,6 +312,10 @@ function isTerminalDeliveryStatus(status: DiscordDeliveryStatus) {
   return status === "delivered" || status === "failed";
 }
 
+export function isTerminalDelivery(record: DiscordDeliveryRecord) {
+  return isTerminalDeliveryStatus(record.status);
+}
+
 function getDiscordDeliveryKey(interactionId: string) {
   return `${DISCORD_DELIVERY_PREFIX}${interactionId}`;
 }
