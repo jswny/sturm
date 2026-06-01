@@ -14,7 +14,6 @@ import { Workspace } from "@cloudflare/shell";
 import { Session } from "agents/experimental/memory/session";
 import { createCompactFunction } from "agents/experimental/memory/utils";
 import { generateText, type ToolSet } from "ai";
-import { createWorkersAI } from "workers-ai-provider";
 import { createChannelScheduledTaskController } from "./channel-scheduler";
 import { formatDiscordRuntimeContext } from "./discord/context";
 import { getGuildIdFromDiscordConversationName } from "./discord/conversation";
@@ -54,6 +53,7 @@ import {
   COMPACTION_PROVIDER_OPTIONS,
   COMPACTION_TAIL_TOKEN_BUDGET,
   COMPACTION_TOKEN_THRESHOLD,
+  createChatWorkersAI,
   MEMORY_REFLECTION_PROVIDER_OPTIONS,
   REPLY_PROVIDER_OPTIONS
 } from "./model";
@@ -92,7 +92,7 @@ export class ChatAgent extends Think<Env> {
   private guildMemoryProvider?: GuildMemoryProvider;
 
   override getModel() {
-    const workersai = createWorkersAI({ binding: this.env.AI });
+    const workersai = createChatWorkersAI(this.env);
     return workersai(CHAT_MODEL, {
       sessionAffinity: this.sessionAffinity
     });
@@ -120,7 +120,7 @@ export class ChatAgent extends Think<Env> {
       .onCompaction(
         createCompactFunction({
           summarize: async (prompt) => {
-            const workersai = createWorkersAI({ binding: this.env.AI });
+            const workersai = createChatWorkersAI(this.env);
             const result = await generateText({
               model: workersai(CHAT_MODEL, {
                 sessionAffinity: this.sessionAffinity
@@ -614,7 +614,7 @@ export class ChatAgent extends Think<Env> {
   }
 
   private createGuildMemoryReflectionRunner() {
-    const workersai = createWorkersAI({ binding: this.env.AI });
+    const workersai = createChatWorkersAI(this.env);
     return new GuildMemoryReflectionRunner({
       store: this.memoryReflections,
       getProvider: () => this.requireGuildMemoryProvider(),
