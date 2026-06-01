@@ -53,6 +53,7 @@ import {
   COMPACTION_PROVIDER_OPTIONS,
   COMPACTION_TAIL_TOKEN_BUDGET,
   COMPACTION_TOKEN_THRESHOLD,
+  CHAT_AI_GATEWAY_FLOWS,
   createChatWorkersAI,
   MEMORY_REFLECTION_PROVIDER_OPTIONS,
   REPLY_PROVIDER_OPTIONS
@@ -92,7 +93,10 @@ export class ChatAgent extends Think<Env> {
   private guildMemoryProvider?: GuildMemoryProvider;
 
   override getModel() {
-    const workersai = createChatWorkersAI(this.env);
+    const workersai = createChatWorkersAI(
+      this.env,
+      CHAT_AI_GATEWAY_FLOWS.reply
+    );
     return workersai(CHAT_MODEL, {
       sessionAffinity: this.sessionAffinity
     });
@@ -120,7 +124,10 @@ export class ChatAgent extends Think<Env> {
       .onCompaction(
         createCompactFunction({
           summarize: async (prompt) => {
-            const workersai = createChatWorkersAI(this.env);
+            const workersai = createChatWorkersAI(
+              this.env,
+              CHAT_AI_GATEWAY_FLOWS.compaction
+            );
             const result = await generateText({
               model: workersai(CHAT_MODEL, {
                 sessionAffinity: this.sessionAffinity
@@ -614,7 +621,10 @@ export class ChatAgent extends Think<Env> {
   }
 
   private createGuildMemoryReflectionRunner() {
-    const workersai = createChatWorkersAI(this.env);
+    const workersai = createChatWorkersAI(
+      this.env,
+      CHAT_AI_GATEWAY_FLOWS.memoryReflection
+    );
     return new GuildMemoryReflectionRunner({
       store: this.memoryReflections,
       getProvider: () => this.requireGuildMemoryProvider(),

@@ -5,6 +5,14 @@ export const CHAT_AI_GATEWAY_ID = "default";
 export const CHAT_AI_GATEWAY_METADATA = {
   app: "sturm"
 };
+export const CHAT_AI_GATEWAY_FLOWS = {
+  reply: "reply",
+  compaction: "compaction",
+  memoryReflection: "memory-reflection"
+} as const;
+
+export type ChatAiGatewayFlow =
+  (typeof CHAT_AI_GATEWAY_FLOWS)[keyof typeof CHAT_AI_GATEWAY_FLOWS];
 
 export const COMPACTION_TOKEN_THRESHOLD = 200_000;
 export const COMPACTION_TAIL_TOKEN_BUDGET = 64_000;
@@ -35,12 +43,18 @@ export type ModelProviderOptions =
   | typeof COMPACTION_PROVIDER_OPTIONS
   | typeof MEMORY_REFLECTION_PROVIDER_OPTIONS;
 
-export function createChatWorkersAI(env: Pick<Env, "AI">) {
+export function createChatWorkersAI(
+  env: Pick<Env, "AI">,
+  flow: ChatAiGatewayFlow
+) {
   return createWorkersAI({
     binding: env.AI,
     gateway: {
       id: CHAT_AI_GATEWAY_ID,
-      metadata: CHAT_AI_GATEWAY_METADATA
+      metadata: {
+        ...CHAT_AI_GATEWAY_METADATA,
+        flow
+      }
     }
   });
 }
