@@ -6,6 +6,7 @@ const DISCORD_REST_OBJECT_NAME = "bot-rest";
 const DEFAULT_MAX_WAIT_MS = 5_000;
 const MAX_ATTEMPTS = 3;
 const JOB_TTL_MS = 10 * 60 * 1000;
+const BUCKET_ALIAS_TTL_MS = 24 * 60 * 60 * 1000;
 const RATE_LIMIT_FUDGE_MS = 100;
 
 type DiscordRestEnv = Env & {
@@ -49,6 +50,7 @@ type DiscordRestJob = {
   method: string;
   path: string;
   routeKey: string;
+  majorResourceKey: string;
   status: "active" | "completed" | "failed" | "retryable";
   attempts: number;
   createdAt: number;
@@ -61,6 +63,12 @@ type RateLimitState = {
   updatedAt: number;
 };
 
+type BucketAliasState = {
+  rateLimitKey: string;
+  updatedAt: number;
+  expiresAt: number;
+};
+
 type RateLimitCheck =
   | { ok: true }
   | { ok: false; retryAfterMs: number; error: string };
@@ -71,12 +79,14 @@ export class DiscordRestDispatcher extends DurableObject<DiscordRestEnv> {
   async request(input: DiscordRestRequest): Promise<DiscordRestResult> {
     const method = (input.method ?? "GET").toUpperCase();
     const routeKey = getRouteKey(method, input.path);
+    const majorResourceKey = getMajorResourceKey(input.path);
     const now = Date.now();
     const job = {
       id: crypto.randomUUID(),
       method,
       path: input.path,
       routeKey,
+      majorResourceKey,
       status: "active",
       attempts: 0,
       createdAt: now,
@@ -99,6 +109,7 @@ export class DiscordRestDispatcher extends DurableObject<DiscordRestEnv> {
     try {
       await this.pruneExpiredJobs();
       await this.pruneExpiredRateLimits();
+      await this.pruneExpiredBucketAliases();
       await this.scheduleNextAlarm();
     } catch (error) {
       logError("Discord REST dispatcher alarm failed", error);
@@ -129,7 +140,7 @@ export class DiscordRestDispatcher extends DurableObject<DiscordRestEnv> {
       job = await this.updateJobAttempts(job, attempts);
 
       const routeCheck = await this.waitForStoredRateLimit(
-        job.routeKey,
+        await this.getRateLimitKeys(job.routeKey),
         deadline
       );
       if (!routeCheck.ok) {
@@ -141,7 +152,10 @@ export class DiscordRestDispatcher extends DurableObject<DiscordRestEnv> {
         });
       }
 
-      const globalCheck = await this.waitForStoredRateLimit("global", deadline);
+      const globalCheck = await this.waitForStoredRateLimit(
+        ["global"],
+        deadline
+      );
       if (!globalCheck.ok) {
         return this.finishJob(job, {
           ok: false,
@@ -187,7 +201,7 @@ export class DiscordRestDispatcher extends DurableObject<DiscordRestEnv> {
         continue;
       }
 
-      await this.storeRateLimitHeaders(job.routeKey, response, body);
+      await this.storeRateLimitHeaders(job, response, body);
 
       if (response.status === 429) {
         const retryAfterMs = getRetryAfterMs(response, body);
@@ -276,37 +290,41 @@ export class DiscordRestDispatcher extends DurableObject<DiscordRestEnv> {
   }
 
   private async waitForStoredRateLimit(
-    key: string,
+    keys: string[],
     deadline: number
   ): Promise<RateLimitCheck> {
-    const state = await this.ctx.storage.get<RateLimitState>(
-      getRateLimitKey(key)
-    );
-    if (!state) return { ok: true };
+    for (const key of keys) {
+      const state = await this.ctx.storage.get<RateLimitState>(
+        getRateLimitKey(key)
+      );
+      if (!state) continue;
 
-    const retryAfterMs = state.resetAt - Date.now();
-    if (retryAfterMs <= 0) {
-      await this.ctx.storage.delete(getRateLimitKey(key));
-      return { ok: true };
+      const retryAfterMs = state.resetAt - Date.now();
+      if (retryAfterMs <= 0) {
+        await this.ctx.storage.delete(getRateLimitKey(key));
+        continue;
+      }
+
+      if (!canWait(deadline, retryAfterMs)) {
+        return {
+          ok: false,
+          retryAfterMs,
+          error: "Discord rate limited this route. It was not completed."
+        };
+      }
+
+      await sleep(retryAfterMs);
     }
 
-    if (!canWait(deadline, retryAfterMs)) {
-      return {
-        ok: false,
-        retryAfterMs,
-        error: "Discord rate limited this route. It was not completed."
-      };
-    }
-
-    await sleep(retryAfterMs);
     return { ok: true };
   }
 
   private async storeRateLimitHeaders(
-    routeKey: string,
+    job: DiscordRestJob,
     response: Response,
     body: string
   ) {
+    const rateLimitKey = await this.getResponseRateLimitKey(job, response);
     const retryAfterMs = getRetryAfterMs(response, body);
     const remaining = Number(response.headers.get("x-ratelimit-remaining"));
     const resetAfterMs = getResetAfterMs(response);
@@ -316,15 +334,53 @@ export class DiscordRestDispatcher extends DurableObject<DiscordRestEnv> {
 
     if (response.status === 429 && retryAfterMs !== undefined) {
       await this.storeRateLimit(
-        isGlobal ? "global" : routeKey,
+        isGlobal ? "global" : rateLimitKey,
         Date.now() + retryAfterMs
       );
       return;
     }
 
     if (Number.isFinite(remaining) && remaining <= 0 && resetAfterMs) {
-      await this.storeRateLimit(routeKey, Date.now() + resetAfterMs);
+      await this.storeRateLimit(rateLimitKey, Date.now() + resetAfterMs);
     }
+  }
+
+  private async getRateLimitKeys(routeKey: string) {
+    const aliasKey = getBucketAliasKey(routeKey);
+    const alias = await this.ctx.storage.get<BucketAliasState>(aliasKey);
+    if (!alias) return [routeKey];
+
+    if (alias.expiresAt <= Date.now()) {
+      await this.ctx.storage.delete(aliasKey);
+      return [routeKey];
+    }
+
+    return alias.rateLimitKey === routeKey
+      ? [routeKey]
+      : [alias.rateLimitKey, routeKey];
+  }
+
+  private async getResponseRateLimitKey(
+    job: DiscordRestJob,
+    response: Response
+  ) {
+    const bucket = response.headers.get("x-ratelimit-bucket");
+    if (!bucket) return job.routeKey;
+
+    const rateLimitKey = getBucketRateLimitKey(job.majorResourceKey, bucket);
+    await this.storeBucketAlias(job.routeKey, rateLimitKey);
+    return rateLimitKey;
+  }
+
+  private async storeBucketAlias(routeKey: string, rateLimitKey: string) {
+    const now = Date.now();
+    const alias = {
+      rateLimitKey,
+      updatedAt: now,
+      expiresAt: now + BUCKET_ALIAS_TTL_MS
+    } satisfies BucketAliasState;
+    await this.ctx.storage.put(getBucketAliasKey(routeKey), alias);
+    await this.scheduleCleanupAlarm(alias.expiresAt);
   }
 
   private async storeRateLimit(key: string, resetAt: number) {
@@ -359,6 +415,19 @@ export class DiscordRestDispatcher extends DurableObject<DiscordRestEnv> {
     );
   }
 
+  private async pruneExpiredBucketAliases() {
+    const now = Date.now();
+    const aliases = await this.ctx.storage.list<BucketAliasState>({
+      prefix: "bucket-alias:"
+    });
+
+    await Promise.all(
+      [...aliases]
+        .filter(([, state]) => state.expiresAt <= now)
+        .map(([key]) => this.ctx.storage.delete(key))
+    );
+  }
+
   private async scheduleCleanupAlarm(timestamp: number) {
     const current = await this.ctx.storage.getAlarm();
     if (!current || timestamp < current) {
@@ -384,6 +453,13 @@ export class DiscordRestDispatcher extends DurableObject<DiscordRestEnv> {
       if (state.resetAt > now) next = minTimestamp(next, state.resetAt);
     }
 
+    const aliases = await this.ctx.storage.list<BucketAliasState>({
+      prefix: "bucket-alias:"
+    });
+    for (const alias of aliases.values()) {
+      if (alias.expiresAt > now) next = minTimestamp(next, alias.expiresAt);
+    }
+
     if (next) {
       await this.ctx.storage.setAlarm(next);
     } else {
@@ -404,6 +480,10 @@ function getJobKey(id: string) {
 
 function getRateLimitKey(key: string) {
   return `rate:${key}`;
+}
+
+function getBucketAliasKey(routeKey: string) {
+  return `bucket-alias:${routeKey}`;
 }
 
 function createDiscordRestBody(input: DiscordRestRequest) {
@@ -429,12 +509,45 @@ function base64ToBytes(base64: string) {
 function getRouteKey(method: string, path: string) {
   const pathname = path.split("?")[0] ?? path;
   const parts = pathname.split("/").map((part, index, all) => {
-    if (all[index - 1] === "members" && /^\d+$/.test(part)) {
-      return ":memberId";
-    }
+    if (isMajorResourceId(index, all)) return part;
+    if (isWebhookToken(index, all)) return ":webhookToken";
+    if (/^\d+$/.test(part)) return ":id";
     return part;
   });
   return `${method.toUpperCase()} ${parts.join("/")}`;
+}
+
+function getMajorResourceKey(path: string) {
+  const parts = getPathParts(path);
+  for (let index = 0; index < parts.length - 1; index++) {
+    const part = parts[index];
+    const id = parts[index + 1];
+    if (part === "channels") return `channel:${id}`;
+    if (part === "guilds") return `guild:${id}`;
+    if (part === "webhooks") {
+      const token = parts[index + 2];
+      return token ? `webhook:${id}:${stableHash(token)}` : `webhook:${id}`;
+    }
+  }
+
+  return "none";
+}
+
+function getBucketRateLimitKey(majorResourceKey: string, bucket: string) {
+  return `bucket:${majorResourceKey}:${bucket}`;
+}
+
+function getPathParts(path: string) {
+  const pathname = path.split("?")[0] ?? path;
+  return pathname.split("/").filter(Boolean);
+}
+
+function isMajorResourceId(index: number, parts: string[]) {
+  return ["channels", "guilds", "webhooks"].includes(parts[index - 1] ?? "");
+}
+
+function isWebhookToken(index: number, parts: string[]) {
+  return parts[index - 2] === "webhooks";
 }
 
 function getRetryAfterMs(response: Response, body: string) {
@@ -491,4 +604,13 @@ function sleep(ms: number) {
 
 function minTimestamp(current: number | undefined, next: number) {
   return current === undefined ? next : Math.min(current, next);
+}
+
+function stableHash(input: string) {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < input.length; index++) {
+    hash ^= input.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(36);
 }
