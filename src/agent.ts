@@ -17,6 +17,7 @@ import { generateText, type ToolSet } from "ai";
 import { createWorkersAI } from "workers-ai-provider";
 import { createChannelScheduledTaskController } from "./channel-scheduler";
 import { formatDiscordRuntimeContext } from "./discord/context";
+import { getGuildIdFromDiscordConversationName } from "./discord/conversation";
 import {
   DiscordDeliveryStore,
   isTerminalDelivery,
@@ -34,12 +35,13 @@ import type { DiscordProgressReporter } from "./discord/progress";
 import {
   clearDiscordSession,
   createDiscordUserMessage,
+  getDiscordTurnFromUserMessage,
   getDiscordMessageText
 } from "./discord/turn";
 import type { DiscordChatRequest, DiscordChatResponse } from "./discord/types";
 import { GuildMemoryReflectionRunner } from "./guild-memory-reflection-runner";
 import { getErrorMessage, logError, logInfo, logWarn } from "./logging";
-import { getGuildIdFromConversationName, GuildMemoryProvider } from "./memory";
+import { GuildMemoryProvider } from "./memory";
 import {
   createGuildMemoryReflectionSnapshot,
   getGuildMemoryReflectionFiberName,
@@ -76,18 +78,6 @@ const HOUSEKEEPING_INTERVAL_SECONDS = 24 * 60 * 60;
 const TERMINAL_SUBMISSION_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const DISCORD_ACTIVE_TOOLS = ["codemode"];
 
-type DiscordUserMessageMetadata = {
-  source?: unknown;
-  interactionId?: unknown;
-  guildId?: unknown;
-  channelId?: unknown;
-  channel?: unknown;
-  appPermissions?: unknown;
-  userId?: unknown;
-  user?: unknown;
-  userPermissions?: unknown;
-};
-
 export class ChatAgent extends Think<Env> {
   override sendReasoning = false;
   override workspace = new Workspace({
@@ -115,7 +105,7 @@ export class ChatAgent extends Think<Env> {
   override configureSession(session: Session) {
     this.guildMemoryProvider = new GuildMemoryProvider(
       this.env.GuildMemory,
-      () => getGuildIdFromConversationName(this.name)
+      () => getGuildIdFromDiscordConversationName(this.name)
     );
 
     return session
@@ -616,7 +606,7 @@ export class ChatAgent extends Think<Env> {
     if (!this.guildMemoryProvider) {
       this.guildMemoryProvider = new GuildMemoryProvider(
         this.env.GuildMemory,
-        () => getGuildIdFromConversationName(this.name)
+        () => getGuildIdFromDiscordConversationName(this.name)
       );
     }
 
@@ -664,91 +654,10 @@ export class ChatAgent extends Think<Env> {
 
   private getLatestDiscordTurn(): DiscordChatRequest | undefined {
     for (let index = this.messages.length - 1; index >= 0; index--) {
-      const message = this.messages[index];
-      if (message.role !== "user") continue;
-
-      const metadata = message.metadata as DiscordUserMessageMetadata;
-      if (metadata?.source !== "discord") continue;
-      if (typeof metadata.interactionId !== "string") continue;
-
-      return {
-        interactionId: metadata.interactionId,
-        text: "",
-        guildId:
-          typeof metadata.guildId === "string" ? metadata.guildId : undefined,
-        channelId:
-          typeof metadata.channelId === "string"
-            ? metadata.channelId
-            : undefined,
-        channel: getDiscordChannelMetadata(metadata.channel),
-        appPermissions: getDiscordPermissionMetadata(metadata.appPermissions),
-        userId:
-          typeof metadata.userId === "string" ? metadata.userId : undefined,
-        user: getDiscordUserMetadata(metadata.user),
-        userPermissions:
-          typeof metadata.userPermissions === "string"
-            ? metadata.userPermissions
-            : undefined
-      };
+      const turn = getDiscordTurnFromUserMessage(this.messages[index]);
+      if (turn) return turn;
     }
 
     return undefined;
   }
-}
-
-function getDiscordUserMetadata(value: unknown) {
-  if (!value || typeof value !== "object") return undefined;
-  const user = value as { id?: unknown; displayName?: unknown };
-  if (typeof user.id !== "string") return undefined;
-  return {
-    id: user.id,
-    displayName:
-      typeof user.displayName === "string" ? user.displayName : undefined
-  };
-}
-
-function getDiscordChannelMetadata(value: unknown) {
-  if (!value || typeof value !== "object") return undefined;
-  const channel = value as {
-    id?: unknown;
-    guildId?: unknown;
-    name?: unknown;
-    type?: unknown;
-    typeName?: unknown;
-    topic?: unknown;
-    parentId?: unknown;
-    nsfw?: unknown;
-    slowmodeSeconds?: unknown;
-  };
-  if (typeof channel.id !== "string") return undefined;
-
-  return {
-    id: channel.id,
-    guildId: typeof channel.guildId === "string" ? channel.guildId : undefined,
-    name: typeof channel.name === "string" ? channel.name : undefined,
-    type: typeof channel.type === "number" ? channel.type : undefined,
-    typeName:
-      typeof channel.typeName === "string" ? channel.typeName : undefined,
-    topic: typeof channel.topic === "string" ? channel.topic : undefined,
-    parentId:
-      typeof channel.parentId === "string" ? channel.parentId : undefined,
-    nsfw: typeof channel.nsfw === "boolean" ? channel.nsfw : undefined,
-    slowmodeSeconds:
-      typeof channel.slowmodeSeconds === "number"
-        ? channel.slowmodeSeconds
-        : undefined
-  };
-}
-
-function getDiscordPermissionMetadata(value: unknown) {
-  if (!value || typeof value !== "object") return undefined;
-  const permissions = value as { raw?: unknown; names?: unknown };
-  if (typeof permissions.raw !== "string") return undefined;
-
-  return {
-    raw: permissions.raw,
-    names: Array.isArray(permissions.names)
-      ? permissions.names.filter((name) => typeof name === "string")
-      : []
-  };
 }

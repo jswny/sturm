@@ -1,4 +1,5 @@
 import { getAgentByName } from "agents";
+import { getDiscordGuildChannelConversationName } from "./discord/conversation";
 import { createDiscordPermissionContext } from "./discord/permissions";
 import type {
   DiscordChannelContext,
@@ -78,7 +79,9 @@ async function replyToDebugChat(payload: DebugChatPayload, env: DebugEnv) {
   const error = validateDebugChatPayload(payload);
   if (error) return json({ error }, { status: 400 });
 
-  const conversationName = getDebugConversationName(payload.surface);
+  const conversationName = getDiscordGuildChannelConversationName(
+    payload.surface
+  );
   const agent = await getAgentByName(env.ChatAgent, conversationName);
   const interactionId = payload.interactionId ?? crypto.randomUUID();
   const response = await agent.runDebugQueuedDiscordChat({
@@ -115,7 +118,9 @@ async function replyToDebugReset(payload: DebugResetPayload, env: DebugEnv) {
   const error = validateDebugSurface(payload.surface);
   if (error) return json({ error }, { status: 400 });
 
-  const conversationName = getDebugConversationName(payload.surface);
+  const conversationName = getDiscordGuildChannelConversationName(
+    payload.surface
+  );
   const agent = await getAgentByName(env.ChatAgent, conversationName);
   const interactionId = payload.interactionId ?? crypto.randomUUID();
   const response = await agent.runDebugQueuedDiscordReset({
@@ -173,10 +178,6 @@ function validateDebugSurface(surface: DebugSurface | undefined) {
   if (!surface.guildId) return "Missing surface.guildId.";
   if (!surface.channelId) return "Missing surface.channelId.";
   return null;
-}
-
-function getDebugConversationName(surface: DebugSurface) {
-  return `discord:guild:${surface.guildId}:channel:${surface.channelId}`;
 }
 
 function createDebugChannelContext(

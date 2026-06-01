@@ -28,26 +28,12 @@ const replaceGuildMemoryInputSchema = z.object({
 
 const noMemoryUpdateInputSchema = z.object({});
 
-const memoryReflectionDecisionSchema = z.object({
-  appendMemories: z
-    .array(z.string().min(1))
-    .describe(
-      "Concise complete memory entries to append. Use an empty array only when there is no new durable memory to store."
-    ),
-  replaceMemory: z
-    .string()
-    .min(1)
-    .optional()
-    .describe(
-      "The complete replacement guild_memory text. Only set this to correct, update, consolidate, or remove existing memory."
-    )
-});
-
 export type GuildMemoryReflectionOperation = "no_change" | "append" | "replace";
 
-export type GuildMemoryReflectionDecision = z.infer<
-  typeof memoryReflectionDecisionSchema
->;
+export type GuildMemoryReflectionDecision = {
+  appendMemories: string[];
+  replaceMemory?: string;
+};
 
 export type GuildMemoryReflectionRecord = {
   interactionId: string;

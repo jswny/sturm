@@ -158,11 +158,6 @@ function normalizeMemory(content: string) {
   return content.trim();
 }
 
-export function getGuildIdFromConversationName(name: string | undefined) {
-  const match = name?.match(/^discord:guild:([^:]+):channel:[^:]+$/);
-  return match?.[1];
-}
-
 export function getGuildMemoryObjectName(guildId: string) {
   return `discord:guild:${guildId}:memory`;
 }

@@ -12,6 +12,10 @@ import { verifyKey } from "discord-interactions";
 import { getAgentByName } from "agents";
 import { editOriginalInteractionResponse } from "./discord/api";
 import { C_COMMAND, RESET_COMMAND } from "./discord/commands";
+import {
+  getDiscordGuildChannelConversationName,
+  type DiscordGuildChannelLocation
+} from "./discord/conversation";
 import { createDiscordRuntimeContext } from "./discord/context";
 import type {
   DiscordWebhookResponseTarget,
@@ -205,7 +209,7 @@ async function enqueueCommand(
     throw new Error("Discord interaction did not include a guild channel.");
   }
 
-  const conversationName = getConversationName(location);
+  const conversationName = getDiscordGuildChannelConversationName(location);
   const agent = await getAgentByName(env.ChatAgent, conversationName);
   await agent.enqueueDiscordChat({
     responseTarget: getResponseTarget(interaction),
@@ -232,7 +236,7 @@ async function enqueueResetCommand(
     throw new Error("Discord interaction did not include a guild channel.");
   }
 
-  const conversationName = getConversationName(location);
+  const conversationName = getDiscordGuildChannelConversationName(location);
   const agent = await getAgentByName(env.ChatAgent, conversationName);
   await agent.enqueueDiscordReset({
     interactionId: interaction.id,
@@ -245,11 +249,6 @@ async function enqueueResetCommand(
   return agent;
 }
 
-type DiscordGuildChannelLocation = {
-  guildId: string;
-  channelId: string;
-};
-
 function getGuildChannelLocation(
   interaction: APIChatInputApplicationCommandInteraction
 ): DiscordGuildChannelLocation | null {
@@ -258,10 +257,6 @@ function getGuildChannelLocation(
     guildId: interaction.guild_id,
     channelId: interaction.channel_id
   };
-}
-
-function getConversationName(location: DiscordGuildChannelLocation) {
-  return `discord:guild:${location.guildId}:channel:${location.channelId}`;
 }
 
 function getUserId(interaction: APIChatInputApplicationCommandInteraction) {
