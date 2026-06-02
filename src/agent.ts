@@ -15,6 +15,7 @@ import { Session } from "agents/experimental/memory/session";
 import { createCompactFunction } from "agents/experimental/memory/utils";
 import { generateText, type ToolSet } from "ai";
 import { createChannelScheduledTaskController } from "./channel-scheduler";
+import { createRecentDiscordChannelContext } from "./discord/channel-context";
 import { formatDiscordRuntimeContext } from "./discord/context";
 import { getGuildIdFromDiscordConversationName } from "./discord/conversation";
 import {
@@ -172,12 +173,12 @@ export class ChatAgent extends Think<Env> {
       this.ctx.storage,
       this.guildMemoryProvider
     );
+    const runtimeContext = turn
+      ? await this.createDiscordTurnRuntimeContext(turn)
+      : undefined;
 
     return {
-      system: createDiscordThinkSystemPrompt(
-        sessionContext,
-        turn ? formatDiscordRuntimeContext(turn) : undefined
-      ),
+      system: createDiscordThinkSystemPrompt(sessionContext, runtimeContext),
       messages: inlineDataUrls(ctx.messages),
       tools: await this.createDiscordThinkTools(turn, progress),
       activeTools: DISCORD_ACTIVE_TOOLS,
@@ -556,6 +557,29 @@ export class ChatAgent extends Think<Env> {
       },
       turn
     );
+  }
+
+  private async createDiscordTurnRuntimeContext(turn: DiscordChatRequest) {
+    const sections = [formatDiscordRuntimeContext(turn)];
+    const recentChannelContext =
+      await this.createRecentDiscordChannelContext(turn);
+    if (recentChannelContext) sections.push(recentChannelContext);
+    return sections.filter(Boolean).join("\n\n");
+  }
+
+  private async createRecentDiscordChannelContext(turn: DiscordChatRequest) {
+    try {
+      return await createRecentDiscordChannelContext(this.env, turn);
+    } catch (error) {
+      logWarn("Discord recent channel context fetch failed", {
+        agentName: this.name,
+        interactionId: turn.interactionId,
+        guildId: turn.guildId,
+        channelId: turn.channelId,
+        error: getErrorMessage(error)
+      });
+      return "";
+    }
   }
 
   private async clearWorkspace() {

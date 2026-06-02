@@ -1,5 +1,6 @@
 import type {
   RESTAPIPartialCurrentUserGuild,
+  RESTGetAPIChannelMessagesResult,
   RESTGetAPICurrentUserGuildsResult,
   RESTGetAPIGuildMemberResult,
   RESTGetAPIGuildMembersSearchResult,
@@ -44,6 +45,21 @@ export class DiscordApiError extends Error {
     super(message);
     this.name = "DiscordApiError";
   }
+}
+
+export async function getChannelMessages(
+  env: DiscordApiEnv,
+  channelId: string,
+  options: { limit: number; maxWaitMs?: number }
+): Promise<RESTGetAPIChannelMessagesResult> {
+  const params = new URLSearchParams({
+    limit: String(clampDiscordMessageLimit(options.limit))
+  });
+  return discordApiFetch<RESTGetAPIChannelMessagesResult>(
+    env,
+    `/channels/${channelId}/messages?${params.toString()}`,
+    { maxWaitMs: options.maxWaitMs }
+  );
 }
 
 export async function editOriginalInteractionResponse(
@@ -235,16 +251,21 @@ export async function modifyGuildMemberNickname(
   );
 }
 
+type DiscordApiFetchInit = RequestInit & {
+  maxWaitMs?: number;
+};
+
 async function discordApiFetch<T>(
   env: DiscordApiEnv,
   path: string,
-  init: RequestInit = {}
+  init: DiscordApiFetchInit = {}
 ): Promise<T> {
   const result = await getDiscordRestDispatcher(env.DiscordRest).request({
     method: init.method ?? "GET",
     path,
     headers: normalizeHeaders(init.headers),
-    body: typeof init.body === "string" ? init.body : undefined
+    body: typeof init.body === "string" ? init.body : undefined,
+    maxWaitMs: init.maxWaitMs
   });
 
   if (!result.ok) {
@@ -266,6 +287,11 @@ function normalizeHeaders(headers: HeadersInit | undefined) {
   }
 
   return headers;
+}
+
+function clampDiscordMessageLimit(limit: number) {
+  if (!Number.isFinite(limit)) return 50;
+  return Math.min(100, Math.max(1, Math.trunc(limit)));
 }
 
 function createDiscordApiError(
