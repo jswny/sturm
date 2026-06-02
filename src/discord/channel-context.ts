@@ -1,5 +1,6 @@
 import type { APIMessage } from "discord-api-types/v10";
 import { getChannelMessages, type DiscordApiEnv } from "./api";
+import { formatUtcTimestampField } from "./timestamps";
 import type { DiscordChatRequest } from "./types";
 
 const RECENT_CHANNEL_MESSAGE_LIMIT = 30;
@@ -33,14 +34,16 @@ function formatRecentDiscordChannelMessages(
 ) {
   const lines = messages
     .filter((message) => !isCurrentApplicationMessage(message, options))
-    .map(formatRecentDiscordChannelMessage)
+    .map((message) => formatRecentDiscordChannelMessage(message))
     .filter(Boolean)
     .reverse();
 
   if (lines.length === 0) return "";
 
-  const header =
-    "Recent Discord channel messages (read-only context fetched at turn time; may be incomplete):";
+  const header = [
+    "Recent Discord channel messages (read-only context fetched at turn time; may be incomplete):",
+    "all timestamps are ISO 8601 UTC"
+  ].join("\n");
   let keptLines = lines;
   while (
     [header, ...keptLines].join("\n").length >
@@ -59,8 +62,18 @@ function formatRecentDiscordChannelMessage(message: APIMessage) {
   if (!body) return "";
 
   const author = formatMessageAuthor(message);
-  const edited = message.edited_timestamp ? " edited" : "";
-  return `- ${message.timestamp}${edited} ${author}: ${body}`;
+  return `- ${formatMessageTimestamps(message)} ${author}: ${body}`;
+}
+
+function formatMessageTimestamps(message: APIMessage) {
+  return [
+    formatUtcTimestampField("sent_at_utc", message.timestamp),
+    message.edited_timestamp
+      ? formatUtcTimestampField("edited_at_utc", message.edited_timestamp)
+      : ""
+  ]
+    .filter(Boolean)
+    .join(" ");
 }
 
 function formatMessageAuthor(message: APIMessage) {

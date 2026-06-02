@@ -43,7 +43,7 @@ export function createDiscordCodeModeTool(
   tools: ToolSet,
   workspace: WorkspaceFsLike
 ) {
-  return createExecuteTool({
+  const codeModeTool = createExecuteTool({
     tools,
     state: createWorkspaceStateBackend(workspace),
     loader: env.LOADER,
@@ -51,4 +51,17 @@ export function createDiscordCodeModeTool(
     globalOutbound: null,
     description: CODEMODE_DESCRIPTION
   });
+  const execute = codeModeTool.execute;
+  if (!execute) return codeModeTool;
+
+  return {
+    ...codeModeTool,
+    execute: async (...args: Parameters<typeof execute>) => {
+      const output = await execute(...args);
+      return {
+        ...output,
+        code_executed_at_utc: new Date().toISOString()
+      };
+    }
+  };
 }

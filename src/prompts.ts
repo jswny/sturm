@@ -17,5 +17,5 @@ export function createBaseSystemPrompt() {
 }
 
 export function createRuntimeSystemPrompt(now = new Date()) {
-  return `Current timestamp: ${now.toISOString()}.`;
+  return `current_timestamp_utc: ${now.toISOString()}.`;
 }

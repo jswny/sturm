@@ -6,6 +6,7 @@ import {
   type DiscordMessageSearchContext,
   type DiscordMessageSearchResponse
 } from "../discord-message-search";
+import { formatUtcTimestampField } from "../discord/timestamps";
 
 const discordMessageSearchHasSchema = z.enum([
   "image",
@@ -36,8 +37,8 @@ const discordMessageSearchResponseSchema = z.object({
         authorId: z.string(),
         authorDisplayName: z.string(),
         authorBot: z.boolean(),
-        timestamp: z.string(),
-        editedTimestamp: z.string().optional(),
+        sent_at_utc: z.string(),
+        edited_at_utc: z.string().optional(),
         content: z.string().optional(),
         attachments: z.array(z.string()).optional(),
         embeds: z.number().int().optional(),
@@ -129,7 +130,9 @@ function formatDiscordMessageSearchOutput(
       "Discord message search index is not ready for this query.",
       `Retry after: ${output.retryAfterSeconds ?? 0} seconds`,
       `Documents indexed: ${output.documentsIndexed ?? 0}`
-    ].join("\n");
+    ]
+      .filter(Boolean)
+      .join("\n");
   }
 
   const results = output.results ?? [];
@@ -139,12 +142,13 @@ function formatDiscordMessageSearchOutput(
 
   return [
     `Discord current-channel message search returned ${results.length} result(s).`,
+    "all timestamps are ISO 8601 UTC",
     output.totalResults !== undefined
       ? `Total matching results reported by Discord: ${output.totalResults}`
       : "",
     ...results.map((message, index) =>
       [
-        `${index + 1}. ${message.authorDisplayName} (${message.authorId}) at ${message.timestamp}`,
+        `${index + 1}. ${message.authorDisplayName} (${message.authorId}) ${formatMessageTimestamps(message)}`,
         message.content ? `   content: ${message.content}` : "",
         message.attachments?.length
           ? `   attachments: ${message.attachments.join(", ")}`
@@ -161,4 +165,17 @@ function formatDiscordMessageSearchOutput(
   ]
     .filter(Boolean)
     .join("\n");
+}
+
+function formatMessageTimestamps(
+  message: NonNullable<DiscordMessageSearchResponse["results"]>[number]
+) {
+  return [
+    formatUtcTimestampField("sent_at_utc", message.sent_at_utc),
+    message.edited_at_utc
+      ? formatUtcTimestampField("edited_at_utc", message.edited_at_utc)
+      : ""
+  ]
+    .filter(Boolean)
+    .join(" ");
 }

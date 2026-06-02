@@ -8,6 +8,7 @@ import {
   searchGuildMessages as searchDiscordGuildMessages
 } from "./discord/api";
 import type { DiscordApiEnv } from "./discord/api";
+import { normalizeUtcTimestamp } from "./discord/timestamps";
 import { logError, logWarn } from "./logging";
 
 const DISCORD_MESSAGE_SEARCH_MAX_WAIT_MS = 5_000;
@@ -63,8 +64,8 @@ export type DiscordMessageSearchMatch = {
   authorId: string;
   authorDisplayName: string;
   authorBot: boolean;
-  timestamp: string;
-  editedTimestamp?: string;
+  sent_at_utc: string;
+  edited_at_utc?: string;
   content?: string;
   attachments?: string[];
   embeds?: number;
@@ -225,8 +226,10 @@ function formatSearchMatch(guildId: string, message: SearchMessage) {
     authorId: message.author.id,
     authorDisplayName: message.author.global_name ?? message.author.username,
     authorBot: message.author.bot ?? false,
-    timestamp: message.timestamp,
-    editedTimestamp: message.edited_timestamp ?? undefined,
+    sent_at_utc: normalizeUtcTimestamp(message.timestamp),
+    edited_at_utc: message.edited_timestamp
+      ? normalizeUtcTimestamp(message.edited_timestamp)
+      : undefined,
     content: normalizeMessageContent(message.content) || undefined,
     attachments: attachments.length ? attachments : undefined,
     embeds: message.embeds.length || undefined,
