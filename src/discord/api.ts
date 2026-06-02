@@ -2,6 +2,8 @@ import type {
   RESTAPIPartialCurrentUserGuild,
   RESTGetAPIChannelMessagesResult,
   RESTGetAPICurrentUserGuildsResult,
+  RESTGetAPIGuildMessagesSearchQuery,
+  RESTGetAPIGuildMessagesSearchResult,
   RESTGetAPIGuildMemberResult,
   RESTGetAPIGuildMembersSearchResult,
   RESTPutAPIApplicationGuildCommandsJSONBody,
@@ -194,6 +196,20 @@ export async function searchGuildMembers(
   );
 }
 
+export async function searchGuildMessages(
+  env: DiscordApiEnv,
+  guildId: string,
+  query: RESTGetAPIGuildMessagesSearchQuery,
+  options: { maxWaitMs?: number } = {}
+): Promise<RESTGetAPIGuildMessagesSearchResult> {
+  const params = createDiscordGuildMessageSearchParams(query);
+  return discordApiFetch<RESTGetAPIGuildMessagesSearchResult>(
+    env,
+    `/guilds/${guildId}/messages/search?${params.toString()}`,
+    { maxWaitMs: options.maxWaitMs }
+  );
+}
+
 export async function getCurrentUserGuilds(
   env: DiscordApiEnv
 ): Promise<RESTGetAPICurrentUserGuildsResult> {
@@ -313,6 +329,64 @@ function normalizeHeaders(headers: HeadersInit | undefined) {
 function clampDiscordMessageLimit(limit: number) {
   if (!Number.isFinite(limit)) return 50;
   return Math.min(100, Math.max(1, Math.trunc(limit)));
+}
+
+function createDiscordGuildMessageSearchParams(
+  query: RESTGetAPIGuildMessagesSearchQuery
+) {
+  const params = new URLSearchParams();
+  appendOptionalParam(params, "limit", query.limit);
+  appendOptionalParam(params, "offset", query.offset);
+  appendOptionalParam(params, "max_id", query.max_id);
+  appendOptionalParam(params, "min_id", query.min_id);
+  appendOptionalParam(params, "slop", query.slop);
+  appendOptionalParam(params, "content", query.content);
+  appendRepeatedParam(params, "channel_id", query.channel_id);
+  appendRepeatedParam(params, "author_type", query.author_type);
+  appendRepeatedParam(params, "author_id", query.author_id);
+  appendRepeatedParam(params, "mentions", query.mentions);
+  appendRepeatedParam(params, "mentions_role_id", query.mentions_role_id);
+  appendOptionalParam(params, "mention_everyone", query.mention_everyone);
+  appendRepeatedParam(params, "replied_to_user_id", query.replied_to_user_id);
+  appendRepeatedParam(
+    params,
+    "replied_to_message_id",
+    query.replied_to_message_id
+  );
+  appendOptionalParam(params, "pinned", query.pinned);
+  appendRepeatedParam(params, "has", query.has);
+  appendRepeatedParam(params, "embed_type", query.embed_type);
+  appendRepeatedParam(params, "embed_provider", query.embed_provider);
+  appendRepeatedParam(params, "link_hostname", query.link_hostname);
+  appendRepeatedParam(params, "attachment_filename", query.attachment_filename);
+  appendRepeatedParam(
+    params,
+    "attachment_extension",
+    query.attachment_extension
+  );
+  appendOptionalParam(params, "sort_by", query.sort_by);
+  appendOptionalParam(params, "sort_order", query.sort_order);
+  appendOptionalParam(params, "include_nsfw", query.include_nsfw);
+  return params;
+}
+
+function appendOptionalParam(
+  params: URLSearchParams,
+  key: string,
+  value: string | number | boolean | undefined
+) {
+  if (value === undefined) return;
+  params.set(key, String(value));
+}
+
+function appendRepeatedParam(
+  params: URLSearchParams,
+  key: string,
+  values: readonly (string | number | boolean)[] | undefined
+) {
+  for (const value of values ?? []) {
+    params.append(key, String(value));
+  }
 }
 
 function createDiscordAuditLogHeaders(reason: string | undefined) {
