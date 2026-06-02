@@ -6,18 +6,20 @@ import {
   searchGuildMembers as searchDiscordGuildMembers
 } from "./discord/api";
 import type { DiscordApiEnv } from "./discord/api";
-import { hasDiscordPermission } from "./discord/permissions";
+import {
+  createDiscordMemberActionFailureFields,
+  formatDiscordMemberActionError,
+  logDiscordMemberActionFailure,
+  validateDiscordMemberActionContext,
+  type DiscordMemberActionContext
+} from "./discord/member-actions";
 import { logError, logWarn } from "./logging";
 
 const SPECIAL_SPACE = " ";
 
 export type NicknameEnv = DiscordApiEnv;
 
-export type NicknameRequestContext = {
-  guildId?: string;
-  userId?: string;
-  userPermissions?: string;
-};
+export type NicknameRequestContext = DiscordMemberActionContext;
 
 export type NicknameResponse = {
   ok: boolean;
@@ -262,49 +264,13 @@ function validateNicknameContext(
   context: NicknameRequestContext,
   targetUserId: string | undefined
 ): { targetUserId: string; error?: string } {
-  const resolvedTargetUserId = targetUserId?.trim() || "";
-
-  if (!env.DISCORD_TOKEN?.trim()) {
-    return {
-      targetUserId: resolvedTargetUserId,
-      error: "DISCORD_TOKEN is not configured."
-    };
-  }
-
-  if (!context.guildId) {
-    return {
-      targetUserId: resolvedTargetUserId,
-      error: "Nickname changes require a server context."
-    };
-  }
-
-  if (!context.userId) {
-    return {
-      targetUserId: resolvedTargetUserId,
-      error: "Could not identify the Discord user who invoked the command."
-    };
-  }
-
-  if (!resolvedTargetUserId) {
-    return {
-      targetUserId: resolvedTargetUserId,
-      error: "targetUserId is required. Search for the user first if needed."
-    };
-  }
-
-  if (
-    !hasDiscordPermission(
-      context.userPermissions,
-      PermissionFlagsBits.ManageNicknames
-    )
-  ) {
-    return {
-      targetUserId: resolvedTargetUserId,
-      error: "You need Discord's Manage Nicknames permission to use this tool."
-    };
-  }
-
-  return { targetUserId: resolvedTargetUserId };
+  return validateDiscordMemberActionContext(env, context, {
+    targetUserId,
+    missingGuildError: "Nickname changes require a server context.",
+    permission: PermissionFlagsBits.ManageNicknames,
+    permissionError:
+      "You need Discord's Manage Nicknames permission to use this tool."
+  });
 }
 
 function parseBaseNickname(nickname: string) {
@@ -340,9 +306,7 @@ function failure(
   return {
     ok: false,
     action,
-    guildId: context.guildId,
-    callerUserId: context.userId,
-    targetUserId,
+    ...createDiscordMemberActionFailureFields(context, targetUserId),
     error
   };
 }
@@ -353,24 +317,15 @@ function logNicknameOperationFailure(
   context: NicknameRequestContext,
   targetUserId: string
 ) {
-  const logContext = {
-    action,
-    guildId: context.guildId,
-    callerUserId: context.userId,
-    targetUserId
-  };
-
-  if (error instanceof DiscordApiError) {
-    logWarn("Discord nickname API request failed", {
-      ...logContext,
-      discordStatus: error.status,
-      discordCode: error.code,
-      error: formatNicknameError(error)
-    });
-    return;
-  }
-
-  logError("Discord nickname operation failed", error, logContext);
+  logDiscordMemberActionFailure({
+    apiLogMessage: "Discord nickname API request failed",
+    operationLogMessage: "Discord nickname operation failed",
+    error,
+    context,
+    targetUserId,
+    formatError: formatNicknameError,
+    extra: { action }
+  });
 }
 
 function logGuildMemberSearchFailure(
@@ -414,40 +369,12 @@ function formatGuildMemberSearchError(error: unknown) {
 }
 
 function formatNicknameError(error: unknown) {
-  if (error instanceof DiscordApiError) {
-    if (error.status === 403) {
-      return "Discord rejected the nickname change. The bot may be missing Manage Nicknames, or role hierarchy may block editing that member.";
-    }
-
-    if (error.status === 404) {
-      return "Discord could not find that guild member.";
-    }
-
-    if (error.code === 50_035) {
-      const nicknameError = getDiscordValidationError(error.body, "nick");
-      if (nicknameError) {
-        return `Discord rejected the nickname value: ${nicknameError}`;
-      }
-
-      return "Discord rejected the request as invalid.";
-    }
-
-    return `Discord API error ${error.status}.`;
-  }
-
-  return error instanceof Error ? error.message : String(error);
-}
-
-function getDiscordValidationError(body: string, field: string) {
-  try {
-    const parsed = JSON.parse(body) as {
-      errors?: Record<string, { _errors?: { message?: string }[] }>;
-    };
-    const error = parsed.errors?.[field]?._errors?.find((item) =>
-      Boolean(item.message)
-    );
-    return error?.message;
-  } catch {
-    return undefined;
-  }
+  return formatDiscordMemberActionError(error, {
+    forbidden:
+      "Discord rejected the nickname change. The bot may be missing Manage Nicknames, or role hierarchy may block editing that member.",
+    notFound: "Discord could not find that guild member.",
+    validationField: "nick",
+    validationErrorPrefix: "Discord rejected the nickname value",
+    invalidRequest: "Discord rejected the request as invalid."
+  });
 }

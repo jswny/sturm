@@ -51,7 +51,7 @@ export function createNicknameTools(
   return {
     searchGuildMembers: tool({
       description:
-        "Search for Discord guild members in the current server by username or nickname prefix. Use this to resolve a person's name into a Discord user ID before calling nickname tools. If there are multiple plausible matches, ask the user which member they meant.",
+        "Search for Discord guild members in the current server by username or nickname prefix. Use this to resolve a person's name into a Discord user ID before calling nickname or moderation tools. If there are multiple plausible matches, ask the user which member they meant.",
       inputSchema: z.object({
         query: z
           .string()

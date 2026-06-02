@@ -251,6 +251,27 @@ export async function modifyGuildMemberNickname(
   );
 }
 
+export async function modifyGuildMemberTimeout(
+  env: DiscordApiEnv,
+  guildId: string,
+  userId: string,
+  communicationDisabledUntil: string | null,
+  reason?: string
+): Promise<RESTPatchAPIGuildMemberResult> {
+  const body: RESTPatchAPIGuildMemberJSONBody = {
+    communication_disabled_until: communicationDisabledUntil
+  };
+  return discordApiFetch<RESTPatchAPIGuildMemberResult>(
+    env,
+    `/guilds/${guildId}/members/${userId}`,
+    {
+      method: "PATCH",
+      headers: createDiscordAuditLogHeaders(reason),
+      body: JSON.stringify(body)
+    }
+  );
+}
+
 type DiscordApiFetchInit = RequestInit & {
   maxWaitMs?: number;
 };
@@ -292,6 +313,19 @@ function normalizeHeaders(headers: HeadersInit | undefined) {
 function clampDiscordMessageLimit(limit: number) {
   if (!Number.isFinite(limit)) return 50;
   return Math.min(100, Math.max(1, Math.trunc(limit)));
+}
+
+function createDiscordAuditLogHeaders(reason: string | undefined) {
+  const headers: Record<string, string> = {
+    "content-type": "application/json"
+  };
+  const preparedReason = reason?.trim();
+  if (preparedReason) {
+    headers["x-audit-log-reason"] = encodeURIComponent(
+      preparedReason.slice(0, 160)
+    );
+  }
+  return headers;
 }
 
 function createDiscordApiError(
