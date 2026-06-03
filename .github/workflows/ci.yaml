@@ -1,31 +1,21 @@
-name: Sanity Check
+name: CI
 
 on:
   push:
-    branches:
-      - main
-  pull_request:
-    branches:
-      - main
-  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   check:
     timeout-minutes: 5
-    strategy:
-      matrix:
-        os: [
-            ubuntu-24.04
-            # windows-latest,
-            # macos-latest,
-          ]
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 1
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 26.3.0
           cache: npm
@@ -33,10 +23,8 @@ jobs:
       - run: npm ci
       - run: npm run check
 
-  ai-integration:
-    if: >-
-      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
-      github.event_name == 'workflow_dispatch'
+  integration-tests:
+    name: Integration tests
     needs: check
     timeout-minutes: 20
     runs-on: ubuntu-24.04
@@ -44,11 +32,11 @@ jobs:
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 1
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 26.3.0
           cache: npm
@@ -57,7 +45,8 @@ jobs:
       - name: Verify Cloudflare CI credentials
         run: |
           if [ -z "$CLOUDFLARE_ACCOUNT_ID" ] || [ -z "$CLOUDFLARE_API_TOKEN" ]; then
-            echo "::error::Configure CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN repository secrets to run the AI integration test."
+            echo "::error::Configure CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN repository secrets to run the integration tests."
             exit 1
           fi
-      - run: npm run test:integration
+      - name: Integration tests
+        run: npm run test:integration
