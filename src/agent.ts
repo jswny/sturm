@@ -14,6 +14,7 @@ import {
   type TurnContext
 } from "@cloudflare/think";
 import { Workspace } from "@cloudflare/shell";
+import type { FiberInspection, FiberRecoveryResult } from "agents";
 import { Session } from "agents/experimental/memory/session";
 import { createCompactFunction } from "agents/experimental/memory/utils";
 import { generateText, type ToolSet } from "ai";
@@ -370,7 +371,9 @@ export class ChatAgent extends Think<Env> {
     return super.onChatError(error);
   }
 
-  override async onFiberRecovered(ctx: FiberRecoveryContext) {
+  override async onFiberRecovered(
+    ctx: FiberRecoveryContext
+  ): Promise<void | FiberRecoveryResult> {
     const interactionId = getGuildMemoryReflectionInteractionId(ctx.name);
     if (!interactionId) return super.onFiberRecovered(ctx);
 
@@ -386,7 +389,7 @@ export class ChatAgent extends Think<Env> {
         fiberName: ctx.name,
         fiberAgeMs: Date.now() - ctx.createdAt
       });
-      return;
+      return { status: "error", error: message };
     }
 
     try {
@@ -400,13 +403,19 @@ export class ChatAgent extends Think<Env> {
           attempts: reflection.attempts
         });
       }
+      return {
+        status: "completed",
+        metadata: createGuildMemoryReflectionFiberMetadata(snapshot.request)
+      };
     } catch (error) {
+      const message = getErrorMessage(error);
       logWarn("Recovered guild memory reflection failed", {
         agentName: this.name,
         interactionId,
         fiberId: ctx.id,
-        error: getErrorMessage(error)
+        error: message
       });
+      return { status: "error", error: message };
     }
   }
 
@@ -484,18 +493,21 @@ export class ChatAgent extends Think<Env> {
   }
 
   async getDebugDiscordStatus(interactionId: string) {
-    const [delivery, submission, memoryReflection] = await Promise.all([
-      this.discordDeliveries.getDelivery(interactionId),
-      this.inspectSubmission(interactionId),
-      this.memoryReflections.get(interactionId)
-    ]);
+    const [delivery, submission, memoryReflection, memoryReflectionFiber] =
+      await Promise.all([
+        this.discordDeliveries.getDelivery(interactionId),
+        this.inspectSubmission(interactionId),
+        this.memoryReflections.get(interactionId),
+        this.inspectFiberByKey(getGuildMemoryReflectionFiberName(interactionId))
+      ]);
 
     return {
       delivery: delivery ? createDebugDeliveryStatus(delivery) : null,
       submission: submission ? createDebugSubmissionStatus(submission) : null,
-      memoryReflection: memoryReflection
-        ? createDebugMemoryReflectionStatus(memoryReflection)
-        : null
+      memoryReflection: createDebugMemoryReflectionStatus(
+        memoryReflection,
+        memoryReflectionFiber
+      )
     };
   }
 
@@ -542,7 +554,8 @@ export class ChatAgent extends Think<Env> {
         completedDeliveryRecords,
         staleDebugResults,
         terminalSubmissions,
-        memoryReflectionRecords
+        memoryReflectionRecords,
+        managedFiberRecords
       ] = await Promise.all([
         this.discordDeliveries.pruneCompletedDeliveryRecords(),
         this.discordDeliveries.pruneStaleDebugResults(),
@@ -555,21 +568,30 @@ export class ChatAgent extends Think<Env> {
         }),
         this.memoryReflections.pruneTerminalRecords(
           TERMINAL_SUBMISSION_RETENTION_MS
-        )
+        ),
+        this.deleteFibers({
+          status: ["completed", "aborted", "error"],
+          settledBefore: new Date(
+            Date.now() - TERMINAL_SUBMISSION_RETENTION_MS
+          ),
+          limit: 100
+        })
       ]);
 
       if (
         completedDeliveryRecords > 0 ||
         staleDebugResults > 0 ||
         terminalSubmissions > 0 ||
-        memoryReflectionRecords > 0
+        memoryReflectionRecords > 0 ||
+        managedFiberRecords > 0
       ) {
         logInfo("Discord housekeeping pruned stale records", {
           agentName: this.name,
           completedDeliveryRecords,
           staleDebugResults,
           terminalSubmissions,
-          memoryReflectionRecords
+          memoryReflectionRecords,
+          managedFiberRecords
         });
       }
     } catch (error) {
@@ -674,25 +696,41 @@ export class ChatAgent extends Think<Env> {
     if (record.responseTarget.type === "channel_message") return;
     if (!record.request.guildId) return;
 
+    const snapshot = createGuildMemoryReflectionSnapshot(
+      record.request,
+      getDiscordMessageText(result.message)
+    );
+    const fiberName = getGuildMemoryReflectionFiberName(record.interactionId);
+
     try {
-      const reflection = await this.runFiber(
-        getGuildMemoryReflectionFiberName(record.interactionId),
-        async (ctx) =>
-          this.createGuildMemoryReflectionRunner().run(
-            createGuildMemoryReflectionSnapshot(
-              record.request,
-              getDiscordMessageText(result.message)
-            ),
+      const fiber = await this.startFiber(
+        fiberName,
+        async (ctx) => {
+          const reflection = await this.createGuildMemoryReflectionRunner().run(
+            snapshot,
             ctx
-          )
+          );
+          if (reflection?.changed) {
+            logInfo("Guild memory reflection updated memory", {
+              agentName: this.name,
+              interactionId: record.interactionId,
+              operation: reflection.operation,
+              attempts: reflection.attempts
+            });
+          }
+        },
+        {
+          idempotencyKey: fiberName,
+          metadata: createGuildMemoryReflectionFiberMetadata(record.request)
+        }
       );
 
-      if (reflection?.changed) {
-        logInfo("Guild memory reflection updated memory", {
+      if (!fiber.accepted) {
+        logInfo("Guild memory reflection fiber already exists", {
           agentName: this.name,
           interactionId: record.interactionId,
-          operation: reflection.operation,
-          attempts: reflection.attempts
+          fiberId: fiber.fiberId,
+          fiberStatus: fiber.status
         });
       }
     } catch (error) {
@@ -862,17 +900,50 @@ function createDebugSubmissionStatus(submission: ThinkSubmissionInspection) {
 }
 
 function createDebugMemoryReflectionStatus(
-  reflection: GuildMemoryReflectionRecord
+  reflection: GuildMemoryReflectionRecord | undefined,
+  fiber: FiberInspection | null
 ) {
+  if (!reflection && !fiber) return null;
+
   return {
-    interactionId: reflection.interactionId,
-    status: reflection.status,
-    changed: reflection.changed,
-    operation: reflection.operation,
-    attempts: reflection.attempts,
-    error: reflection.error,
-    createdAt: reflection.createdAt,
-    updatedAt: reflection.updatedAt
+    interactionId:
+      reflection?.interactionId ??
+      getGuildMemoryReflectionInteractionId(fiber?.name ?? ""),
+    status: reflection?.status,
+    changed: reflection?.changed,
+    operation: reflection?.operation,
+    attempts: reflection?.attempts,
+    error: reflection?.error,
+    createdAt: reflection?.createdAt,
+    updatedAt: reflection?.updatedAt,
+    fiber: fiber ? createDebugFiberStatus(fiber) : null
+  };
+}
+
+function createDebugFiberStatus(fiber: FiberInspection) {
+  return {
+    fiberId: fiber.fiberId,
+    name: fiber.name,
+    idempotencyKey: fiber.idempotencyKey,
+    status: fiber.status,
+    error: fiber.error,
+    metadata: sanitizeSubmissionMetadata(fiber.metadata),
+    createdAt: toIsoTimestamp(fiber.createdAt),
+    startedAt: toOptionalIsoTimestamp(fiber.startedAt),
+    settledAt: toOptionalIsoTimestamp(fiber.settledAt)
+  };
+}
+
+function createGuildMemoryReflectionFiberMetadata(
+  request: DiscordChatRequest
+): Record<string, string | number | boolean | null | undefined> {
+  return {
+    source: "discord",
+    type: "guild_memory_reflection",
+    interactionId: request.interactionId,
+    guildId: request.guildId,
+    channelId: request.channelId,
+    userId: request.userId
   };
 }
 
@@ -882,6 +953,7 @@ function sanitizeSubmissionMetadata(metadata?: Record<string, unknown>) {
   const safeKeys = [
     "source",
     "type",
+    "interactionId",
     "sequence",
     "guildId",
     "channelId",
