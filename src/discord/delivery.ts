@@ -15,6 +15,12 @@ type DiscordDeliveryMeta = {
 };
 
 type DiscordDeliveryStatus = "pending" | "running" | "delivered" | "failed";
+export type DiscordDeliveryLifecycleState = "running" | "recovering";
+
+export type DiscordDeliveryLifecycle = {
+  state: DiscordDeliveryLifecycleState;
+  updatedAt: string;
+};
 
 export type DiscordChatDeliveryRecord = {
   type: "chat";
@@ -23,6 +29,7 @@ export type DiscordChatDeliveryRecord = {
   responseTarget: DiscordResponseTarget;
   request: DiscordChatRequest;
   status: DiscordDeliveryStatus;
+  lifecycle?: DiscordDeliveryLifecycle;
   createdAt: string;
   updatedAt: string;
   artifacts?: StoredResponseArtifact[];
@@ -39,6 +46,7 @@ export type DiscordResetDeliveryRecord = {
   userId?: string;
   user?: DiscordUserContext;
   status: DiscordDeliveryStatus;
+  lifecycle?: DiscordDeliveryLifecycle;
   createdAt: string;
   updatedAt: string;
   error?: string;
@@ -137,15 +145,40 @@ export class DiscordDeliveryStore {
   }
 
   async markRunning(interactionId: string) {
-    await this.updateDelivery(interactionId, (record) =>
-      isTerminalDeliveryStatus(record.status)
-        ? record
-        : {
-            ...record,
-            status: "running",
-            updatedAt: new Date().toISOString()
-          }
-    );
+    await this.updateDelivery(interactionId, (record) => {
+      if (isTerminalDeliveryStatus(record.status)) return record;
+
+      const now = new Date().toISOString();
+      return {
+        ...record,
+        status: "running",
+        lifecycle:
+          record.lifecycle?.state === "recovering"
+            ? record.lifecycle
+            : {
+                state: "running",
+                updatedAt: now
+              },
+        updatedAt: now
+      };
+    });
+  }
+
+  async markRecovering(interactionId: string) {
+    await this.updateDelivery(interactionId, (record) => {
+      if (isTerminalDeliveryStatus(record.status)) return record;
+
+      const now = new Date().toISOString();
+      return {
+        ...record,
+        status: "running",
+        lifecycle: {
+          state: "recovering",
+          updatedAt: now
+        },
+        updatedAt: now
+      };
+    });
   }
 
   async addArtifact(interactionId: string, artifact: ResponseArtifact) {
@@ -175,12 +208,15 @@ export class DiscordDeliveryStore {
       const current = await txn.get<DiscordDeliveryRecord>(key);
       if (!current || current.sequence !== record.sequence) return;
 
-      await txn.put<DiscordDeliveryRecord>(key, {
+      const nextRecord = {
         ...current,
         status,
         error,
         updatedAt: new Date().toISOString()
-      } as DiscordDeliveryRecord);
+      } as DiscordDeliveryRecord;
+      delete nextRecord.lifecycle;
+
+      await txn.put<DiscordDeliveryRecord>(key, nextRecord);
     });
   }
 

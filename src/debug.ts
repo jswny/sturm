@@ -40,6 +40,11 @@ type DebugResetPayload = {
   interactionId?: string;
 };
 
+type DebugStatusPayload = {
+  surface: DebugSurface;
+  interactionId: string;
+};
+
 export async function handleDebugRequest(
   request: Request,
   env: DebugEnv
@@ -62,6 +67,13 @@ export async function handleDebugRequest(
 
     if (url.pathname === "/debug/reset") {
       return replyToDebugReset(await readJson<DebugResetPayload>(request), env);
+    }
+
+    if (url.pathname === "/debug/status") {
+      return replyToDebugStatus(
+        await readJson<DebugStatusPayload>(request),
+        env
+      );
     }
   } catch (error) {
     if (error instanceof Response) return error;
@@ -138,6 +150,24 @@ async function replyToDebugReset(payload: DebugResetPayload, env: DebugEnv) {
   });
 }
 
+async function replyToDebugStatus(payload: DebugStatusPayload, env: DebugEnv) {
+  const error = validateDebugStatusPayload(payload);
+  if (error) return json({ error }, { status: 400 });
+
+  const conversationName = getDiscordGuildChannelConversationName(
+    payload.surface
+  );
+  const agent = await getAgentByName(env.ChatAgent, conversationName);
+  const status = await agent.getDebugDiscordStatus(payload.interactionId);
+
+  return json({
+    ok: true,
+    conversationName,
+    interactionId: payload.interactionId,
+    ...status
+  });
+}
+
 async function readJson<T>(request: Request): Promise<T> {
   try {
     return (await request.json()) as T;
@@ -165,6 +195,17 @@ function validateDebugChatPayload(payload: DebugChatPayload) {
   if (!payload.user.id) return "Missing user.id.";
 
   if (!payload.text?.trim()) return "Missing text.";
+
+  return null;
+}
+
+function validateDebugStatusPayload(payload: DebugStatusPayload) {
+  if (!payload || typeof payload !== "object") return "Missing request body.";
+
+  const surfaceError = validateDebugSurface(payload.surface);
+  if (surfaceError) return surfaceError;
+
+  if (!payload.interactionId?.trim()) return "Missing interactionId.";
 
   return null;
 }

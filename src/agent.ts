@@ -270,10 +270,19 @@ export class ChatAgent extends Think<Env> {
       createdAt: new Date(ctx.createdAt).toISOString()
     });
 
-    await this.progressReporters.get(ctx.recoveryRootRequestId)?.report({
-      type: "phase",
-      label: "Recovering interrupted work"
-    });
+    try {
+      await this.discordDeliveries.markRecovering(ctx.recoveryRootRequestId);
+      await this.reportDiscordRecoveryProgress(ctx.recoveryRootRequestId, {
+        type: "phase",
+        label: "Recovering interrupted work"
+      });
+    } catch (error) {
+      logWarn("Discord recovery status update failed", {
+        agentName: this.name,
+        recoveryRootRequestId: ctx.recoveryRootRequestId,
+        error: getErrorMessage(error)
+      });
+    }
 
     return {};
   }
@@ -471,6 +480,18 @@ export class ChatAgent extends Think<Env> {
     return this.createDiscordDeliveryRunner().waitForDebugQueuedResponse(
       input.interactionId
     );
+  }
+
+  async getDebugDiscordStatus(interactionId: string) {
+    const [delivery, submission] = await Promise.all([
+      this.discordDeliveries.getDelivery(interactionId),
+      this.inspectSubmission(interactionId)
+    ]);
+
+    return {
+      delivery: delivery ? createDebugDeliveryStatus(delivery) : null,
+      submission: submission ? createDebugSubmissionStatus(submission) : null
+    };
   }
 
   async runScheduledChannelTask(payload: ScheduledChannelTaskPayload) {
@@ -745,6 +766,30 @@ export class ChatAgent extends Think<Env> {
     return turn ? this.progressReporters.get(turn.interactionId) : undefined;
   }
 
+  private async reportDiscordRecoveryProgress(
+    interactionId: string,
+    event: Parameters<DiscordProgressReporter["report"]>[0]
+  ) {
+    const reporter = this.progressReporters.get(interactionId);
+    if (reporter) {
+      await reporter.report(event);
+      return;
+    }
+
+    const record = await this.discordDeliveries.getDelivery(interactionId);
+    if (!record) return;
+
+    const recoveryReporter = createDiscordProgressReporter(
+      record.responseTarget,
+      {
+        createdAt: record.createdAt,
+        interactionId: record.interactionId,
+        sequence: record.sequence
+      }
+    );
+    await recoveryReporter?.report(event);
+  }
+
   private getLatestDiscordTurn(): DiscordChatRequest | undefined {
     for (let index = this.messages.length - 1; index >= 0; index--) {
       const turn = getDiscordTurnFromUserMessage(this.messages[index]);
@@ -753,4 +798,101 @@ export class ChatAgent extends Think<Env> {
 
     return undefined;
   }
+}
+
+function createDebugDeliveryStatus(record: DiscordDeliveryRecord) {
+  return {
+    type: record.type,
+    sequence: record.sequence,
+    interactionId: record.interactionId,
+    status: record.status,
+    lifecycle: record.lifecycle,
+    responseTargetType: record.responseTarget.type,
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
+    error: record.error,
+    request:
+      record.type === "chat"
+        ? {
+            guildId: record.request.guildId,
+            channelId: record.request.channelId,
+            userId: record.request.userId,
+            textLength: record.request.text.length,
+            hasChannelContext: Boolean(record.request.channel),
+            hasUserContext: Boolean(record.request.user),
+            hasAppPermissions: Boolean(record.request.appPermissions),
+            hasUserPermissions: Boolean(record.request.userPermissions)
+          }
+        : {
+            guildId: record.guildId,
+            channelId: record.channelId,
+            userId: record.userId,
+            hasUserContext: Boolean(record.user)
+          },
+    artifacts:
+      record.type === "chat"
+        ? (record.artifacts ?? []).map((artifact) => ({
+            artifactKey: artifact.artifactKey,
+            filename: artifact.filename,
+            mimeType: artifact.mimeType,
+            source: artifact.source,
+            description: artifact.description
+          }))
+        : undefined
+  };
+}
+
+function createDebugSubmissionStatus(submission: ThinkSubmissionInspection) {
+  return {
+    submissionId: submission.submissionId,
+    idempotencyKey: submission.idempotencyKey,
+    requestId: submission.requestId,
+    status: submission.status,
+    error: submission.error,
+    metadata: sanitizeSubmissionMetadata(submission.metadata),
+    createdAt: toIsoTimestamp(submission.createdAt),
+    startedAt: toOptionalIsoTimestamp(submission.startedAt),
+    completedAt: toOptionalIsoTimestamp(submission.completedAt)
+  };
+}
+
+function sanitizeSubmissionMetadata(metadata?: Record<string, unknown>) {
+  if (!metadata) return undefined;
+
+  const safeKeys = [
+    "source",
+    "type",
+    "sequence",
+    "guildId",
+    "channelId",
+    "userId"
+  ];
+  const result: Record<string, string | number | boolean | null> = {};
+
+  for (const key of safeKeys) {
+    const value = metadata[key];
+    if (isSafeMetadataValue(value)) result[key] = value;
+  }
+
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
+function isSafeMetadataValue(
+  value: unknown
+): value is string | number | boolean | null {
+  return (
+    value === null ||
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  );
+}
+
+function toOptionalIsoTimestamp(value?: number) {
+  return typeof value === "number" ? toIsoTimestamp(value) : undefined;
+}
+
+function toIsoTimestamp(value: number) {
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : null;
 }
