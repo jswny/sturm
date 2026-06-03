@@ -1,5 +1,8 @@
 import {
   Think,
+  type ChatRecoveryContext,
+  type ChatRecoveryExhaustedContext,
+  type ChatRecoveryOptions,
   type ChatResponseResult,
   type FiberRecoveryContext,
   type PrepareStepContext,
@@ -79,9 +82,22 @@ import { createDiscordCodeModeTool, createDiscordTools } from "./tools";
 const HOUSEKEEPING_INTERVAL_SECONDS = 24 * 60 * 60;
 const TERMINAL_SUBMISSION_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const DISCORD_ACTIVE_TOOLS = ["codemode"];
+const CHAT_RECOVERY_MAX_ATTEMPTS = 6;
+const CHAT_RECOVERY_STABLE_TIMEOUT_MS = 10_000;
+const CHAT_STREAM_STALL_TIMEOUT_MS = 120_000;
+const CHAT_RECOVERY_TERMINAL_MESSAGE =
+  "Sorry, this request was interrupted and could not be recovered. Please try again.";
 
 export class ChatAgent extends Think<Env> {
   override sendReasoning = false;
+  override chatRecovery = {
+    maxAttempts: CHAT_RECOVERY_MAX_ATTEMPTS,
+    stableTimeoutMs: CHAT_RECOVERY_STABLE_TIMEOUT_MS,
+    terminalMessage: CHAT_RECOVERY_TERMINAL_MESSAGE,
+    onExhausted: (ctx: ChatRecoveryExhaustedContext) =>
+      this.handleChatRecoveryExhausted(ctx)
+  };
+  override chatStreamStallTimeoutMs = CHAT_STREAM_STALL_TIMEOUT_MS;
   override workspace = new Workspace({
     sql: this.ctx.storage.sql,
     namespace: "codemode",
@@ -238,6 +254,30 @@ export class ChatAgent extends Think<Env> {
     });
   }
 
+  override async onChatRecovery(
+    ctx: ChatRecoveryContext
+  ): Promise<ChatRecoveryOptions> {
+    logWarn("Think chat recovery started", {
+      agentName: this.name,
+      incidentId: ctx.incidentId,
+      requestId: ctx.requestId,
+      recoveryRootRequestId: ctx.recoveryRootRequestId,
+      attempt: ctx.attempt,
+      maxAttempts: ctx.maxAttempts,
+      recoveryKind: ctx.recoveryKind,
+      streamId: ctx.streamId,
+      partialTextLength: ctx.partialText.length,
+      createdAt: new Date(ctx.createdAt).toISOString()
+    });
+
+    await this.progressReporters.get(ctx.recoveryRootRequestId)?.report({
+      type: "phase",
+      label: "Recovering interrupted work"
+    });
+
+    return {};
+  }
+
   override async onChatResponse(result: ChatResponseResult) {
     const record = await this.discordDeliveries.getDelivery(result.requestId);
     if (!record || isTerminalDelivery(record)) return;
@@ -302,10 +342,13 @@ export class ChatAgent extends Think<Env> {
       submission.status === "aborted" ||
       submission.status === "skipped"
     ) {
+      const error =
+        submission.error ??
+        `Think submission ended with status ${submission.status}.`;
       await this.createDiscordDeliveryRunner().failDelivery(
         record,
-        submission.error ??
-          `Think submission ended with status ${submission.status}.`
+        error,
+        error === CHAT_RECOVERY_TERMINAL_MESSAGE ? { userMessage: error } : {}
       );
     }
   }
@@ -657,6 +700,22 @@ export class ChatAgent extends Think<Env> {
           sessionAffinity: this.sessionAffinity
         }),
       providerOptions: MEMORY_REFLECTION_PROVIDER_OPTIONS
+    });
+  }
+
+  private async handleChatRecoveryExhausted(ctx: ChatRecoveryExhaustedContext) {
+    logWarn("Think chat recovery exhausted", {
+      agentName: this.name,
+      incidentId: ctx.incidentId,
+      requestId: ctx.requestId,
+      recoveryRootRequestId: ctx.recoveryRootRequestId,
+      attempt: ctx.attempt,
+      maxAttempts: ctx.maxAttempts,
+      recoveryKind: ctx.recoveryKind,
+      streamId: ctx.streamId,
+      reason: ctx.reason,
+      partialTextLength: ctx.partialText.length,
+      createdAt: new Date(ctx.createdAt).toISOString()
     });
   }
 

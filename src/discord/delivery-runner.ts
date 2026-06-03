@@ -34,6 +34,10 @@ export type DiscordDeliveryRunnerOptions = {
   afterReset?(record: DiscordResetDeliveryRecord): Promise<void> | void;
 };
 
+type DiscordDeliveryFailureOptions = {
+  userMessage?: string;
+};
+
 export class DiscordDeliveryRunner {
   constructor(private options: DiscordDeliveryRunnerOptions) {}
 
@@ -110,7 +114,11 @@ export class DiscordDeliveryRunner {
     }
   }
 
-  async failDelivery(record: DiscordDeliveryRecord, error: string) {
+  async failDelivery(
+    record: DiscordDeliveryRecord,
+    error: string,
+    options: DiscordDeliveryFailureOptions = {}
+  ) {
     logError("Discord delivery failed", error, {
       sequence: record.sequence,
       interactionId: record.interactionId,
@@ -119,7 +127,7 @@ export class DiscordDeliveryRunner {
     });
 
     try {
-      await this.deliverFailure(record, error);
+      await this.deliverFailure(record, error, options);
     } finally {
       await this.options.deliveries.completeDelivery(record, "failed", error);
       await this.options.afterFailedDelivery?.(record);
@@ -208,7 +216,11 @@ export class DiscordDeliveryRunner {
     });
   }
 
-  private async deliverFailure(record: DiscordDeliveryRecord, error: string) {
+  private async deliverFailure(
+    record: DiscordDeliveryRecord,
+    error: string,
+    options: DiscordDeliveryFailureOptions
+  ) {
     if (record.responseTarget.type === "debug") {
       await this.options.deliveries.putDebugResult(record.responseTarget.id, {
         status: "failed",
@@ -223,7 +235,7 @@ export class DiscordDeliveryRunner {
     try {
       await editOriginalInteractionResponse(
         record.responseTarget,
-        "Sorry, I could not complete that request."
+        options.userMessage ?? "Sorry, I could not complete that request."
       );
     } catch (editError) {
       logError("Discord failure response edit failed", editError, {
