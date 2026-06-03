@@ -50,7 +50,8 @@ import {
   getGuildMemoryReflectionFiberName,
   getGuildMemoryReflectionInteractionId,
   GuildMemoryReflectionStore,
-  parseGuildMemoryReflectionSnapshot
+  parseGuildMemoryReflectionSnapshot,
+  type GuildMemoryReflectionRecord
 } from "./memory-reflection";
 import {
   CHAT_MODEL,
@@ -483,14 +484,18 @@ export class ChatAgent extends Think<Env> {
   }
 
   async getDebugDiscordStatus(interactionId: string) {
-    const [delivery, submission] = await Promise.all([
+    const [delivery, submission, memoryReflection] = await Promise.all([
       this.discordDeliveries.getDelivery(interactionId),
-      this.inspectSubmission(interactionId)
+      this.inspectSubmission(interactionId),
+      this.memoryReflections.get(interactionId)
     ]);
 
     return {
       delivery: delivery ? createDebugDeliveryStatus(delivery) : null,
-      submission: submission ? createDebugSubmissionStatus(submission) : null
+      submission: submission ? createDebugSubmissionStatus(submission) : null,
+      memoryReflection: memoryReflection
+        ? createDebugMemoryReflectionStatus(memoryReflection)
+        : null
     };
   }
 
@@ -853,6 +858,21 @@ function createDebugSubmissionStatus(submission: ThinkSubmissionInspection) {
     createdAt: toIsoTimestamp(submission.createdAt),
     startedAt: toOptionalIsoTimestamp(submission.startedAt),
     completedAt: toOptionalIsoTimestamp(submission.completedAt)
+  };
+}
+
+function createDebugMemoryReflectionStatus(
+  reflection: GuildMemoryReflectionRecord
+) {
+  return {
+    interactionId: reflection.interactionId,
+    status: reflection.status,
+    changed: reflection.changed,
+    operation: reflection.operation,
+    attempts: reflection.attempts,
+    error: reflection.error,
+    createdAt: reflection.createdAt,
+    updatedAt: reflection.updatedAt
   };
 }
 

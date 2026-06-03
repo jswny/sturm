@@ -86,6 +86,12 @@ export type ReflectGuildMemoryInput = {
 export class GuildMemoryReflectionStore {
   constructor(private storage: DurableObjectStorage) {}
 
+  async get(interactionId: string) {
+    return this.storage.get<GuildMemoryReflectionRecord>(
+      getMemoryReflectionRecordKey(interactionId)
+    );
+  }
+
   async markRunning(interactionId: string) {
     const now = new Date().toISOString();
     return this.storage.transaction(async (txn) => {
