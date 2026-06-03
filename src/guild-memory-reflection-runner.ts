@@ -23,6 +23,8 @@ export class GuildMemoryReflectionRunner {
   constructor(private options: GuildMemoryReflectionRunnerOptions) {}
 
   async run(snapshot: GuildMemoryReflectionSnapshot, fiber?: FiberContext) {
+    assertNotAborted(fiber, "before starting");
+
     const stash = (
       phase: GuildMemoryReflectionFiberPhase,
       reflection?: GuildMemoryReflectionSummary
@@ -50,7 +52,9 @@ export class GuildMemoryReflectionRunner {
       }
 
       const provider = this.options.getProvider();
+      assertNotAborted(fiber, "before reading guild memory");
       const currentMemory = (await provider.get()) ?? "";
+      assertNotAborted(fiber, "before reflecting on guild memory");
       const reflection = await reflectGuildMemoryAfterTurn({
         model: this.options.createModel(),
         currentMemory,
@@ -62,18 +66,22 @@ export class GuildMemoryReflectionRunner {
       stash("reflected", reflectionSummary);
 
       if (reflection.changed && reflection.nextMemory !== undefined) {
+        assertNotAborted(fiber, "before writing guild memory");
         await provider.set(reflection.nextMemory);
         stash("written", reflectionSummary);
       }
 
+      assertNotAborted(fiber, "before completing");
       await this.complete(snapshot.interactionId, reflectionSummary);
       stash("completed", reflectionSummary);
       return reflectionSummary;
     } catch (error) {
-      await this.options.store.fail(
-        snapshot.interactionId,
-        getErrorMessage(error)
-      );
+      const message = getErrorMessage(error);
+      if (error instanceof GuildMemoryReflectionAbortError) {
+        await this.options.store.abort(snapshot.interactionId, message);
+      } else {
+        await this.options.store.fail(snapshot.interactionId, message);
+      }
       throw error;
     }
   }
@@ -89,4 +97,26 @@ export class GuildMemoryReflectionRunner {
       reflection.attempts
     );
   }
+}
+
+class GuildMemoryReflectionAbortError extends Error {
+  constructor(stage: string, reason: unknown) {
+    const reasonText = getAbortReasonText(reason);
+    super(
+      reasonText
+        ? `Guild memory reflection was canceled ${stage}: ${reasonText}`
+        : `Guild memory reflection was canceled ${stage}.`
+    );
+    this.name = "GuildMemoryReflectionAbortError";
+  }
+}
+
+function assertNotAborted(fiber: FiberContext | undefined, stage: string) {
+  if (!fiber?.signal.aborted) return;
+  throw new GuildMemoryReflectionAbortError(stage, fiber.signal.reason);
+}
+
+function getAbortReasonText(reason: unknown) {
+  if (reason === undefined || reason === null) return "";
+  return reason instanceof Error ? reason.message : String(reason);
 }

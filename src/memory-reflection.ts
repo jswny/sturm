@@ -37,7 +37,7 @@ export type GuildMemoryReflectionDecision = {
 
 export type GuildMemoryReflectionRecord = {
   interactionId: string;
-  status: "running" | "completed" | "failed";
+  status: "running" | "completed" | "failed" | "aborted";
   createdAt: string;
   updatedAt: string;
   changed?: boolean;
@@ -129,6 +129,13 @@ export class GuildMemoryReflectionStore {
   async fail(interactionId: string, error: string) {
     await this.writeTerminalRecord(interactionId, {
       status: "failed",
+      error
+    });
+  }
+
+  async abort(interactionId: string, error: string) {
+    await this.writeTerminalRecord(interactionId, {
+      status: "aborted",
       error
     });
   }
