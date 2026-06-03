@@ -17,7 +17,8 @@
     "types": "wrangler types env.d.ts --include-runtime false",
     "format": "oxfmt --write .",
     "lint": "oxlint src/",
-    "check": "oxfmt --check . && oxlint src/ && tsc"
+    "check": "oxfmt --check . && oxlint src/ && tsc",
+    "test:integration": "vitest run --config vitest.config.ts"
   },
   "dependencies": {
     "@cloudflare/ai-chat": "^0.8.0",
@@ -33,11 +34,13 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.16.12",
     "@cloudflare/workers-types": "^4.20260519.1",
     "@types/node": "^25.8.0",
     "oxfmt": "^0.49.0",
     "oxlint": "^1.66.0",
     "typescript": "^6.0.3",
+    "vitest": "^4.1.8",
     "wrangler": "^4.93.0"
   }
 }
