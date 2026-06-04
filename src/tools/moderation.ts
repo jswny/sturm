@@ -27,7 +27,7 @@ export function createModerationTools(
   return {
     temporarilyMuteGuildMember: tool({
       description:
-        "Temporarily mute, also called timeout, a Discord guild member at the assistant's discretion. Use only for short playful mutes or clearly justified moderation based on the current request and recent channel context. Do not use for ordinary disagreement, unclear targets, or pile-ons. Requires the /c caller to have Discord's Moderate Members permission. targetUserId is required; use a raw Discord user ID. If the user provided a mention like <@123>, use 123. If the user provided a name, call searchGuildMembers first to resolve it.",
+        "Temporarily mute, also called timeout, a Discord guild member. Requires the /c caller to have Discord's Moderate Members permission. targetUserId is required; use a raw Discord user ID. If the user provided a mention like <@123>, use 123. If the user provided a name, call searchGuildMembers first to resolve it.",
       inputSchema: z.object({
         targetUserId: z.string().min(1).describe("Discord user ID to mute"),
         durationSeconds: z
