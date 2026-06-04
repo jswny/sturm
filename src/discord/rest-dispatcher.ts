@@ -1,5 +1,22 @@
 import { DurableObject } from "cloudflare:workers";
 import { logError, logWarn } from "../logging";
+import {
+  DiscordGuildMemberCacheStore,
+  type DiscordRestCacheMode
+} from "./rest-member-cache";
+import {
+  canWaitForDiscordRestRetry,
+  getDiscordRestNetworkBackoffMs,
+  getDiscordRestRateLimitBody,
+  getDiscordRestResetAfterMs,
+  getDiscordRestRetryAfterMs
+} from "./rest-rate-limits";
+import {
+  getDiscordGuildMemberTarget,
+  getDiscordRestBucketRateLimitKey,
+  getDiscordRestMajorResourceKey,
+  getDiscordRestRouteKey
+} from "./rest-routes";
 
 const DISCORD_API_BASE = "https://discord.com/api/v10";
 const DISCORD_REST_OBJECT_NAME = "bot-rest";
@@ -8,7 +25,6 @@ const MAX_ATTEMPTS = 3;
 const JOB_TTL_MS = 10 * 60 * 1000;
 const BUCKET_ALIAS_TTL_MS = 24 * 60 * 60 * 1000;
 const GUILD_MEMBER_CACHE_TTL_MS = 5 * 60 * 1000;
-const RATE_LIMIT_FUDGE_MS = 100;
 
 type DiscordRestEnv = Env & {
   DISCORD_TOKEN?: string;
@@ -21,7 +37,7 @@ export type DiscordRestRequest = {
   body?: string;
   files?: DiscordRestFile[];
   maxWaitMs?: number;
-  cache?: "default" | "reload" | "no-store";
+  cache?: DiscordRestCacheMode;
 };
 
 export type DiscordRestFile = {
@@ -71,23 +87,6 @@ type BucketAliasState = {
   expiresAt: number;
 };
 
-type GuildMemberCacheState = {
-  body: string;
-  updatedAt: number;
-  expiresAt: number;
-};
-
-type GuildMemberCacheTarget = {
-  guildId: string;
-  userId: string;
-};
-
-type DiscordGuildMemberResponse = {
-  user?: {
-    id?: unknown;
-  };
-};
-
 type RateLimitCheck =
   | { ok: true }
   | { ok: false; retryAfterMs: number; error: string };
@@ -98,14 +97,14 @@ export class DiscordRestDispatcher extends DurableObject<DiscordRestEnv> {
 
   async request(input: DiscordRestRequest): Promise<DiscordRestResult> {
     const method = (input.method ?? "GET").toUpperCase();
-    const cacheTarget = getGuildMemberCacheTarget(method, input.path);
+    const cacheTarget = getDiscordGuildMemberTarget(method, input.path);
     if (
       method === "GET" &&
       cacheTarget &&
       input.cache !== "reload" &&
       input.cache !== "no-store"
     ) {
-      const cached = await this.getCachedGuildMember(cacheTarget);
+      const cached = await this.memberCache.get(cacheTarget);
       if (cached && this.env.DISCORD_TOKEN?.trim()) {
         return {
           ok: true,
@@ -115,8 +114,8 @@ export class DiscordRestDispatcher extends DurableObject<DiscordRestEnv> {
       }
     }
 
-    const routeKey = getRouteKey(method, input.path);
-    const majorResourceKey = getMajorResourceKey(input.path);
+    const routeKey = getDiscordRestRouteKey(method, input.path);
+    const majorResourceKey = getDiscordRestMajorResourceKey(input.path);
     const now = Date.now();
     const job = {
       id: crypto.randomUUID(),
@@ -149,6 +148,13 @@ export class DiscordRestDispatcher extends DurableObject<DiscordRestEnv> {
       logError("Discord REST dispatcher alarm failed", error);
       await this.ctx.storage.setAlarm(Date.now() + 60_000);
     }
+  }
+
+  private get memberCache() {
+    return new DiscordGuildMemberCacheStore(
+      this.ctx.storage,
+      GUILD_MEMBER_CACHE_TTL_MS
+    );
   }
 
   private async processJob(
@@ -216,8 +222,11 @@ export class DiscordRestDispatcher extends DurableObject<DiscordRestEnv> {
         });
         body = await response.text();
       } catch (error) {
-        const retryAfterMs = getNetworkBackoffMs(attempts);
-        if (!canWait(deadline, retryAfterMs) || attempts >= MAX_ATTEMPTS) {
+        const retryAfterMs = getDiscordRestNetworkBackoffMs(attempts);
+        if (
+          !canWaitForDiscordRestRetry(deadline, retryAfterMs) ||
+          attempts >= MAX_ATTEMPTS
+        ) {
           logWarn("Discord REST network request failed", {
             method: job.method,
             routeKey: job.routeKey,
@@ -238,10 +247,10 @@ export class DiscordRestDispatcher extends DurableObject<DiscordRestEnv> {
       await this.storeRateLimitHeaders(job, response, body);
 
       if (response.status === 429) {
-        const retryAfterMs = getRetryAfterMs(response, body);
+        const retryAfterMs = getDiscordRestRetryAfterMs(response, body);
         if (
           retryAfterMs !== undefined &&
-          canWait(deadline, retryAfterMs) &&
+          canWaitForDiscordRestRetry(deadline, retryAfterMs) &&
           attempts < MAX_ATTEMPTS
         ) {
           await sleep(retryAfterMs);
@@ -260,8 +269,11 @@ export class DiscordRestDispatcher extends DurableObject<DiscordRestEnv> {
       }
 
       if (response.status >= 500 && response.status < 600) {
-        const retryAfterMs = getNetworkBackoffMs(attempts);
-        if (canWait(deadline, retryAfterMs) && attempts < MAX_ATTEMPTS) {
+        const retryAfterMs = getDiscordRestNetworkBackoffMs(attempts);
+        if (
+          canWaitForDiscordRestRetry(deadline, retryAfterMs) &&
+          attempts < MAX_ATTEMPTS
+        ) {
           await sleep(retryAfterMs);
           continue;
         }
@@ -290,7 +302,7 @@ export class DiscordRestDispatcher extends DurableObject<DiscordRestEnv> {
     return this.finishJob(job, {
       ok: false,
       retryable: true,
-      retryAfterMs: getNetworkBackoffMs(attempts),
+      retryAfterMs: getDiscordRestNetworkBackoffMs(attempts),
       error: "Discord REST request did not complete within retry limits."
     });
   }
@@ -357,7 +369,7 @@ export class DiscordRestDispatcher extends DurableObject<DiscordRestEnv> {
         continue;
       }
 
-      if (!canWait(deadline, retryAfterMs)) {
+      if (!canWaitForDiscordRestRetry(deadline, retryAfterMs)) {
         return {
           ok: false,
           retryAfterMs,
@@ -377,12 +389,12 @@ export class DiscordRestDispatcher extends DurableObject<DiscordRestEnv> {
     body: string
   ) {
     const rateLimitKey = await this.getResponseRateLimitKey(job, response);
-    const retryAfterMs = getRetryAfterMs(response, body);
+    const retryAfterMs = getDiscordRestRetryAfterMs(response, body);
     const remaining = Number(response.headers.get("x-ratelimit-remaining"));
-    const resetAfterMs = getResetAfterMs(response);
+    const resetAfterMs = getDiscordRestResetAfterMs(response);
     const isGlobal =
       response.headers.get("x-ratelimit-global") === "true" ||
-      getDiscordRateLimitBody(body)?.global === true;
+      getDiscordRestRateLimitBody(body)?.global === true;
 
     if (response.status === 429 && retryAfterMs !== undefined) {
       await this.storeRateLimit(
@@ -423,7 +435,10 @@ export class DiscordRestDispatcher extends DurableObject<DiscordRestEnv> {
     const bucket = response.headers.get("x-ratelimit-bucket");
     if (!bucket) return job.routeKey;
 
-    const rateLimitKey = getBucketRateLimitKey(job.majorResourceKey, bucket);
+    const rateLimitKey = getDiscordRestBucketRateLimitKey(
+      job.majorResourceKey,
+      bucket
+    );
     await this.storeBucketAlias(job.routeKey, rateLimitKey);
     return rateLimitKey;
   }
@@ -445,79 +460,18 @@ export class DiscordRestDispatcher extends DurableObject<DiscordRestEnv> {
     await this.scheduleCleanupAlarm(resetAt);
   }
 
-  private async getCachedGuildMember(target: GuildMemberCacheTarget) {
-    const key = getGuildMemberCacheKey(target.guildId, target.userId);
-    const cached = await this.ctx.storage.get<GuildMemberCacheState>(key);
-    if (!cached) return undefined;
-
-    if (cached.expiresAt <= Date.now()) {
-      await this.ctx.storage.delete(key);
-      return undefined;
-    }
-
-    return cached;
-  }
-
   private async updateGuildMemberCache(
     job: DiscordRestJob,
     body: string,
-    cacheMode: NonNullable<DiscordRestRequest["cache"]>
+    cacheMode: DiscordRestCacheMode
   ) {
-    if (cacheMode === "no-store") return;
-
-    const target = getGuildMemberCacheTarget(job.method, job.path);
-    if (target) {
-      await this.storeGuildMemberResponse(target.guildId, target.userId, body);
-      return;
-    }
-
-    const searchGuildId = getGuildMemberSearchGuildId(job.method, job.path);
-    if (!searchGuildId) return;
-
-    await this.storeGuildMemberSearchResponse(searchGuildId, body);
-  }
-
-  private async storeGuildMemberSearchResponse(guildId: string, body: string) {
-    const members = parseGuildMemberSearchResponse(body);
-    if (!members) return;
-
-    await Promise.all(
-      members.map((member) => {
-        const userId = getGuildMemberResponseUserId(member);
-        return userId
-          ? this.storeGuildMember(guildId, userId, JSON.stringify(member))
-          : undefined;
-      })
-    );
-  }
-
-  private async storeGuildMemberResponse(
-    guildId: string,
-    userId: string,
-    body: string
-  ) {
-    const member = parseGuildMemberResponse(body);
-    if (!member || getGuildMemberResponseUserId(member) !== userId) {
-      await this.ctx.storage.delete(getGuildMemberCacheKey(guildId, userId));
-      return;
-    }
-
-    await this.storeGuildMember(guildId, userId, body);
-  }
-
-  private async storeGuildMember(
-    guildId: string,
-    userId: string,
-    body: string
-  ) {
-    const now = Date.now();
-    const entry = {
+    const expiresAt = await this.memberCache.updateFromRestResponse(
+      job.method,
+      job.path,
       body,
-      updatedAt: now,
-      expiresAt: now + GUILD_MEMBER_CACHE_TTL_MS
-    } satisfies GuildMemberCacheState;
-    await this.ctx.storage.put(getGuildMemberCacheKey(guildId, userId), entry);
-    await this.scheduleCleanupAlarm(entry.expiresAt);
+      cacheMode
+    );
+    if (expiresAt) await this.scheduleCleanupAlarm(expiresAt);
   }
 
   private async pruneExpiredJobs() {
@@ -560,16 +514,7 @@ export class DiscordRestDispatcher extends DurableObject<DiscordRestEnv> {
   }
 
   private async pruneExpiredGuildMemberCacheEntries() {
-    const now = Date.now();
-    const entries = await this.ctx.storage.list<GuildMemberCacheState>({
-      prefix: "guild-member:"
-    });
-
-    await Promise.all(
-      [...entries]
-        .filter(([, state]) => state.expiresAt <= now)
-        .map(([key]) => this.ctx.storage.delete(key))
-    );
+    await this.memberCache.pruneExpired();
   }
 
   private async scheduleCleanupAlarm(timestamp: number) {
@@ -607,12 +552,8 @@ export class DiscordRestDispatcher extends DurableObject<DiscordRestEnv> {
         if (alias.expiresAt > now) next = minTimestamp(next, alias.expiresAt);
       }
 
-      const memberEntries = await this.ctx.storage.list<GuildMemberCacheState>({
-        prefix: "guild-member:"
-      });
-      for (const entry of memberEntries.values()) {
-        if (entry.expiresAt > now) next = minTimestamp(next, entry.expiresAt);
-      }
+      const memberCacheExpiry = await this.memberCache.getNextExpiry(now);
+      if (memberCacheExpiry) next = minTimestamp(next, memberCacheExpiry);
 
       if (next) {
         await this.ctx.storage.setAlarm(next);
@@ -650,10 +591,6 @@ function getBucketAliasKey(routeKey: string) {
   return `bucket-alias:${routeKey}`;
 }
 
-function getGuildMemberCacheKey(guildId: string, userId: string) {
-  return `guild-member:${guildId}:${userId}`;
-}
-
 function createDiscordRestBody(input: DiscordRestRequest) {
   if (!input.files?.length) return input.body;
 
@@ -674,167 +611,6 @@ function base64ToBytes(base64: string) {
   return Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
 }
 
-function getRouteKey(method: string, path: string) {
-  const pathname = path.split("?")[0] ?? path;
-  const parts = pathname.split("/").map((part, index, all) => {
-    if (isMajorResourceId(index, all)) return part;
-    if (isWebhookToken(index, all)) return ":webhookToken";
-    if (/^\d+$/.test(part)) return ":id";
-    return part;
-  });
-  return `${method.toUpperCase()} ${parts.join("/")}`;
-}
-
-function getMajorResourceKey(path: string) {
-  const parts = getPathParts(path);
-  for (let index = 0; index < parts.length - 1; index++) {
-    const part = parts[index];
-    const id = parts[index + 1];
-    if (part === "channels") return `channel:${id}`;
-    if (part === "guilds") return `guild:${id}`;
-    if (part === "webhooks") {
-      const token = parts[index + 2];
-      return token ? `webhook:${id}:${stableHash(token)}` : `webhook:${id}`;
-    }
-  }
-
-  return "none";
-}
-
-function getBucketRateLimitKey(majorResourceKey: string, bucket: string) {
-  return `bucket:${majorResourceKey}:${bucket}`;
-}
-
-function getPathParts(path: string) {
-  const pathname = path.split("?")[0] ?? path;
-  return pathname.split("/").filter(Boolean);
-}
-
-function getGuildMemberCacheTarget(
-  method: string,
-  path: string
-): GuildMemberCacheTarget | undefined {
-  if (method !== "GET" && method !== "PATCH") return undefined;
-
-  const parts = getPathParts(path);
-  const [guilds, guildId, members, userId, extra] = parts;
-  if (
-    guilds !== "guilds" ||
-    members !== "members" ||
-    extra !== undefined ||
-    !guildId ||
-    !userId ||
-    !isDiscordSnowflake(guildId) ||
-    !isDiscordSnowflake(userId)
-  ) {
-    return undefined;
-  }
-
-  return { guildId, userId };
-}
-
-function getGuildMemberSearchGuildId(method: string, path: string) {
-  if (method !== "GET") return undefined;
-
-  const parts = getPathParts(path);
-  const [guilds, guildId, members, search, extra] = parts;
-  if (
-    guilds !== "guilds" ||
-    members !== "members" ||
-    search !== "search" ||
-    extra !== undefined ||
-    !guildId ||
-    !isDiscordSnowflake(guildId)
-  ) {
-    return undefined;
-  }
-
-  return guildId;
-}
-
-function parseGuildMemberSearchResponse(body: string) {
-  try {
-    const parsed = JSON.parse(body) as unknown;
-    if (!Array.isArray(parsed)) return undefined;
-
-    const members: DiscordGuildMemberResponse[] = [];
-    for (const value of parsed) {
-      const member = parseGuildMember(value);
-      if (member) members.push(member);
-    }
-    return members;
-  } catch {
-    return undefined;
-  }
-}
-
-function parseGuildMemberResponse(body: string) {
-  try {
-    return parseGuildMember(JSON.parse(body) as unknown);
-  } catch {
-    return undefined;
-  }
-}
-
-function parseGuildMember(
-  value: unknown
-): DiscordGuildMemberResponse | undefined {
-  if (!value || typeof value !== "object") return undefined;
-
-  const member = value as DiscordGuildMemberResponse;
-  return getGuildMemberResponseUserId(member) ? member : undefined;
-}
-
-function getGuildMemberResponseUserId(member: DiscordGuildMemberResponse) {
-  const userId = member.user?.id;
-  return typeof userId === "string" && isDiscordSnowflake(userId)
-    ? userId
-    : undefined;
-}
-
-function isDiscordSnowflake(value: string) {
-  return /^\d{8,}$/.test(value);
-}
-
-function isMajorResourceId(index: number, parts: string[]) {
-  return ["channels", "guilds", "webhooks"].includes(parts[index - 1] ?? "");
-}
-
-function isWebhookToken(index: number, parts: string[]) {
-  return parts[index - 2] === "webhooks";
-}
-
-function getRetryAfterMs(response: Response, body: string) {
-  const parsed = getDiscordRateLimitBody(body);
-  if (typeof parsed?.retry_after === "number") {
-    return Math.ceil(parsed.retry_after * 1000) + RATE_LIMIT_FUDGE_MS;
-  }
-
-  const header = Number(response.headers.get("retry-after"));
-  if (Number.isFinite(header) && header > 0) {
-    return Math.ceil(header * 1000) + RATE_LIMIT_FUDGE_MS;
-  }
-
-  return undefined;
-}
-
-function getResetAfterMs(response: Response) {
-  const header = Number(response.headers.get("x-ratelimit-reset-after"));
-  if (!Number.isFinite(header) || header <= 0) return undefined;
-  return Math.ceil(header * 1000) + RATE_LIMIT_FUDGE_MS;
-}
-
-function getDiscordRateLimitBody(body: string) {
-  try {
-    return JSON.parse(body) as {
-      retry_after?: unknown;
-      global?: unknown;
-    };
-  } catch {
-    return undefined;
-  }
-}
-
 function getDiscordErrorCode(body: string) {
   try {
     const parsed = JSON.parse(body) as { code?: unknown };
@@ -844,27 +620,10 @@ function getDiscordErrorCode(body: string) {
   }
 }
 
-function getNetworkBackoffMs(attempts: number) {
-  return Math.min(250 * 2 ** Math.max(0, attempts - 1), 2_000);
-}
-
-function canWait(deadline: number, retryAfterMs: number) {
-  return Date.now() + retryAfterMs <= deadline;
-}
-
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function minTimestamp(current: number | undefined, next: number) {
   return current === undefined ? next : Math.min(current, next);
-}
-
-function stableHash(input: string) {
-  let hash = 0x811c9dc5;
-  for (let index = 0; index < input.length; index++) {
-    hash ^= input.charCodeAt(index);
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return (hash >>> 0).toString(36);
 }
