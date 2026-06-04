@@ -21,6 +21,7 @@ import type {
 import {
   getDiscordRestDispatcher,
   type DiscordRestFile,
+  type DiscordRestRequest,
   type DiscordRestResult
 } from "./rest-dispatcher";
 
@@ -173,12 +174,12 @@ export async function getGuildMember(
   env: DiscordApiEnv,
   guildId: string,
   userId: string,
-  options: { maxWaitMs?: number } = {}
+  options: { maxWaitMs?: number; cache?: DiscordRestRequest["cache"] } = {}
 ): Promise<RESTGetAPIGuildMemberResult> {
   return discordApiFetch<RESTGetAPIGuildMemberResult>(
     env,
     `/guilds/${guildId}/members/${userId}`,
-    { maxWaitMs: options.maxWaitMs }
+    { maxWaitMs: options.maxWaitMs, cache: options.cache }
   );
 }
 
@@ -292,6 +293,7 @@ export async function modifyGuildMemberTimeout(
 
 type DiscordApiFetchInit = RequestInit & {
   maxWaitMs?: number;
+  cache?: DiscordRestRequest["cache"];
 };
 
 async function discordApiFetch<T>(
@@ -304,7 +306,8 @@ async function discordApiFetch<T>(
     path,
     headers: normalizeHeaders(init.headers),
     body: typeof init.body === "string" ? init.body : undefined,
-    maxWaitMs: init.maxWaitMs
+    maxWaitMs: init.maxWaitMs,
+    cache: init.cache
   });
 
   if (!result.ok) {

@@ -147,7 +147,9 @@ export async function setNicknamePostfix(
 
   try {
     const guildId = context.guildId ?? "";
-    const member = await getGuildMember(env, guildId, guard.targetUserId);
+    const member = await getGuildMember(env, guildId, guard.targetUserId, {
+      cache: "reload"
+    });
     const oldNickname = resolveDiscordMemberDisplayName(member);
     const baseNickname = parseBaseNickname(oldNickname);
     if (!baseNickname) {
@@ -203,7 +205,9 @@ export async function clearNicknamePostfix(
 
   try {
     const guildId = context.guildId ?? "";
-    const member = await getGuildMember(env, guildId, guard.targetUserId);
+    const member = await getGuildMember(env, guildId, guard.targetUserId, {
+      cache: "reload"
+    });
     const oldNickname = resolveDiscordMemberDisplayName(member);
     const baseNickname = parseBaseNickname(oldNickname);
     if (!baseNickname) {
