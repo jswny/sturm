@@ -74,7 +74,8 @@ type RateLimitCheck =
   | { ok: false; retryAfterMs: number; error: string };
 
 export class DiscordRestDispatcher extends DurableObject<DiscordRestEnv> {
-  private current = Promise.resolve();
+  private queueTails = new Map<string, Promise<void>>();
+  private alarmUpdates = Promise.resolve();
 
   async request(input: DiscordRestRequest): Promise<DiscordRestResult> {
     const method = (input.method ?? "GET").toUpperCase();
@@ -97,12 +98,8 @@ export class DiscordRestDispatcher extends DurableObject<DiscordRestEnv> {
     await this.ctx.storage.put(getJobKey(job.id), job);
     await this.scheduleCleanupAlarm(job.expiresAt);
 
-    const run = this.current.then(() => this.processJob(job, input));
-    this.current = run.then(
-      () => undefined,
-      () => undefined
-    );
-    return run;
+    const queueKey = await this.getQueueKey(job.routeKey);
+    return this.enqueueJob(queueKey, () => this.processJob(job, input));
   }
 
   override async alarm() {
@@ -259,6 +256,22 @@ export class DiscordRestDispatcher extends DurableObject<DiscordRestEnv> {
     });
   }
 
+  private enqueueJob(queueKey: string, task: () => Promise<DiscordRestResult>) {
+    const previous = this.queueTails.get(queueKey) ?? Promise.resolve();
+    const run = previous.catch(() => undefined).then(task);
+    const tail = run.then(
+      () => undefined,
+      () => undefined
+    );
+    this.queueTails.set(queueKey, tail);
+    void tail.finally(() => {
+      if (this.queueTails.get(queueKey) === tail) {
+        this.queueTails.delete(queueKey);
+      }
+    });
+    return run;
+  }
+
   private async updateJobAttempts(job: DiscordRestJob, attempts: number) {
     const updated = {
       ...job,
@@ -360,6 +373,10 @@ export class DiscordRestDispatcher extends DurableObject<DiscordRestEnv> {
       : [alias.rateLimitKey, routeKey];
   }
 
+  private async getQueueKey(routeKey: string) {
+    return (await this.getRateLimitKeys(routeKey))[0] ?? routeKey;
+  }
+
   private async getResponseRateLimitKey(
     job: DiscordRestJob,
     response: Response
@@ -429,42 +446,55 @@ export class DiscordRestDispatcher extends DurableObject<DiscordRestEnv> {
   }
 
   private async scheduleCleanupAlarm(timestamp: number) {
-    const current = await this.ctx.storage.getAlarm();
-    if (!current || timestamp < current) {
-      await this.ctx.storage.setAlarm(timestamp);
-    }
+    await this.enqueueAlarmUpdate(async () => {
+      const current = await this.ctx.storage.getAlarm();
+      if (!current || timestamp < current) {
+        await this.ctx.storage.setAlarm(timestamp);
+      }
+    });
   }
 
   private async scheduleNextAlarm() {
-    const now = Date.now();
-    let next: number | undefined;
+    await this.enqueueAlarmUpdate(async () => {
+      const now = Date.now();
+      let next: number | undefined;
 
-    const jobs = await this.ctx.storage.list<DiscordRestJob>({
-      prefix: "job:"
+      const jobs = await this.ctx.storage.list<DiscordRestJob>({
+        prefix: "job:"
+      });
+      for (const job of jobs.values()) {
+        if (job.expiresAt > now) next = minTimestamp(next, job.expiresAt);
+      }
+
+      const limits = await this.ctx.storage.list<RateLimitState>({
+        prefix: "rate:"
+      });
+      for (const state of limits.values()) {
+        if (state.resetAt > now) next = minTimestamp(next, state.resetAt);
+      }
+
+      const aliases = await this.ctx.storage.list<BucketAliasState>({
+        prefix: "bucket-alias:"
+      });
+      for (const alias of aliases.values()) {
+        if (alias.expiresAt > now) next = minTimestamp(next, alias.expiresAt);
+      }
+
+      if (next) {
+        await this.ctx.storage.setAlarm(next);
+      } else {
+        await this.ctx.storage.deleteAlarm();
+      }
     });
-    for (const job of jobs.values()) {
-      if (job.expiresAt > now) next = minTimestamp(next, job.expiresAt);
-    }
+  }
 
-    const limits = await this.ctx.storage.list<RateLimitState>({
-      prefix: "rate:"
-    });
-    for (const state of limits.values()) {
-      if (state.resetAt > now) next = minTimestamp(next, state.resetAt);
-    }
-
-    const aliases = await this.ctx.storage.list<BucketAliasState>({
-      prefix: "bucket-alias:"
-    });
-    for (const alias of aliases.values()) {
-      if (alias.expiresAt > now) next = minTimestamp(next, alias.expiresAt);
-    }
-
-    if (next) {
-      await this.ctx.storage.setAlarm(next);
-    } else {
-      await this.ctx.storage.deleteAlarm();
-    }
+  private enqueueAlarmUpdate(task: () => Promise<void>) {
+    const run = this.alarmUpdates.catch(() => undefined).then(task);
+    this.alarmUpdates = run.then(
+      () => undefined,
+      () => undefined
+    );
+    return run;
   }
 }
 
