@@ -1,5 +1,6 @@
 import type { APIMessage } from "discord-api-types/v10";
-import { getChannelMessages, type DiscordApiEnv } from "./api";
+import { getChannelMessages, getGuildMember, type DiscordApiEnv } from "./api";
+import { resolveDiscordMemberDisplayName } from "./display-name";
 import { formatUtcTimestampField } from "./timestamps";
 import type { DiscordChatRequest } from "./types";
 
@@ -22,19 +23,27 @@ export async function createRecentDiscordChannelContext(
     limit: RECENT_CHANNEL_MESSAGE_LIMIT,
     maxWaitMs: RECENT_CHANNEL_CONTEXT_MAX_WAIT_MS
   });
+  const memberDisplayNames = await resolveRecentMessageAuthorDisplayNames(
+    env,
+    request.guildId,
+    messages
+  );
 
   return formatRecentDiscordChannelMessages(messages, {
-    applicationId: env.DISCORD_APPLICATION_ID?.trim()
+    applicationId: env.DISCORD_APPLICATION_ID?.trim(),
+    memberDisplayNames
   });
 }
 
 function formatRecentDiscordChannelMessages(
   messages: APIMessage[],
-  options: { applicationId?: string }
+  options: { applicationId?: string; memberDisplayNames: Map<string, string> }
 ) {
   const lines = messages
     .filter((message) => !isCurrentApplicationMessage(message, options))
-    .map((message) => formatRecentDiscordChannelMessage(message))
+    .map((message) =>
+      formatRecentDiscordChannelMessage(message, options.memberDisplayNames)
+    )
     .filter(Boolean)
     .reverse();
 
@@ -57,11 +66,14 @@ function formatRecentDiscordChannelMessages(
   return limitText(block, RECENT_CHANNEL_CONTEXT_MAX_CHARS);
 }
 
-function formatRecentDiscordChannelMessage(message: APIMessage) {
+function formatRecentDiscordChannelMessage(
+  message: APIMessage,
+  memberDisplayNames: Map<string, string>
+) {
   const body = formatMessageBody(message);
   if (!body) return "";
 
-  const author = formatMessageAuthor(message);
+  const author = formatMessageAuthor(message, memberDisplayNames);
   return `- ${formatMessageTimestamps(message)} ${author}: ${body}`;
 }
 
@@ -76,8 +88,14 @@ function formatMessageTimestamps(message: APIMessage) {
     .join(" ");
 }
 
-function formatMessageAuthor(message: APIMessage) {
-  const displayName = message.author.global_name || message.author.username;
+function formatMessageAuthor(
+  message: APIMessage,
+  memberDisplayNames: Map<string, string>
+) {
+  const displayName =
+    memberDisplayNames.get(message.author.id) ??
+    message.author.global_name ??
+    message.author.username;
   const labels = [`id: ${message.author.id}`];
   if (message.author.bot) labels.push("bot");
   if (message.webhook_id) labels.push(`webhook_id: ${message.webhook_id}`);
@@ -124,6 +142,34 @@ function isCurrentApplicationMessage(
   return Boolean(
     options.applicationId && message.application_id === options.applicationId
   );
+}
+
+async function resolveRecentMessageAuthorDisplayNames(
+  env: DiscordChannelContextEnv,
+  guildId: string | undefined,
+  messages: APIMessage[]
+) {
+  const authorIds = getUniqueMessageAuthorIds(messages);
+  if (!guildId || authorIds.length === 0) return new Map<string, string>();
+
+  const results = await Promise.all(
+    authorIds.map(async (authorId) => {
+      try {
+        const member = await getGuildMember(env, guildId, authorId, {
+          maxWaitMs: RECENT_CHANNEL_CONTEXT_MAX_WAIT_MS
+        });
+        return [authorId, resolveDiscordMemberDisplayName(member)] as const;
+      } catch {
+        return undefined;
+      }
+    })
+  );
+
+  return new Map(results.filter((entry) => entry !== undefined));
+}
+
+function getUniqueMessageAuthorIds(messages: APIMessage[]) {
+  return [...new Set(messages.map((message) => message.author.id))];
 }
 
 function isDiscordSnowflake(value: string) {

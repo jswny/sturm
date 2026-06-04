@@ -5,9 +5,11 @@ import {
 } from "discord-api-types/v10";
 import {
   DiscordApiError,
+  getGuildMember,
   searchGuildMessages as searchDiscordGuildMessages
 } from "./discord/api";
 import type { DiscordApiEnv } from "./discord/api";
+import { resolveDiscordMemberDisplayName } from "./discord/display-name";
 import { normalizeUtcTimestamp } from "./discord/timestamps";
 import { logError, logWarn } from "./logging";
 
@@ -145,6 +147,13 @@ export async function searchDiscordMessages(
       };
     }
 
+    const messages = result.messages.flat();
+    const authorDisplayNames = await resolveSearchMessageAuthorDisplayNames(
+      env,
+      context.guildId,
+      messages
+    );
+
     return {
       ok: true,
       guildId: context.guildId,
@@ -152,9 +161,9 @@ export async function searchDiscordMessages(
       query: prepared.input,
       totalResults: result.total_results,
       documentsIndexed: result.documents_indexed,
-      results: result.messages
-        .flat()
-        .map((message) => formatSearchMatch(context.guildId ?? "", message))
+      results: messages.map((message) =>
+        formatSearchMatch(context.guildId ?? "", message, authorDisplayNames)
+      )
     };
   } catch (error) {
     logDiscordMessageSearchFailure(error, context, prepared.input);
@@ -214,7 +223,11 @@ function prepareSearchInput(input: DiscordMessageSearchInput): {
   return { input: prepared };
 }
 
-function formatSearchMatch(guildId: string, message: SearchMessage) {
+function formatSearchMatch(
+  guildId: string,
+  message: SearchMessage,
+  authorDisplayNames: Map<string, string>
+) {
   const attachments = message.attachments.map((attachment) =>
     attachment.content_type
       ? `${attachment.filename} ${attachment.content_type}`
@@ -224,7 +237,10 @@ function formatSearchMatch(guildId: string, message: SearchMessage) {
     id: message.id,
     channelId: message.channel_id,
     authorId: message.author.id,
-    authorDisplayName: message.author.global_name ?? message.author.username,
+    authorDisplayName:
+      authorDisplayNames.get(message.author.id) ??
+      message.author.global_name ??
+      message.author.username,
     authorBot: message.author.bot ?? false,
     sent_at_utc: normalizeUtcTimestamp(message.timestamp),
     edited_at_utc: message.edited_timestamp
@@ -236,6 +252,34 @@ function formatSearchMatch(guildId: string, message: SearchMessage) {
     stickers: message.sticker_items?.map((sticker) => sticker.name),
     url: `https://discord.com/channels/${guildId}/${message.channel_id}/${message.id}`
   } satisfies DiscordMessageSearchMatch;
+}
+
+async function resolveSearchMessageAuthorDisplayNames(
+  env: DiscordMessageSearchEnv,
+  guildId: string | undefined,
+  messages: SearchMessage[]
+) {
+  const authorIds = getUniqueSearchMessageAuthorIds(messages);
+  if (!guildId || authorIds.length === 0) return new Map<string, string>();
+
+  const results = await Promise.all(
+    authorIds.map(async (authorId) => {
+      try {
+        const member = await getGuildMember(env, guildId, authorId, {
+          maxWaitMs: DISCORD_MESSAGE_SEARCH_MAX_WAIT_MS
+        });
+        return [authorId, resolveDiscordMemberDisplayName(member)] as const;
+      } catch {
+        return undefined;
+      }
+    })
+  );
+
+  return new Map(results.filter((entry) => entry !== undefined));
+}
+
+function getUniqueSearchMessageAuthorIds(messages: SearchMessage[]) {
+  return [...new Set(messages.map((message) => message.author.id))];
 }
 
 function toDiscordSearchHasType(has: DiscordMessageSearchHas) {

@@ -17,6 +17,7 @@ import {
   type DiscordGuildChannelLocation
 } from "./discord/conversation";
 import { createDiscordRuntimeContext } from "./discord/context";
+import { resolveDiscordMemberDisplayName } from "./discord/display-name";
 import type {
   DiscordWebhookResponseTarget,
   DiscordUserContext
@@ -271,8 +272,9 @@ function getUserContext(
 
   return {
     id: user.id,
-    displayName:
-      interaction.member?.nick ?? user.global_name ?? user.username ?? undefined
+    displayName: interaction.member
+      ? resolveDiscordMemberDisplayName(interaction.member)
+      : undefined
   };
 }
 

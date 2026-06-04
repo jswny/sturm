@@ -172,11 +172,13 @@ async function createChannelMessage(
 export async function getGuildMember(
   env: DiscordApiEnv,
   guildId: string,
-  userId: string
+  userId: string,
+  options: { maxWaitMs?: number } = {}
 ): Promise<RESTGetAPIGuildMemberResult> {
   return discordApiFetch<RESTGetAPIGuildMemberResult>(
     env,
-    `/guilds/${guildId}/members/${userId}`
+    `/guilds/${guildId}/members/${userId}`,
+    { maxWaitMs: options.maxWaitMs }
   );
 }
 

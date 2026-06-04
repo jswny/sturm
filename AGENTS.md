@@ -91,6 +91,13 @@ If the application uses Durable Objects or Workflows, refer to the relevant best
 - Conversation identity must remain explicit:
   - Guild channels use `discord:guild:<guild_id>:channel:<channel_id>`.
   - Do not add fallback pooled channel keys.
+- Treat Discord user IDs as the stable identity for model-facing context,
+  durable state, and Discord API/tool inputs. Treat display names as
+  human-facing labels only. When a guild member object is available, resolve
+  display labels as server nickname first, then global display name, then
+  username (`member.nick ?? user.global_name ?? user.username`). Preserve both
+  the user ID and resolved display name in model-facing context so Sturm can
+  call APIs with stable IDs while referring to people by their server names.
 - `/reset` clears channel-scoped bot state and leaves guild-scoped memory alone. Keep it aligned with any future channel-local state additions, and do not clear `guild_memory`.
 - `webSearch` is backed by Kagi FastGPT in `src/search.ts` and requires `KAGI_API_KEY`.
 - Code Mode is exposed as the chat model's only outer tool through `@cloudflare/codemode` and the `LOADER` Worker Loader binding. The library is experimental/beta, so re-check the current Cloudflare docs before changing it. Keep existing chat tools behind the Code Mode sandbox; do not also expose them directly to the model unless explicitly requested. Keep generated tool types in the Code Mode description via `{{types}}`. Do not give the sandbox direct network access unless explicitly requested and reviewed; prefer explicit `globalOutbound: null`.

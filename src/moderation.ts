@@ -1,6 +1,7 @@
 import { PermissionFlagsBits } from "discord-api-types/v10";
 import { modifyGuildMemberTimeout } from "./discord/api";
 import type { DiscordApiEnv } from "./discord/api";
+import { resolveDiscordMemberDisplayName } from "./discord/display-name";
 import {
   createDiscordMemberActionFailureFields,
   formatDiscordMemberActionError,
@@ -67,9 +68,7 @@ export async function temporarilyMuteGuildMember(
       guildId,
       callerUserId: context.userId,
       targetUserId: guard.targetUserId,
-      targetDisplayName: member.user
-        ? (member.nick ?? member.user.global_name ?? member.user.username)
-        : undefined,
+      targetDisplayName: resolveDiscordMemberDisplayName(member),
       durationSeconds: guard.durationSeconds,
       communicationDisabledUntil,
       reason: guard.reason

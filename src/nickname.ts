@@ -6,6 +6,7 @@ import {
   searchGuildMembers as searchDiscordGuildMembers
 } from "./discord/api";
 import type { DiscordApiEnv } from "./discord/api";
+import { resolveDiscordMemberDisplayName } from "./discord/display-name";
 import {
   createDiscordMemberActionFailureFields,
   formatDiscordMemberActionError,
@@ -108,7 +109,7 @@ export async function searchGuildMembers(
           username: member.user.username,
           globalName,
           nickname,
-          displayName: nickname ?? globalName ?? member.user.username,
+          displayName: resolveDiscordMemberDisplayName(member),
           bot: member.user.bot ?? false
         };
       })
@@ -147,8 +148,7 @@ export async function setNicknamePostfix(
   try {
     const guildId = context.guildId ?? "";
     const member = await getGuildMember(env, guildId, guard.targetUserId);
-    const oldNickname =
-      member.nick ?? member.user.global_name ?? member.user.username;
+    const oldNickname = resolveDiscordMemberDisplayName(member);
     const baseNickname = parseBaseNickname(oldNickname);
     if (!baseNickname) {
       return failure(
@@ -204,8 +204,7 @@ export async function clearNicknamePostfix(
   try {
     const guildId = context.guildId ?? "";
     const member = await getGuildMember(env, guildId, guard.targetUserId);
-    const oldNickname =
-      member.nick ?? member.user.global_name ?? member.user.username;
+    const oldNickname = resolveDiscordMemberDisplayName(member);
     const baseNickname = parseBaseNickname(oldNickname);
     if (!baseNickname) {
       return failure(
