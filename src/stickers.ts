@@ -117,7 +117,7 @@ export async function createGuildStickerFromAttachment(
     return {
       ...baseResponse,
       error:
-        "Could not prepare a valid sticker name, description, and tags for Discord."
+        "A sticker name is required. Ask the user for a name when they did not provide one and the request does not make one obvious."
     };
   }
 
@@ -192,7 +192,7 @@ function prepareStickerMetadata(
   input: CreateStickerInput,
   attachment: DiscordRequestAttachment
 ): PreparedStickerMetadata | null {
-  const name = sanitizeStickerName(input.name) ?? inferStickerName(attachment);
+  const name = sanitizeStickerName(input.name);
   if (!name) return null;
 
   const description =
@@ -214,13 +214,6 @@ function sanitizeStickerName(value: string | undefined) {
     .slice(0, 30);
 
   return name && name.length >= 2 ? name : undefined;
-}
-
-function inferStickerName(attachment: DiscordRequestAttachment) {
-  return (
-    sanitizeStickerName(attachment.filename.replace(/\.[a-z0-9]+$/i, "")) ??
-    FALLBACK_TAG
-  );
 }
 
 function sanitizeStickerDescription(value: string | undefined) {
