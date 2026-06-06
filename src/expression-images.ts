@@ -1,4 +1,9 @@
-import type { DiscordRequestAttachment } from "./discord/types";
+import { PermissionFlagsBits } from "discord-api-types/v10";
+import { hasDiscordPermission } from "./discord/permissions";
+import type {
+  DiscordChatRequest,
+  DiscordRequestAttachment
+} from "./discord/types";
 import { logWarn } from "./logging";
 
 export const STATIC_EXPRESSION_MIME_TYPE = "image/png";
@@ -15,6 +20,98 @@ export type StaticExpressionImage = {
   base64: string;
   sizeBytes: number;
 };
+
+export type StaticExpressionRequestContext = Pick<
+  DiscordChatRequest,
+  "guildId" | "userId" | "userPermissions" | "attachments"
+>;
+
+export type StaticExpressionBaseFields = {
+  guildId?: string;
+  callerUserId?: string;
+  sourceAttachmentId?: string;
+  sourceFilename?: string;
+};
+
+type PrepareStaticExpressionAttachmentOptions = {
+  targetName: string;
+  targetNamePlural: string;
+};
+
+export function prepareStaticExpressionAttachment(
+  context: StaticExpressionRequestContext,
+  attachmentId: string,
+  options: PrepareStaticExpressionAttachmentOptions
+):
+  | {
+      ok: true;
+      guildId: string;
+      attachment: DiscordRequestAttachment;
+      baseFields: StaticExpressionBaseFields;
+    }
+  | {
+      ok: false;
+      baseFields: StaticExpressionBaseFields;
+      error: string;
+    } {
+  const attachment = context.attachments?.find(
+    (item) => item.id === attachmentId
+  );
+  const baseFields = {
+    guildId: context.guildId,
+    callerUserId: context.userId,
+    sourceAttachmentId: attachmentId,
+    sourceFilename: attachment?.filename
+  } satisfies StaticExpressionBaseFields;
+
+  if (!context.guildId) {
+    return {
+      ok: false,
+      baseFields,
+      error: `${capitalize(options.targetNamePlural)} can only be created in a Discord server.`
+    };
+  }
+
+  if (
+    !hasDiscordPermission(
+      context.userPermissions,
+      PermissionFlagsBits.CreateGuildExpressions
+    )
+  ) {
+    return {
+      ok: false,
+      baseFields,
+      error: `You need Discord's Create Guild Expressions permission to create ${options.targetNamePlural}.`
+    };
+  }
+
+  if (!attachment) {
+    return {
+      ok: false,
+      baseFields,
+      error: "That attachment was not found on the current /c request."
+    };
+  }
+
+  if (!isSupportedStaticImageAttachment(attachment)) {
+    return {
+      ok: false,
+      baseFields,
+      error: `Only static PNG, JPEG, WebP, or GIF image attachments can be made into ${options.targetNamePlural}.`
+    };
+  }
+
+  return {
+    ok: true,
+    guildId: context.guildId,
+    attachment,
+    baseFields
+  };
+}
+
+function capitalize(value: string) {
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
 
 export function isSupportedStaticImageAttachment(
   attachment: DiscordRequestAttachment

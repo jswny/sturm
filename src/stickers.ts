@@ -1,13 +1,10 @@
-import { PermissionFlagsBits, type APISticker } from "discord-api-types/v10";
+import { type APISticker } from "discord-api-types/v10";
 import { createGuildSticker, type DiscordApiEnv } from "./discord/api";
-import { hasDiscordPermission } from "./discord/permissions";
-import type {
-  DiscordChatRequest,
-  DiscordRequestAttachment
-} from "./discord/types";
+import type { DiscordRequestAttachment } from "./discord/types";
 import {
-  isSupportedStaticImageAttachment,
+  prepareStaticExpressionAttachment,
   STATIC_EXPRESSION_MIME_TYPE,
+  type StaticExpressionRequestContext,
   transformStaticAttachmentImage
 } from "./expression-images";
 import { getErrorMessage } from "./logging";
@@ -20,10 +17,7 @@ const FALLBACK_TAG = "sticker";
 
 export type StickerEnv = DiscordApiEnv;
 
-export type StickerRequestContext = Pick<
-  DiscordChatRequest,
-  "guildId" | "userId" | "userPermissions" | "attachments"
->;
+export type StickerRequestContext = StaticExpressionRequestContext;
 
 export type CreateStickerFromAttachmentResponse = {
   ok: boolean;
@@ -62,54 +56,28 @@ export async function createGuildStickerFromAttachment(
   context: StickerRequestContext,
   input: CreateStickerInput
 ): Promise<CreateStickerFromAttachmentResponse> {
-  const attachment = context.attachments?.find(
-    (item) => item.id === input.attachmentId
+  const prepared = prepareStaticExpressionAttachment(
+    context,
+    input.attachmentId,
+    {
+      targetName: "sticker",
+      targetNamePlural: "stickers"
+    }
   );
   const baseResponse = {
     ok: false,
     action: "created_sticker",
-    guildId: context.guildId,
-    callerUserId: context.userId,
-    sourceAttachmentId: input.attachmentId,
-    sourceFilename: attachment?.filename
+    ...prepared.baseFields
   } satisfies CreateStickerFromAttachmentResponse;
 
-  if (!context.guildId) {
+  if (!prepared.ok) {
     return {
       ...baseResponse,
-      error: "Stickers can only be created in a Discord server."
+      error: prepared.error
     };
   }
 
-  if (
-    !hasDiscordPermission(
-      context.userPermissions,
-      PermissionFlagsBits.CreateGuildExpressions
-    )
-  ) {
-    return {
-      ...baseResponse,
-      error:
-        "You need Discord's Create Guild Expressions permission to create stickers."
-    };
-  }
-
-  if (!attachment) {
-    return {
-      ...baseResponse,
-      error: "That attachment was not found on the current /c request."
-    };
-  }
-
-  if (!isSupportedStaticImageAttachment(attachment)) {
-    return {
-      ...baseResponse,
-      error:
-        "Only static PNG, JPEG, WebP, or GIF image attachments can be made into stickers."
-    };
-  }
-
-  const metadata = prepareStickerMetadata(input, attachment);
+  const metadata = prepareStickerMetadata(input, prepared.attachment);
   if (!metadata) {
     return {
       ...baseResponse,
@@ -118,7 +86,7 @@ export async function createGuildStickerFromAttachment(
     };
   }
 
-  const processed = await transformStaticAttachmentImage(attachment, {
+  const processed = await transformStaticAttachmentImage(prepared.attachment, {
     targetName: "sticker",
     sizePx: STICKER_SIZE_PX,
     maxBytes: MAX_STICKER_BYTES
@@ -134,7 +102,7 @@ export async function createGuildStickerFromAttachment(
   }
 
   try {
-    const sticker = (await createGuildSticker(env, context.guildId, {
+    const sticker = (await createGuildSticker(env, prepared.guildId, {
       name: metadata.name,
       description: metadata.description,
       tags: metadata.tagsText,
@@ -148,10 +116,10 @@ export async function createGuildStickerFromAttachment(
       ok: true,
       action: "created_sticker",
       stickerId: sticker.id,
-      guildId: context.guildId,
+      guildId: prepared.guildId,
       callerUserId: context.userId,
-      sourceAttachmentId: attachment.id,
-      sourceFilename: attachment.filename,
+      sourceAttachmentId: prepared.attachment.id,
+      sourceFilename: prepared.attachment.filename,
       name: metadata.name,
       description: metadata.description,
       tags: metadata.tags,

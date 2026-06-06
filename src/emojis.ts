@@ -1,11 +1,10 @@
-import { PermissionFlagsBits, type APIEmoji } from "discord-api-types/v10";
+import { type APIEmoji } from "discord-api-types/v10";
 import { createGuildEmoji, type DiscordApiEnv } from "./discord/api";
-import { hasDiscordPermission } from "./discord/permissions";
-import type { DiscordChatRequest } from "./discord/types";
 import {
   createDataUri,
-  isSupportedStaticImageAttachment,
+  prepareStaticExpressionAttachment,
   STATIC_EXPRESSION_MIME_TYPE,
+  type StaticExpressionRequestContext,
   transformStaticAttachmentImage
 } from "./expression-images";
 import { getErrorMessage } from "./logging";
@@ -15,10 +14,7 @@ const MAX_EMOJI_BYTES = 256 * 1024;
 
 export type EmojiEnv = DiscordApiEnv;
 
-export type EmojiRequestContext = Pick<
-  DiscordChatRequest,
-  "guildId" | "userId" | "userPermissions" | "attachments"
->;
+export type EmojiRequestContext = StaticExpressionRequestContext;
 
 export type CreateEmojiFromAttachmentResponse = {
   ok: boolean;
@@ -48,50 +44,24 @@ export async function createGuildEmojiFromAttachment(
   context: EmojiRequestContext,
   input: CreateEmojiInput
 ): Promise<CreateEmojiFromAttachmentResponse> {
-  const attachment = context.attachments?.find(
-    (item) => item.id === input.attachmentId
+  const prepared = prepareStaticExpressionAttachment(
+    context,
+    input.attachmentId,
+    {
+      targetName: "emoji",
+      targetNamePlural: "emojis"
+    }
   );
   const baseResponse = {
     ok: false,
     action: "created_emoji",
-    guildId: context.guildId,
-    callerUserId: context.userId,
-    sourceAttachmentId: input.attachmentId,
-    sourceFilename: attachment?.filename
+    ...prepared.baseFields
   } satisfies CreateEmojiFromAttachmentResponse;
 
-  if (!context.guildId) {
+  if (!prepared.ok) {
     return {
       ...baseResponse,
-      error: "Emojis can only be created in a Discord server."
-    };
-  }
-
-  if (
-    !hasDiscordPermission(
-      context.userPermissions,
-      PermissionFlagsBits.CreateGuildExpressions
-    )
-  ) {
-    return {
-      ...baseResponse,
-      error:
-        "You need Discord's Create Guild Expressions permission to create emojis."
-    };
-  }
-
-  if (!attachment) {
-    return {
-      ...baseResponse,
-      error: "That attachment was not found on the current /c request."
-    };
-  }
-
-  if (!isSupportedStaticImageAttachment(attachment)) {
-    return {
-      ...baseResponse,
-      error:
-        "Only static PNG, JPEG, WebP, or GIF image attachments can be made into emojis."
+      error: prepared.error
     };
   }
 
@@ -104,7 +74,7 @@ export async function createGuildEmojiFromAttachment(
     };
   }
 
-  const processed = await transformStaticAttachmentImage(attachment, {
+  const processed = await transformStaticAttachmentImage(prepared.attachment, {
     targetName: "emoji",
     sizePx: EMOJI_SIZE_PX,
     maxBytes: MAX_EMOJI_BYTES
@@ -118,7 +88,7 @@ export async function createGuildEmojiFromAttachment(
   }
 
   try {
-    const emoji = (await createGuildEmoji(env, context.guildId, {
+    const emoji = (await createGuildEmoji(env, prepared.guildId, {
       name,
       image: createDataUri(STATIC_EXPRESSION_MIME_TYPE, processed.image.base64),
       reason: `Emoji created by ${context.userId ?? "unknown user"} through Sturm`
@@ -129,10 +99,10 @@ export async function createGuildEmojiFromAttachment(
       ok: true,
       action: "created_emoji",
       emojiId: emoji.id ?? undefined,
-      guildId: context.guildId,
+      guildId: prepared.guildId,
       callerUserId: context.userId,
-      sourceAttachmentId: attachment.id,
-      sourceFilename: attachment.filename,
+      sourceAttachmentId: prepared.attachment.id,
+      sourceFilename: prepared.attachment.filename,
       name: createdName,
       shortcode: `:${createdName}:`,
       mention: emoji.id ? `<:${createdName}:${emoji.id}>` : undefined,
