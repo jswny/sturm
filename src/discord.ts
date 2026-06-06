@@ -4,6 +4,7 @@ import {
   InteractionResponseType,
   InteractionType,
   MessageFlags,
+  type APIAttachment,
   type APIChatInputApplicationCommandInteraction,
   type APIInteraction,
   type APIInteractionResponse
@@ -20,6 +21,7 @@ import { createDiscordRuntimeContext } from "./discord/context";
 import { resolveDiscordMemberDisplayName } from "./discord/display-name";
 import type {
   DiscordWebhookResponseTarget,
+  DiscordRequestAttachment,
   DiscordUserContext
 } from "./discord/types";
 import { logError, logWarn } from "./logging";
@@ -220,6 +222,7 @@ async function enqueueCommand(
       guildId: location.guildId,
       channelId: location.channelId,
       ...createDiscordRuntimeContext(interaction),
+      attachments: getAttachmentOption(interaction, "image"),
       userId: getUserId(interaction),
       user: getUserContext(interaction),
       userPermissions: interaction.member?.permissions
@@ -285,6 +288,38 @@ function getStringOption(
   const option = interaction.data?.options?.find((item) => item.name === name);
   if (option?.type !== ApplicationCommandOptionType.String) return "";
   return option.value.trim();
+}
+
+function getAttachmentOption(
+  interaction: APIChatInputApplicationCommandInteraction,
+  name: string
+): DiscordRequestAttachment[] | undefined {
+  const option = interaction.data?.options?.find((item) => item.name === name);
+  if (option?.type !== ApplicationCommandOptionType.Attachment) {
+    return undefined;
+  }
+
+  const attachment =
+    interaction.data.resolved?.attachments?.[String(option.value)];
+  if (!attachment) return undefined;
+
+  return [createRequestAttachment(attachment)];
+}
+
+function createRequestAttachment(
+  attachment: APIAttachment
+): DiscordRequestAttachment {
+  return {
+    id: attachment.id,
+    filename: attachment.title ?? attachment.filename,
+    mimeType: attachment.content_type,
+    sizeBytes: attachment.size,
+    url: attachment.url,
+    proxyUrl: attachment.proxy_url,
+    width: attachment.width ?? undefined,
+    height: attachment.height ?? undefined,
+    description: attachment.description
+  };
 }
 
 function getResponseTarget(

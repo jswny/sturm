@@ -4,6 +4,7 @@ export type DiscordChatRequest = {
   guildId?: string;
   channelId?: string;
   channel?: DiscordChannelContext;
+  attachments?: DiscordRequestAttachment[];
   appPermissions?: DiscordPermissionContext;
   userId?: string;
   user?: DiscordUserContext;
@@ -74,6 +75,18 @@ export type DiscordChannelContext = {
   parentId?: string;
   nsfw?: boolean;
   slowmodeSeconds?: number;
+};
+
+export type DiscordRequestAttachment = {
+  id: string;
+  filename: string;
+  mimeType?: string;
+  sizeBytes: number;
+  url: string;
+  proxyUrl?: string;
+  width?: number;
+  height?: number;
+  description?: string;
 };
 
 export type DiscordPermissionContext = {

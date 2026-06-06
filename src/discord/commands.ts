@@ -14,6 +14,12 @@ export const C_COMMAND = {
       description: "Text to send to Sturm",
       type: ApplicationCommandOptionType.String,
       required: true
+    },
+    {
+      name: "image",
+      description: "Optional image attachment for Sturm",
+      type: ApplicationCommandOptionType.Attachment,
+      required: false
     }
   ]
 } as const satisfies RESTPutAPIApplicationGuildCommandsJSONBody[number];

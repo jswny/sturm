@@ -22,6 +22,7 @@ export function createDiscordRuntimeContext(
 export function formatDiscordRuntimeContext(request: DiscordChatRequest) {
   const sections = [
     formatDiscordChannelContext(request.channel),
+    formatDiscordAttachmentContext(request.attachments),
     formatDiscordAppContext(request)
   ].filter(Boolean);
 
@@ -74,6 +75,31 @@ function formatDiscordAppContext(request: DiscordChatRequest) {
   ].filter(Boolean);
 
   return lines.length > 1 ? lines.join("\n") : "";
+}
+
+function formatDiscordAttachmentContext(
+  attachments: DiscordChatRequest["attachments"]
+) {
+  if (!attachments?.length) return "";
+
+  const lines = [
+    "Current /c attachments:",
+    ...attachments.map((attachment) =>
+      [
+        `- id: ${attachment.id}`,
+        `filename: ${attachment.filename}`,
+        `mime_type: ${attachment.mimeType}`,
+        `size_bytes: ${attachment.sizeBytes}`,
+        `width: ${attachment.width}`,
+        `height: ${attachment.height}`,
+        `description: ${attachment.description}`
+      ]
+        .filter(hasValue)
+        .join("\n  ")
+    )
+  ];
+
+  return lines.join("\n");
 }
 
 function formatChannelType(type: number | undefined) {

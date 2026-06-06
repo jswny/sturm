@@ -17,6 +17,7 @@ type DiscordUserMessageMetadata = {
   guildId?: unknown;
   channelId?: unknown;
   channel?: unknown;
+  attachments?: unknown;
   appPermissions?: unknown;
   userId?: unknown;
   user?: unknown;
@@ -41,6 +42,7 @@ export function createDiscordUserMessage(
       guildId: request.guildId,
       channelId: request.channelId,
       channel: request.channel,
+      attachments: request.attachments,
       appPermissions: request.appPermissions,
       userId: request.userId,
       user: request.user,
@@ -67,6 +69,7 @@ export function getDiscordTurnFromUserMessage(
     channelId:
       typeof metadata.channelId === "string" ? metadata.channelId : undefined,
     channel: getDiscordChannelMetadata(metadata.channel),
+    attachments: getDiscordAttachmentMetadata(metadata.attachments),
     appPermissions: getDiscordPermissionMetadata(metadata.appPermissions),
     userId: typeof metadata.userId === "string" ? metadata.userId : undefined,
     user: getDiscordUserMetadata(metadata.user),
@@ -206,6 +209,58 @@ function getDiscordChannelMetadata(value: unknown) {
         ? channel.slowmodeSeconds
         : undefined
   };
+}
+
+function getDiscordAttachmentMetadata(value: unknown) {
+  if (!Array.isArray(value)) return undefined;
+
+  return value
+    .map((item) => {
+      if (!item || typeof item !== "object") return undefined;
+      const attachment = item as {
+        id?: unknown;
+        filename?: unknown;
+        mimeType?: unknown;
+        sizeBytes?: unknown;
+        url?: unknown;
+        proxyUrl?: unknown;
+        width?: unknown;
+        height?: unknown;
+        description?: unknown;
+      };
+      if (
+        typeof attachment.id !== "string" ||
+        typeof attachment.filename !== "string" ||
+        typeof attachment.sizeBytes !== "number" ||
+        typeof attachment.url !== "string"
+      ) {
+        return undefined;
+      }
+
+      return {
+        id: attachment.id,
+        filename: attachment.filename,
+        mimeType:
+          typeof attachment.mimeType === "string"
+            ? attachment.mimeType
+            : undefined,
+        sizeBytes: attachment.sizeBytes,
+        url: attachment.url,
+        proxyUrl:
+          typeof attachment.proxyUrl === "string"
+            ? attachment.proxyUrl
+            : undefined,
+        width:
+          typeof attachment.width === "number" ? attachment.width : undefined,
+        height:
+          typeof attachment.height === "number" ? attachment.height : undefined,
+        description:
+          typeof attachment.description === "string"
+            ? attachment.description
+            : undefined
+      };
+    })
+    .filter((attachment) => attachment !== undefined);
 }
 
 function getDiscordPermissionMetadata(value: unknown) {

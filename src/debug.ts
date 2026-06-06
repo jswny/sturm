@@ -3,7 +3,8 @@ import { getDiscordGuildChannelConversationName } from "./discord/conversation";
 import { createDiscordPermissionContext } from "./discord/permissions";
 import type {
   DiscordChannelContext,
-  DiscordPermissionContext
+  DiscordPermissionContext,
+  DiscordRequestAttachment
 } from "./discord/types";
 import { logWarn } from "./logging";
 
@@ -28,6 +29,7 @@ type DebugChatPayload = {
   text: string;
   interactionId?: string;
   channel?: Partial<DiscordChannelContext>;
+  attachments?: DiscordRequestAttachment[];
   permissions?: {
     user?: string;
     app?: string;
@@ -102,6 +104,7 @@ async function replyToDebugChat(payload: DebugChatPayload, env: DebugEnv) {
     guildId: payload.surface.guildId,
     channelId: payload.surface.channelId,
     channel: createDebugChannelContext(payload),
+    attachments: payload.attachments,
     appPermissions: createDebugAppPermissions(payload),
     userId: payload.user.id,
     user: payload.user,

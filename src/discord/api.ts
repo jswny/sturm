@@ -9,6 +9,7 @@ import type {
   RESTPutAPIApplicationGuildCommandsJSONBody,
   RESTPutAPIApplicationGuildCommandsResult,
   RESTPostAPIChannelMessageJSONBody,
+  RESTPostAPIGuildStickerResult,
   RESTPatchAPIGuildMemberJSONBody,
   RESTPatchAPIGuildMemberResult,
   RESTPostAPIWebhookWithTokenJSONBody,
@@ -250,6 +251,48 @@ export async function overwriteGuildApplicationCommands(
       body: JSON.stringify(commands)
     }
   );
+}
+
+export type CreateGuildStickerInput = {
+  name: string;
+  description: string;
+  tags: string;
+  filename: string;
+  mimeType: string;
+  base64: string;
+  reason?: string;
+};
+
+export async function createGuildSticker(
+  env: DiscordApiEnv,
+  guildId: string,
+  input: CreateGuildStickerInput
+): Promise<RESTPostAPIGuildStickerResult> {
+  const result = await getDiscordRestDispatcher(env.DiscordRest).request({
+    method: "POST",
+    path: `/guilds/${guildId}/stickers`,
+    headers: createDiscordAuditLogHeaders(input.reason),
+    fields: [
+      { name: "name", value: input.name },
+      { name: "description", value: input.description },
+      { name: "tags", value: input.tags }
+    ],
+    files: [
+      {
+        fieldName: "file",
+        filename: input.filename,
+        mimeType: input.mimeType,
+        base64: input.base64
+      }
+    ],
+    maxWaitMs: 15_000
+  });
+
+  if (!result.ok) {
+    throw createDiscordApiError(result);
+  }
+
+  return JSON.parse(result.body) as RESTPostAPIGuildStickerResult;
 }
 
 export async function modifyGuildMemberNickname(

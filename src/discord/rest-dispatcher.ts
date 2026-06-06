@@ -35,9 +35,15 @@ export type DiscordRestRequest = {
   path: string;
   headers?: Record<string, string>;
   body?: string;
+  fields?: DiscordRestFormField[];
   files?: DiscordRestFile[];
   maxWaitMs?: number;
   cache?: DiscordRestCacheMode;
+};
+
+export type DiscordRestFormField = {
+  name: string;
+  value: string;
 };
 
 export type DiscordRestFile = {
@@ -592,11 +598,14 @@ function getBucketAliasKey(routeKey: string) {
 }
 
 function createDiscordRestBody(input: DiscordRestRequest) {
-  if (!input.files?.length) return input.body;
+  if (!input.files?.length && !input.fields?.length) return input.body;
 
   const form = new FormData();
   if (input.body !== undefined) form.append("payload_json", input.body);
-  for (const file of input.files) {
+  for (const field of input.fields ?? []) {
+    form.append(field.name, field.value);
+  }
+  for (const file of input.files ?? []) {
     form.append(
       file.fieldName,
       new File([base64ToBytes(file.base64)], file.filename, {
