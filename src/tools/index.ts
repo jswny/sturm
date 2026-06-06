@@ -4,6 +4,7 @@ import type {
   DiscordMessageSearchContext,
   DiscordMessageSearchEnv
 } from "../discord-message-search";
+import type { EmojiEnv, EmojiRequestContext } from "../emojis";
 import type { ImageEnv } from "../images";
 import type { ModerationEnv, ModerationRequestContext } from "../moderation";
 import type { NicknameEnv, NicknameRequestContext } from "../nickname";
@@ -15,6 +16,7 @@ import { createArtifactTools } from "./artifacts";
 import { createRenderedPageTools, type BrowserEnv } from "./browser";
 import { createDiscordCodeModeTool, type CodeModeEnv } from "./codemode";
 import { createDiscordMessageSearchTools } from "./discord-message-search";
+import { createEmojiTools } from "./emojis";
 import { createImageTools } from "./images";
 import { createModerationTools } from "./moderation";
 import { createNicknameTools } from "./nickname";
@@ -28,6 +30,7 @@ export type ToolEnv = SearchEnv &
   ArtifactEnv &
   ModerationEnv &
   NicknameEnv &
+  EmojiEnv &
   StickerEnv &
   CodeModeEnv &
   BrowserEnv;
@@ -36,6 +39,7 @@ export type ToolOptions = {
   discordRequest?: NicknameRequestContext &
     ModerationRequestContext &
     DiscordMessageSearchContext &
+    EmojiRequestContext &
     StickerRequestContext;
   scheduledTasks?: ScheduledTaskController;
   workspace?: WorkspaceFsLike;
@@ -50,6 +54,7 @@ export function createDiscordTools(env: ToolEnv, options: ToolOptions = {}) {
     ...createDiscordMessageSearchTools(env, options.discordRequest ?? {}),
     ...createNicknameTools(env, options.discordRequest ?? {}),
     ...createModerationTools(env, options.discordRequest ?? {}),
+    ...createEmojiTools(env, options.discordRequest ?? {}),
     ...createStickerTools(env, options.discordRequest ?? {}),
     ...createScheduledTaskTools(options.scheduledTasks),
     ...createImageTools(env, options),

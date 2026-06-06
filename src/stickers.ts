@@ -5,21 +5,18 @@ import type {
   DiscordChatRequest,
   DiscordRequestAttachment
 } from "./discord/types";
-import { getErrorMessage, logWarn } from "./logging";
+import {
+  isSupportedStaticImageAttachment,
+  STATIC_EXPRESSION_MIME_TYPE,
+  transformStaticAttachmentImage
+} from "./expression-images";
+import { getErrorMessage } from "./logging";
 
 const STICKER_SIZE_PX = 320;
 const MAX_STICKER_BYTES = 512 * 1024;
-const STATIC_STICKER_MIME_TYPE = "image/png";
 const STATIC_STICKER_FILENAME = "sticker.png";
 const FALLBACK_DESCRIPTION = "Sticker created by Sturm";
 const FALLBACK_TAG = "sticker";
-const TRANSFORM_QUALITIES: Array<number | undefined> = [
-  undefined,
-  90,
-  70,
-  50,
-  30
-];
 
 export type StickerEnv = DiscordApiEnv;
 
@@ -104,7 +101,7 @@ export async function createGuildStickerFromAttachment(
     };
   }
 
-  if (!isSupportedStaticAttachment(attachment)) {
+  if (!isSupportedStaticImageAttachment(attachment)) {
     return {
       ...baseResponse,
       error:
@@ -121,7 +118,11 @@ export async function createGuildStickerFromAttachment(
     };
   }
 
-  const processed = await transformStaticStickerImage(attachment);
+  const processed = await transformStaticAttachmentImage(attachment, {
+    targetName: "sticker",
+    sizePx: STICKER_SIZE_PX,
+    maxBytes: MAX_STICKER_BYTES
+  });
   if (!processed.ok) {
     return {
       ...baseResponse,
@@ -138,8 +139,8 @@ export async function createGuildStickerFromAttachment(
       description: metadata.description,
       tags: metadata.tagsText,
       filename: STATIC_STICKER_FILENAME,
-      mimeType: STATIC_STICKER_MIME_TYPE,
-      base64: processed.base64,
+      mimeType: STATIC_EXPRESSION_MIME_TYPE,
+      base64: processed.image.base64,
       reason: `Sticker created by ${context.userId ?? "unknown user"} through Sturm`
     })) as APISticker;
 
@@ -154,8 +155,8 @@ export async function createGuildStickerFromAttachment(
       name: metadata.name,
       description: metadata.description,
       tags: metadata.tags,
-      processedMimeType: STATIC_STICKER_MIME_TYPE,
-      processedSizeBytes: processed.sizeBytes,
+      processedMimeType: STATIC_EXPRESSION_MIME_TYPE,
+      processedSizeBytes: processed.image.sizeBytes,
       width: STICKER_SIZE_PX,
       height: STICKER_SIZE_PX
     };
@@ -165,27 +166,13 @@ export async function createGuildStickerFromAttachment(
       name: metadata.name,
       description: metadata.description,
       tags: metadata.tags,
-      processedMimeType: STATIC_STICKER_MIME_TYPE,
-      processedSizeBytes: processed.sizeBytes,
+      processedMimeType: STATIC_EXPRESSION_MIME_TYPE,
+      processedSizeBytes: processed.image.sizeBytes,
       width: STICKER_SIZE_PX,
       height: STICKER_SIZE_PX,
       error: `Discord sticker upload failed: ${getErrorMessage(error)}`
     };
   }
-}
-
-function isSupportedStaticAttachment(attachment: DiscordRequestAttachment) {
-  const mimeType = attachment.mimeType?.toLowerCase();
-  if (
-    mimeType === "image/png" ||
-    mimeType === "image/jpeg" ||
-    mimeType === "image/webp" ||
-    mimeType === "image/gif"
-  ) {
-    return true;
-  }
-
-  return /\.(png|jpe?g|webp|gif)$/i.test(attachment.filename);
 }
 
 function prepareStickerMetadata(
@@ -275,78 +262,4 @@ function splitWords(value: string) {
 
 function capitalize(value: string) {
   return value.charAt(0).toUpperCase() + value.slice(1);
-}
-
-async function transformStaticStickerImage(
-  attachment: DiscordRequestAttachment
-): Promise<
-  { ok: true; base64: string; sizeBytes: number } | { ok: false; error: string }
-> {
-  let lastSizeBytes: number | undefined;
-  const sourceUrl = attachment.proxyUrl ?? attachment.url;
-
-  for (const quality of TRANSFORM_QUALITIES) {
-    const imageOptions: RequestInitCfPropertiesImage = {
-      anim: false,
-      background: "rgba(0,0,0,0)",
-      fit: "pad",
-      format: "png",
-      height: STICKER_SIZE_PX,
-      metadata: "none",
-      width: STICKER_SIZE_PX,
-      ...(quality === undefined ? {} : { quality })
-    };
-
-    const response = await fetch(
-      new Request(sourceUrl, {
-        headers: { accept: STATIC_STICKER_MIME_TYPE }
-      }),
-      {
-        cf: {
-          image: imageOptions
-        }
-      }
-    );
-
-    if (!response.ok) {
-      const body = await response.text().catch(() => "");
-      logWarn("Sticker image transform failed", {
-        attachmentId: attachment.id,
-        filename: attachment.filename,
-        status: response.status,
-        body: body.slice(0, 200)
-      });
-      return {
-        ok: false,
-        error: "Cloudflare could not transform that image into a sticker."
-      };
-    }
-
-    const buffer = await response.arrayBuffer();
-    const bytes = new Uint8Array(buffer);
-    lastSizeBytes = bytes.byteLength;
-    if (bytes.byteLength <= MAX_STICKER_BYTES) {
-      return {
-        ok: true,
-        base64: bytesToBase64(bytes),
-        sizeBytes: bytes.byteLength
-      };
-    }
-  }
-
-  return {
-    ok: false,
-    error: `The processed sticker was still too large${
-      lastSizeBytes ? ` (${lastSizeBytes} bytes)` : ""
-    }. Discord stickers must be at most ${MAX_STICKER_BYTES} bytes.`
-  };
-}
-
-function bytesToBase64(bytes: Uint8Array) {
-  const chunkSize = 0x8000;
-  let binary = "";
-  for (let index = 0; index < bytes.length; index += chunkSize) {
-    binary += String.fromCharCode(...bytes.slice(index, index + chunkSize));
-  }
-  return btoa(binary);
 }

@@ -9,6 +9,8 @@ import type {
   RESTPutAPIApplicationGuildCommandsJSONBody,
   RESTPutAPIApplicationGuildCommandsResult,
   RESTPostAPIChannelMessageJSONBody,
+  RESTPostAPIGuildEmojiJSONBody,
+  RESTPostAPIGuildEmojiResult,
   RESTPostAPIGuildStickerResult,
   RESTPatchAPIGuildMemberJSONBody,
   RESTPatchAPIGuildMemberResult,
@@ -249,6 +251,33 @@ export async function overwriteGuildApplicationCommands(
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(commands)
+    }
+  );
+}
+
+export type CreateGuildEmojiInput = {
+  name: string;
+  image: string;
+  reason?: string;
+};
+
+export async function createGuildEmoji(
+  env: DiscordApiEnv,
+  guildId: string,
+  input: CreateGuildEmojiInput
+): Promise<RESTPostAPIGuildEmojiResult> {
+  const body: RESTPostAPIGuildEmojiJSONBody = {
+    name: input.name,
+    image: input.image
+  };
+  return discordApiFetch<RESTPostAPIGuildEmojiResult>(
+    env,
+    `/guilds/${guildId}/emojis`,
+    {
+      method: "POST",
+      headers: createDiscordAuditLogHeaders(input.reason),
+      body: JSON.stringify(body),
+      maxWaitMs: 15_000
     }
   );
 }
