@@ -13,7 +13,6 @@ const STICKER_SIZE_PX = 320;
 const MAX_STICKER_BYTES = 512 * 1024;
 const STATIC_STICKER_FILENAME = "sticker.png";
 const FALLBACK_DESCRIPTION = "Sticker created by Sturm";
-const FALLBACK_TAG = "sticker";
 
 export type StickerEnv = DiscordApiEnv;
 
@@ -41,7 +40,7 @@ type CreateStickerInput = {
   attachmentId: string;
   name?: string;
   description?: string;
-  tags?: string[];
+  tags: string[];
 };
 
 type PreparedStickerMetadata = {
@@ -50,6 +49,16 @@ type PreparedStickerMetadata = {
   tags: string[];
   tagsText: string;
 };
+
+type PrepareStickerMetadataResult =
+  | { ok: true; metadata: PreparedStickerMetadata }
+  | {
+      ok: false;
+      error: string;
+      name?: string;
+      description?: string;
+      tags?: string[];
+    };
 
 export async function createGuildStickerFromAttachment(
   env: StickerEnv,
@@ -77,14 +86,17 @@ export async function createGuildStickerFromAttachment(
     };
   }
 
-  const metadata = prepareStickerMetadata(input, prepared.attachment);
-  if (!metadata) {
+  const metadataResult = prepareStickerMetadata(input, prepared.attachment);
+  if (!metadataResult.ok) {
     return {
       ...baseResponse,
-      error:
-        "A sticker name is required. Ask the user for a name when they did not provide one and the request does not make one obvious."
+      name: metadataResult.name,
+      description: metadataResult.description,
+      tags: metadataResult.tags,
+      error: metadataResult.error
     };
   }
+  const { metadata } = metadataResult;
 
   const processed = await transformStaticAttachmentImage(prepared.attachment, {
     targetName: "sticker",
@@ -146,18 +158,77 @@ export async function createGuildStickerFromAttachment(
 function prepareStickerMetadata(
   input: CreateStickerInput,
   attachment: DiscordRequestAttachment
-): PreparedStickerMetadata | null {
+): PrepareStickerMetadataResult {
   const name = sanitizeStickerName(input.name);
-  if (!name) return null;
+  if (!name) {
+    return {
+      ok: false,
+      error:
+        "A sticker name is required. Ask the user for a name when they did not provide one and the request does not make one obvious."
+    };
+  }
 
   const description =
     sanitizeStickerDescription(input.description) ??
     inferStickerDescription(name, attachment);
-  const tags = sanitizeStickerTags(input.tags, name, attachment);
-  const tagsText = tags.join(", ");
-  if (!tagsText || tagsText.length > 200) return null;
+  const tagsResult = sanitizeStickerTags(input.tags);
+  if (!tagsResult.ok) {
+    return {
+      ok: false,
+      name,
+      description,
+      error: tagsResult.error
+    };
+  }
+  const { tags, tagsText } = tagsResult;
 
-  return { name, description, tags, tagsText };
+  return { ok: true, metadata: { name, description, tags, tagsText } };
+}
+
+function sanitizeStickerTags(
+  values: string[] | undefined
+):
+  | { ok: true; tags: string[]; tagsText: string }
+  | { ok: false; error: string } {
+  if (!values?.length) {
+    return {
+      ok: false,
+      error:
+        "Sticker tags are required. Provide one or more short Discord search tags."
+    };
+  }
+
+  const tags: string[] = [];
+
+  for (const value of values) {
+    const tag = value
+      .trim()
+      .toLowerCase()
+      .replace(/\.[a-z0-9]+$/i, "")
+      .replace(/[^a-z0-9_-]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+    if (!tag || tags.includes(tag)) continue;
+    tags.push(tag);
+  }
+
+  const tagsText = tags.join(", ");
+  if (!tagsText) {
+    return {
+      ok: false,
+      error:
+        "Sticker tags are required. Provide one or more valid Discord search tags."
+    };
+  }
+
+  if (tagsText.length > 200) {
+    return {
+      ok: false,
+      error:
+        "Sticker tags are too long. Provide shorter tags totaling at most 200 characters."
+    };
+  }
+
+  return { ok: true, tags, tagsText };
 }
 
 function sanitizeStickerName(value: string | undefined) {
@@ -189,36 +260,6 @@ function inferStickerDescription(
   return (
     sanitizeStickerDescription(attachment.description) ?? fallback.slice(0, 100)
   );
-}
-
-function sanitizeStickerTags(
-  values: string[] | undefined,
-  name: string,
-  attachment: DiscordRequestAttachment
-) {
-  const candidates = [
-    ...(values ?? []),
-    ...splitWords(name),
-    ...splitWords(attachment.filename),
-    FALLBACK_TAG
-  ];
-  const tags: string[] = [];
-
-  for (const candidate of candidates) {
-    const tag = candidate
-      .trim()
-      .toLowerCase()
-      .replace(/\.[a-z0-9]+$/i, "")
-      .replace(/[^a-z0-9_-]+/g, "-")
-      .replace(/^-+|-+$/g, "");
-    if (!tag || tags.includes(tag)) continue;
-
-    const next = [...tags, tag].join(", ");
-    if (next.length > 200) break;
-    tags.push(tag);
-  }
-
-  return tags.length > 0 ? tags : [FALLBACK_TAG];
 }
 
 function splitWords(value: string) {

@@ -39,7 +39,7 @@ export function createStickerTools(
   return {
     createGuildStickerFromAttachment: tool({
       description:
-        "Create a static Discord guild sticker from one image attachment on the current /c request. Use only when the user provides a sticker name or the request makes one obvious; otherwise ask for a name first. The caller must have Discord's Create Guild Expressions permission. The tool resizes without cropping to a 320x320 transparent PNG and uploads it to the current guild. Infer description and tags when the user does not provide them.",
+        "Create a static Discord guild sticker from one image attachment on the current /c request. Use only when the user provides a sticker name or the request makes one obvious; otherwise ask for a name first. The caller must have Discord's Create Guild Expressions permission. The tool resizes without cropping to a 320x320 transparent PNG and uploads it to the current guild. Infer a description and one or more short Discord search tags when the user does not provide them; tags are required and must not be omitted.",
       inputSchema: z.object({
         attachmentId: z
           .string()
@@ -59,9 +59,11 @@ export function createStickerTools(
           .describe("Short sticker description inferred from the request"),
         tags: z
           .array(z.string().min(1).max(50))
+          .min(1)
           .max(20)
-          .optional()
-          .describe("Search tags inferred from the sticker name and request")
+          .describe(
+            "One or more short Discord search tags for this sticker; infer them from the user request and image when not explicitly provided"
+          )
       }),
       outputSchema: createStickerResponseSchema,
       execute: async (input) =>
