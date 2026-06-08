@@ -23,8 +23,8 @@ jobs:
       - run: npm ci
       - run: npm run check
 
-  integration-tests:
-    name: Integration tests
+  tests:
+    name: Tests
     needs: check
     timeout-minutes: 20
     runs-on: ubuntu-24.04

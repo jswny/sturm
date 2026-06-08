@@ -53,6 +53,7 @@ If the application uses Durable Objects or Workflows, refer to the relevant best
 
 - This repo is a Discord webhook bot, not a web UI.
 - Commits to `main` auto-deploy the bot to `sturm.j1.io`.
+- Keep CI/CD ownership explicit: GitHub Actions provides branch and PR feedback, while Cloudflare Workers Builds is the production deploy gate for `main`. The Workers Builds build command should run `npm run check && npm test` before `npx wrangler deploy`; do not remove Actions unless branch and PR validation has an equivalent replacement, and do not rely on Actions alone to gate production deploys.
 - Keep `README.md` slim and user/operator-facing. Do not duplicate architecture, local debug workflows, or agent-maintainer guidance there; put that in `AGENTS.md` instead.
 - Treat each Discord conversation Agent as a long-running Cloudflare Agent: it should be a durable identity that wakes on Discord interactions or schedules, persists any work that matters, and must not rely on in-memory flags, timers, open requests, or closures surviving hibernation/eviction. Follow the Long-running Agents doc above when changing queueing, scheduling, recovery, memory, or multi-step tool work.
 - Sturm is guild-only for now. Do not add bot DM support, DM command contexts, or `discord:dm:*` conversation keys unless explicitly requested.
