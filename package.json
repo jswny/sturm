@@ -18,7 +18,8 @@
     "format": "oxfmt --write .",
     "lint": "oxlint src/",
     "check": "oxfmt --check . && oxlint src/ && tsc",
-    "test:integration": "vitest run --config vitest.config.ts"
+    "test": "vitest run --config vitest.config.ts",
+    "test:integration": "npm test"
   },
   "dependencies": {
     "@cloudflare/ai-chat": "^0.8.0",

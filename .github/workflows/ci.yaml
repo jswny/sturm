@@ -45,8 +45,8 @@ jobs:
       - name: Verify Cloudflare CI credentials
         run: |
           if [ -z "$CLOUDFLARE_ACCOUNT_ID" ] || [ -z "$CLOUDFLARE_API_TOKEN" ]; then
-            echo "::error::Configure CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN repository secrets to run the integration tests."
+            echo "::error::Configure CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN repository secrets to run the tests."
             exit 1
           fi
-      - name: Integration tests
-        run: npm run test:integration
+      - name: Tests
+        run: npm test
