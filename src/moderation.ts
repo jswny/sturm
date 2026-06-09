@@ -17,26 +17,59 @@ export type ModerationEnv = DiscordApiEnv;
 
 export type ModerationRequestContext = DiscordMemberActionContext;
 
-export type TemporaryMuteResponse = {
+type ModerationAction = "muted" | "unmuted";
+
+type ModerationResponse<Action extends ModerationAction> = {
   ok: boolean;
-  action: "muted";
+  action: Action;
   guildId?: string;
   callerUserId?: string;
   targetUserId?: string;
   targetDisplayName?: string;
-  durationSeconds?: number;
-  communicationDisabledUntil?: string;
   reason?: string;
   error?: string;
 };
 
-export async function temporarilyMuteGuildMember(
+export type MuteResponse = ModerationResponse<"muted"> & {
+  durationSeconds?: number;
+  communicationDisabledUntil?: string;
+};
+
+export type UnmuteResponse = ModerationResponse<"unmuted">;
+
+type ModerationResponseFor<Action extends ModerationAction> =
+  Action extends "muted" ? MuteResponse : UnmuteResponse;
+
+type PreparedModerationTarget = {
+  targetUserId: string;
+  error?: string;
+};
+
+type PreparedModerationReason = {
+  reason: string;
+  error?: string;
+};
+
+type ModerationOperation<Action extends ModerationAction> = {
+  action: Action;
+  targetUserId: string;
+  reason: string;
+  communicationDisabledUntil: string | null;
+  auditLogLabel: string;
+  apiLogMessage: string;
+  operationLogMessage: string;
+  formatError(error: unknown): string;
+  auditLogFields?: string[];
+  responseFields?: Record<string, unknown>;
+};
+
+export async function muteGuildMember(
   env: ModerationEnv,
   context: ModerationRequestContext,
   targetUserId: string,
   durationSeconds: number,
   reason: string
-): Promise<TemporaryMuteResponse> {
+): Promise<MuteResponse> {
   const guard = validateTemporaryMuteContext(
     env,
     context,
@@ -45,42 +78,56 @@ export async function temporarilyMuteGuildMember(
     reason
   );
   if (guard.error) {
-    return temporaryMuteFailure(context, guard.targetUserId, guard.error);
+    return moderationFailure("muted", context, guard.targetUserId, guard.error);
   }
 
-  const guildId = context.guildId ?? "";
   const communicationDisabledUntil = new Date(
     Date.now() + guard.durationSeconds * 1000
   ).toISOString();
 
-  try {
-    const member = await modifyGuildMemberTimeout(
-      env,
-      guildId,
-      guard.targetUserId,
-      communicationDisabledUntil,
-      createAuditLogReason(context, guard.reason, guard.durationSeconds)
-    );
-
-    return {
-      ok: true,
-      action: "muted",
-      guildId,
-      callerUserId: context.userId,
-      targetUserId: guard.targetUserId,
-      targetDisplayName: resolveDiscordMemberDisplayName(member),
+  return applyGuildMemberTimeoutChange(env, context, {
+    action: "muted",
+    targetUserId: guard.targetUserId,
+    reason: guard.reason,
+    communicationDisabledUntil,
+    auditLogLabel: "Sturm temporary mute",
+    auditLogFields: [`duration=${guard.durationSeconds}s`],
+    apiLogMessage: "Discord temporary mute API request failed",
+    operationLogMessage: "Discord temporary mute operation failed",
+    formatError: formatTemporaryMuteError,
+    responseFields: {
       durationSeconds: guard.durationSeconds,
-      communicationDisabledUntil,
-      reason: guard.reason
-    };
-  } catch (error) {
-    logTemporaryMuteFailure(error, context, guard.targetUserId);
-    return temporaryMuteFailure(
+      communicationDisabledUntil
+    }
+  });
+}
+
+export async function unmuteGuildMember(
+  env: ModerationEnv,
+  context: ModerationRequestContext,
+  targetUserId: string,
+  reason: string
+): Promise<UnmuteResponse> {
+  const guard = validateUnmuteContext(env, context, targetUserId, reason);
+  if (guard.error) {
+    return moderationFailure(
+      "unmuted",
       context,
       guard.targetUserId,
-      formatTemporaryMuteError(error)
+      guard.error
     );
   }
+
+  return applyGuildMemberTimeoutChange(env, context, {
+    action: "unmuted",
+    targetUserId: guard.targetUserId,
+    reason: guard.reason,
+    communicationDisabledUntil: null,
+    auditLogLabel: "Sturm unmute",
+    apiLogMessage: "Discord unmute API request failed",
+    operationLogMessage: "Discord unmute operation failed",
+    formatError: formatUnmuteError
+  });
 }
 
 function validateTemporaryMuteContext(
@@ -96,26 +143,23 @@ function validateTemporaryMuteContext(
   error?: string;
 } {
   const preparedReason = reason.trim();
-  const memberGuard = validateDiscordMemberActionContext(env, context, {
-    targetUserId,
+  const targetGuard = validateModerationTarget(env, context, targetUserId, {
     missingGuildError: "Temporary mutes require a server context.",
-    permission: PermissionFlagsBits.ModerateMembers,
     permissionError:
-      "You need Discord's Moderate Members permission to request a temporary mute.",
-    requireSnowflake: true
+      "You need Discord's Moderate Members permission to request a temporary mute."
   });
 
-  if (memberGuard.error)
+  if (targetGuard.error)
     return {
-      targetUserId: memberGuard.targetUserId,
+      targetUserId: targetGuard.targetUserId,
       durationSeconds,
       reason: preparedReason,
-      error: memberGuard.error
+      error: targetGuard.error
     };
 
   if (!Number.isFinite(durationSeconds)) {
     return {
-      targetUserId: memberGuard.targetUserId,
+      targetUserId: targetGuard.targetUserId,
       durationSeconds,
       reason: preparedReason,
       error: "durationSeconds must be a finite number."
@@ -128,67 +172,174 @@ function validateTemporaryMuteContext(
     preparedDurationSeconds > MAX_TEMPORARY_MUTE_SECONDS
   ) {
     return {
-      targetUserId: memberGuard.targetUserId,
+      targetUserId: targetGuard.targetUserId,
       durationSeconds: preparedDurationSeconds,
       reason: preparedReason,
       error: `Temporary mute duration must be between ${MIN_TEMPORARY_MUTE_SECONDS} and ${MAX_TEMPORARY_MUTE_SECONDS} seconds.`
     };
   }
 
-  if (!preparedReason) {
+  const reasonGuard = validateModerationReason(
+    preparedReason,
+    "A short reason is required for the temporary mute."
+  );
+  if (reasonGuard.error) {
     return {
-      targetUserId: memberGuard.targetUserId,
+      targetUserId: targetGuard.targetUserId,
       durationSeconds: preparedDurationSeconds,
-      reason: preparedReason,
-      error: "A short reason is required for the temporary mute."
+      reason: reasonGuard.reason,
+      error: reasonGuard.error
     };
   }
 
   return {
-    targetUserId: memberGuard.targetUserId,
+    targetUserId: targetGuard.targetUserId,
     durationSeconds: preparedDurationSeconds,
-    reason: preparedReason.slice(0, 200)
+    reason: reasonGuard.reason
   };
 }
 
-function createAuditLogReason(
+function validateUnmuteContext(
+  env: ModerationEnv,
   context: ModerationRequestContext,
+  targetUserId: string | undefined,
+  reason: string
+): {
+  targetUserId: string;
+  reason: string;
+  error?: string;
+} {
+  const targetGuard = validateModerationTarget(env, context, targetUserId, {
+    missingGuildError: "Unmutes require a server context.",
+    permissionError:
+      "You need Discord's Moderate Members permission to request an unmute."
+  });
+  const reasonGuard = validateModerationReason(
+    reason,
+    "A short reason is required for the unmute."
+  );
+
+  if (targetGuard.error)
+    return {
+      targetUserId: targetGuard.targetUserId,
+      reason: reasonGuard.reason,
+      error: targetGuard.error
+    };
+  if (reasonGuard.error)
+    return {
+      targetUserId: targetGuard.targetUserId,
+      reason: reasonGuard.reason,
+      error: reasonGuard.error
+    };
+
+  return {
+    targetUserId: targetGuard.targetUserId,
+    reason: reasonGuard.reason
+  };
+}
+
+function validateModerationTarget(
+  env: ModerationEnv,
+  context: ModerationRequestContext,
+  targetUserId: string | undefined,
+  options: { missingGuildError: string; permissionError: string }
+): PreparedModerationTarget {
+  return validateDiscordMemberActionContext(env, context, {
+    targetUserId,
+    missingGuildError: options.missingGuildError,
+    permission: PermissionFlagsBits.ModerateMembers,
+    permissionError: options.permissionError,
+    requireSnowflake: true
+  });
+}
+
+function validateModerationReason(
   reason: string,
-  durationSeconds: number
+  emptyReasonError: string
+): PreparedModerationReason {
+  const preparedReason = reason.trim();
+  if (!preparedReason) {
+    return { reason: preparedReason, error: emptyReasonError };
+  }
+
+  return { reason: preparedReason.slice(0, 200) };
+}
+
+async function applyGuildMemberTimeoutChange<Action extends ModerationAction>(
+  env: ModerationEnv,
+  context: ModerationRequestContext,
+  operation: ModerationOperation<Action>
+): Promise<ModerationResponseFor<Action>> {
+  const guildId = context.guildId ?? "";
+
+  try {
+    const member = await modifyGuildMemberTimeout(
+      env,
+      guildId,
+      operation.targetUserId,
+      operation.communicationDisabledUntil,
+      createModerationAuditLogReason(context, operation)
+    );
+
+    return {
+      ok: true,
+      action: operation.action,
+      guildId,
+      callerUserId: context.userId,
+      targetUserId: operation.targetUserId,
+      targetDisplayName: resolveDiscordMemberDisplayName(member),
+      reason: operation.reason,
+      ...operation.responseFields
+    } as ModerationResponseFor<Action>;
+  } catch (error) {
+    logModerationFailure(error, context, operation);
+    return moderationFailure(
+      operation.action,
+      context,
+      operation.targetUserId,
+      operation.formatError(error)
+    );
+  }
+}
+
+function createModerationAuditLogReason<Action extends ModerationAction>(
+  context: ModerationRequestContext,
+  operation: ModerationOperation<Action>
 ) {
   return [
-    "Sturm temporary mute",
+    operation.auditLogLabel,
     `caller=${context.userId ?? "unknown"}`,
-    `duration=${durationSeconds}s`,
-    `reason=${reason}`
+    ...(operation.auditLogFields ?? []),
+    `reason=${operation.reason}`
   ].join("; ");
 }
 
-function temporaryMuteFailure(
+function moderationFailure<Action extends ModerationAction>(
+  action: Action,
   context: ModerationRequestContext,
   targetUserId: string | undefined,
   error: string
-): TemporaryMuteResponse {
+): ModerationResponseFor<Action> {
   return {
     ok: false,
-    action: "muted",
+    action,
     ...createDiscordMemberActionFailureFields(context, targetUserId),
     error
-  };
+  } as ModerationResponseFor<Action>;
 }
 
-function logTemporaryMuteFailure(
+function logModerationFailure<Action extends ModerationAction>(
   error: unknown,
   context: ModerationRequestContext,
-  targetUserId: string
+  operation: ModerationOperation<Action>
 ) {
   logDiscordMemberActionFailure({
-    apiLogMessage: "Discord temporary mute API request failed",
-    operationLogMessage: "Discord temporary mute operation failed",
+    apiLogMessage: operation.apiLogMessage,
+    operationLogMessage: operation.operationLogMessage,
     error,
     context,
-    targetUserId,
-    formatError: formatTemporaryMuteError
+    targetUserId: operation.targetUserId,
+    formatError: operation.formatError
   });
 }
 
@@ -200,5 +351,16 @@ function formatTemporaryMuteError(error: unknown) {
     validationField: "communication_disabled_until",
     validationErrorPrefix: "Discord rejected the temporary mute duration",
     invalidRequest: "Discord rejected the temporary mute request as invalid."
+  });
+}
+
+function formatUnmuteError(error: unknown) {
+  return formatDiscordMemberActionError(error, {
+    forbidden:
+      "Discord rejected the unmute. The bot may be missing Moderate Members, the target may be the server owner or an administrator, or role hierarchy may block editing that member.",
+    notFound: "Discord could not find that guild member.",
+    validationField: "communication_disabled_until",
+    validationErrorPrefix: "Discord rejected the unmute request",
+    invalidRequest: "Discord rejected the unmute request as invalid."
   });
 }
