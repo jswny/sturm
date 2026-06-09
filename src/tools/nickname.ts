@@ -75,13 +75,15 @@ export function createNicknameTools(
     }),
     setNicknamePostfix: tool({
       description:
-        "Set a Discord nickname postfix for a guild member. Requires the /c caller to have Discord's Manage Nicknames permission. targetUserId is required; use a raw Discord user ID. If the user provided a mention like <@123>, use 123. If the user provided a name, call searchGuildMembers first to resolve it.",
+        "Set or replace the managed Discord nickname postfix for a guild member. The tool preserves the member's base nickname and replaces any existing managed postfix with the requested postfix; it does not stack multiple postfixes. Requires the /c caller to have Discord's Manage Nicknames permission. targetUserId is required; use a raw Discord user ID. If the user provided a mention like <@123>, use 123. If the user provided a name, call searchGuildMembers first to resolve it.",
       inputSchema: z.object({
         targetUserId: z.string().min(1).describe("Discord user ID to edit"),
         postfix: z
           .string()
           .min(1)
-          .describe("The nickname postfix to append after the user's base name")
+          .describe(
+            "The managed nickname postfix to set. Replaces any existing managed postfix while preserving the user's base nickname."
+          )
       }),
       outputSchema: nicknameResponseSchema,
       execute: async ({ targetUserId, postfix }) =>
