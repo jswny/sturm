@@ -27,16 +27,17 @@ export function createModerationTools(
   return {
     temporarilyMuteGuildMember: tool({
       description:
-        "Temporarily mute, also called timeout, a Discord guild member. Requires the /c caller to have Discord's Moderate Members permission. targetUserId is required; use a raw Discord user ID. If the user provided a mention like <@123>, use 123. If the user provided a name, call searchGuildMembers first to resolve it.",
+        "Temporarily mute, also called timeout, a Discord guild member for up to 1 hour. Requires the /c caller to have Discord's Moderate Members permission. targetUserId is required; use a raw Discord user ID. If the user provided a mention like <@123>, use 123. If the user provided a name, call searchGuildMembers first to resolve it. If the user did not specify a duration, choose an appropriate duration up to the 1-hour cap based on the request and reason.",
       inputSchema: z.object({
         targetUserId: z.string().min(1).describe("Discord user ID to mute"),
         durationSeconds: z
           .number()
           .int()
           .min(5)
-          .max(300)
-          .default(60)
-          .describe("Temporary mute duration from 5 to 300 seconds"),
+          .max(3600)
+          .describe(
+            "Temporary mute duration from 5 to 3600 seconds. If the user did not specify a duration, choose an appropriate duration up to the 1-hour cap based on the request and reason."
+          ),
         reason: z
           .string()
           .min(1)

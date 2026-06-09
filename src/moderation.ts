@@ -11,7 +11,7 @@ import {
 } from "./discord/member-actions";
 
 const MIN_TEMPORARY_MUTE_SECONDS = 5;
-const MAX_TEMPORARY_MUTE_SECONDS = 5 * 60;
+const MAX_TEMPORARY_MUTE_SECONDS = 60 * 60;
 
 export type ModerationEnv = DiscordApiEnv;
 
