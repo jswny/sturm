@@ -89,7 +89,7 @@ export function createScheduledChannelTaskUserText(
       : "",
     `created_at: ${payload.createdAt}`,
     "",
-    "Carry out this scheduled instruction and post the result to the channel:",
+    "The user previously asked Sturm to perform this instruction at this time. Treat it as that user's ordinary channel request and post the result to the channel:",
     payload.instruction
   ];
 
