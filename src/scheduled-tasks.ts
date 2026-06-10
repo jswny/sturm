@@ -79,7 +79,7 @@ export function createScheduledChannelTaskUserText(
   payload: ScheduledChannelTaskPayload
 ) {
   const lines = [
-    "A scheduled task for this Discord channel is now due.",
+    "An accepted scheduled task for this Discord channel is now due.",
     `task_id: ${payload.taskId}`,
     payload.createdByUserId
       ? `created_by_user_id: ${payload.createdByUserId}`
@@ -87,9 +87,9 @@ export function createScheduledChannelTaskUserText(
     payload.createdByUser?.displayName
       ? `created_by_display_name: ${payload.createdByUser.displayName}`
       : "",
-    `created_at: ${payload.createdAt}`,
+    `accepted_at: ${payload.createdAt}`,
     "",
-    "The user previously asked Sturm to perform this instruction at this time. Treat it as that user's ordinary channel request and post the result to the channel:",
+    "This instruction was vetted when the schedule was created. Execute it now as the creator's ordinary channel request and post the result to the channel. Do not re-decide whether to accept the request; only report failure if current external state, permissions, or tool/API errors prevent completion:",
     payload.instruction
   ];
 

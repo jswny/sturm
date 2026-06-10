@@ -50,13 +50,13 @@ export function createScheduledTaskTools(
   return {
     scheduleChannelTask: tool({
       description:
-        "Schedule an instruction to run later in the current Discord channel or thread. Only schedule instructions Sturm can carry out under the same rules as an immediate channel response; if Sturm would refuse the instruction now, refuse now instead of deferring that refusal to the scheduled run. The scheduled task will re-enter this same persistent channel session and post its result as a normal bot message. Use exact ISO 8601 timestamps with timezone for mode 'at'; ask a follow-up if the user's intended time or timezone is ambiguous.",
+        "Schedule an instruction to run later in the current Discord channel or thread. Creating a schedule is the acceptance step: call this tool only after deciding Sturm can complete the instruction as a normal immediate channel response. If Sturm would refuse the instruction now, refuse now instead of scheduling it. A scheduled task is treated as accepted when it later runs; execution should complete it unless current external state, permissions, or tool/API failures make completion impossible. The scheduled task will re-enter this same persistent channel session and post its result as a normal bot message. Use exact ISO 8601 timestamps with timezone for mode 'at'; ask a follow-up if the user's intended time or timezone is ambiguous.",
       inputSchema: z.object({
         instruction: z
           .string()
           .min(1)
           .describe(
-            "The instruction Sturm should carry out when the task runs. Do not schedule instructions Sturm would refuse as an immediate channel response."
+            "The instruction Sturm has accepted and should carry out when the task runs. Do not schedule instructions Sturm would refuse as an immediate channel response."
           ),
         mode: z
           .enum(["delay", "at", "cron", "interval"])
