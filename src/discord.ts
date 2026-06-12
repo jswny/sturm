@@ -12,16 +12,17 @@ import {
 import { verifyKey } from "discord-interactions";
 import { getAgentByName } from "agents";
 import { editOriginalInteractionResponse } from "./discord/api";
-import { C_COMMAND, RESET_COMMAND } from "./discord/commands";
+import { C_COMMAND, MEMORY_COMMAND, RESET_COMMAND } from "./discord/commands";
 import {
   getDiscordGuildChannelConversationName,
   type DiscordGuildChannelLocation
 } from "./discord/conversation";
 import { createDiscordRuntimeContext } from "./discord/context";
 import { resolveDiscordMemberDisplayName } from "./discord/display-name";
+import { runMemoryCommand } from "./discord/memory-command";
 import type {
-  DiscordWebhookResponseTarget,
   DiscordRequestAttachment,
+  DiscordWebhookResponseTarget,
   DiscordUserContext
 } from "./discord/types";
 import { logError, logWarn } from "./logging";
@@ -138,6 +139,22 @@ export async function handleDiscordRequest(
 
     deferDiscordWork(ctx, interaction, "Discord /reset enqueue failed", () =>
       enqueueResetCommand(interaction, env)
+    );
+
+    return interactionJson({
+      type: InteractionResponseType.DeferredChannelMessageWithSource,
+      data: { flags: MessageFlags.Ephemeral }
+    });
+  }
+
+  if (interaction.data.name === MEMORY_COMMAND.name) {
+    const location = getGuildChannelLocation(interaction);
+    if (!location) {
+      return guildOnlyInteractionResponse();
+    }
+
+    deferDiscordWork(ctx, interaction, "Discord /memory command failed", () =>
+      runMemoryCommand(interaction, env, location.guildId)
     );
 
     return interactionJson({

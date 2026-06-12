@@ -59,7 +59,7 @@ Set the Discord Developer Portal Interactions Endpoint URL to:
 https://<worker-host>/discord
 ```
 
-Register `/c` and `/reset` in every guild the bot is in:
+Register `/c`, `/reset`, and `/memory` in every guild the bot is in:
 
 ```bash
 curl -X POST https://<worker-host>/api/admin/register-commands
@@ -79,6 +79,8 @@ registers guild-scoped commands.
 - `/c text:<message>` chats with Sturm.
 - `/reset` clears the current channel context only; it does not clear guild
   memory. Discord limits it by default to members with Manage Messages.
+- `/memory view`, `/memory delete index:<number>`, and `/memory reset` manage
+  guild memory. Discord limits them by default to members with Manage Server.
 
 ## License
 

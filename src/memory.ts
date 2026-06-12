@@ -4,10 +4,31 @@ import { logWarn } from "./logging";
 
 const GUILD_MEMORY_STATE_KEY = "guild-memory";
 
-type GuildMemorySnapshot = {
+export type GuildMemorySnapshot = {
   content: string;
   version: number;
   updatedAt: string | null;
+};
+
+export type GuildMemoryEntry = {
+  index: number;
+  content: string;
+};
+
+export type GuildMemoryList = GuildMemorySnapshot & {
+  entries: GuildMemoryEntry[];
+};
+
+export type GuildMemoryDeleteResult = GuildMemoryList & {
+  changed: boolean;
+  deleted?: GuildMemoryEntry;
+  requestedIndex: number;
+};
+
+export type GuildMemoryResetResult = GuildMemoryList & {
+  changed: boolean;
+  deletedCount: number;
+  previousVersion: number;
 };
 
 type GuildMemoryUpdate = {
@@ -53,8 +74,7 @@ export class GuildMemoryProvider implements WritableContextProvider {
   }
 
   private getObject(guildId: string) {
-    const id = this.namespace.idFromName(getGuildMemoryObjectName(guildId));
-    return this.namespace.get(id);
+    return getGuildMemoryObject(this.namespace, guildId);
   }
 
   private requireGuildId() {
@@ -69,6 +89,10 @@ export class GuildMemoryProvider implements WritableContextProvider {
 export class GuildMemoryObject extends DurableObject<Env> {
   async getMemory(): Promise<GuildMemorySnapshot> {
     return this.readMemory();
+  }
+
+  async getMemoryList(): Promise<GuildMemoryList> {
+    return createGuildMemoryList(await this.readMemory());
   }
 
   async getMemoryVersion(): Promise<number> {
@@ -102,6 +126,46 @@ export class GuildMemoryObject extends DurableObject<Env> {
     throw new Error(
       "Guild memory changed while this turn was running. Reload memory and retry the edit."
     );
+  }
+
+  async deleteMemoryEntry(index: number): Promise<GuildMemoryDeleteResult> {
+    const current = await this.readMemory();
+    const currentList = createGuildMemoryList(current);
+    const deleted = currentList.entries[index - 1];
+
+    if (!Number.isInteger(index) || !deleted) {
+      return {
+        ...currentList,
+        changed: false,
+        requestedIndex: index
+      };
+    }
+
+    const nextContent = currentList.entries
+      .filter((entry) => entry.index !== index)
+      .map((entry) => entry.content)
+      .join("\n");
+    const snapshot = await this.writeMemory(current, nextContent);
+
+    return {
+      ...createGuildMemoryList(snapshot),
+      changed: snapshot.version !== current.version,
+      deleted,
+      requestedIndex: index
+    };
+  }
+
+  async resetMemory(): Promise<GuildMemoryResetResult> {
+    const current = await this.readMemory();
+    const deletedCount = createGuildMemoryEntries(current.content).length;
+    const snapshot = await this.writeMemory(current, "");
+
+    return {
+      ...createGuildMemoryList(snapshot),
+      changed: snapshot.version !== current.version,
+      deletedCount,
+      previousVersion: current.version
+    };
   }
 
   private async readMemory(): Promise<GuildMemorySnapshot> {
@@ -158,6 +222,54 @@ function normalizeMemory(content: string) {
   return content.trim();
 }
 
+function createGuildMemoryList(snapshot: GuildMemorySnapshot): GuildMemoryList {
+  return {
+    ...snapshot,
+    entries: createGuildMemoryEntries(snapshot.content)
+  };
+}
+
+function createGuildMemoryEntries(content: string): GuildMemoryEntry[] {
+  return normalizeMemory(content)
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line, index) => ({
+      index: index + 1,
+      content: line
+    }));
+}
+
 export function getGuildMemoryObjectName(guildId: string) {
   return `discord:guild:${guildId}:memory`;
+}
+
+export function getGuildMemoryObject(
+  namespace: DurableObjectNamespace<GuildMemoryObject>,
+  guildId: string
+) {
+  const id = namespace.idFromName(getGuildMemoryObjectName(guildId));
+  return namespace.get(id);
+}
+
+export async function listGuildMemory(
+  namespace: DurableObjectNamespace<GuildMemoryObject>,
+  guildId: string
+) {
+  return getGuildMemoryObject(namespace, guildId).getMemoryList();
+}
+
+export async function deleteGuildMemoryEntry(
+  namespace: DurableObjectNamespace<GuildMemoryObject>,
+  guildId: string,
+  index: number
+) {
+  return getGuildMemoryObject(namespace, guildId).deleteMemoryEntry(index);
+}
+
+export async function resetGuildMemory(
+  namespace: DurableObjectNamespace<GuildMemoryObject>,
+  guildId: string
+) {
+  return getGuildMemoryObject(namespace, guildId).resetMemory();
 }
