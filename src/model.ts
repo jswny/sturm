@@ -16,6 +16,8 @@ export type ChatAiGatewayFlow =
 
 export const COMPACTION_TOKEN_THRESHOLD = 200_000;
 export const COMPACTION_TAIL_TOKEN_BUDGET = 64_000;
+export const CONTEXT_OVERFLOW_MAX_INPUT_TOKENS = COMPACTION_TOKEN_THRESHOLD;
+export const CONTEXT_OVERFLOW_HEADROOM = 0.9;
 
 export const REPLY_PROVIDER_OPTIONS = {
   "workers-ai": {

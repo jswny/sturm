@@ -59,6 +59,8 @@ import {
   COMPACTION_PROVIDER_OPTIONS,
   COMPACTION_TAIL_TOKEN_BUDGET,
   COMPACTION_TOKEN_THRESHOLD,
+  CONTEXT_OVERFLOW_HEADROOM,
+  CONTEXT_OVERFLOW_MAX_INPUT_TOKENS,
   CHAT_AI_GATEWAY_FLOWS,
   createChatWorkersAI,
   MEMORY_REFLECTION_PROVIDER_OPTIONS,
@@ -92,6 +94,14 @@ const CHAT_RECOVERY_TERMINAL_MESSAGE =
 
 export class ChatAgent extends Think<Env> {
   override sendReasoning = false;
+  // Keep overflow handling proactive-only so it cannot restart a turn and
+  // re-issue mutating Discord tools after a provider context error.
+  override contextOverflow = {
+    proactive: {
+      maxInputTokens: CONTEXT_OVERFLOW_MAX_INPUT_TOKENS,
+      headroom: CONTEXT_OVERFLOW_HEADROOM
+    }
+  };
   override chatRecovery = {
     maxAttempts: CHAT_RECOVERY_MAX_ATTEMPTS,
     stableTimeoutMs: CHAT_RECOVERY_STABLE_TIMEOUT_MS,
