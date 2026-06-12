@@ -14,7 +14,7 @@ import {
   type TurnContext
 } from "@cloudflare/think";
 import { Workspace } from "@cloudflare/shell";
-import { Agent, type FiberInspection, type FiberRecoveryResult } from "agents";
+import type { FiberInspection, FiberRecoveryResult } from "agents";
 import { Session } from "agents/experimental/memory/session";
 import { createCompactFunction } from "agents/experimental/memory/utils";
 import { generateText, type ToolSet } from "ai";
@@ -175,15 +175,6 @@ export class ChatAgent extends Think<Env> {
         agentName: this.name
       });
     }
-  }
-
-  override async alarm() {
-    // Bypass Think.alarm() because it starts an empty workflow notification
-    // drain after every alarm. Sturm does not use Think workflow notifications,
-    // and that path can leave behind a 30s keepalive alarm even when the outbox
-    // is empty. Calling the base Agent alarm preserves scheduled tasks,
-    // housekeeping, and Agent recovery behavior.
-    await Agent.prototype.alarm.call(this);
   }
 
   override async beforeTurn(ctx: TurnContext): Promise<TurnConfig> {
