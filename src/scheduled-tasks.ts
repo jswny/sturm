@@ -32,10 +32,23 @@ export type ScheduleChannelTaskInput = {
   intervalSeconds?: number;
 };
 
+export type ReplaceScheduledChannelTaskInput = {
+  scheduleId: string;
+  instruction?: string;
+  mode?: ScheduleChannelTaskInput["mode"];
+  delaySeconds?: number;
+  runAt?: string;
+  cron?: string;
+  intervalSeconds?: number;
+};
+
 export type ScheduledTaskController = {
   schedule(input: ScheduleChannelTaskInput): Promise<ScheduleChannelTaskResult>;
   list(): Promise<ListScheduledChannelTasksResult>;
   cancel(scheduleId: string): Promise<CancelScheduledChannelTaskResult>;
+  replace(
+    input: ReplaceScheduledChannelTaskInput
+  ): Promise<ReplaceScheduledChannelTaskResult>;
 };
 
 export type ScheduleChannelTaskResult = {
@@ -59,6 +72,24 @@ export type CancelScheduledChannelTaskResult = {
   ok: boolean;
   scheduleId: string;
   cancelled?: boolean;
+  error?: string;
+};
+
+export type ReplaceScheduledChannelTaskResult = {
+  ok: boolean;
+  scheduleId: string;
+  replaced?: boolean;
+  oldScheduleId?: string;
+  oldTaskId?: string;
+  oldScheduleCancelled?: boolean;
+  newScheduleId?: string;
+  newTaskId?: string;
+  replacementCancelled?: boolean;
+  type?: string;
+  nextRunAt?: string;
+  recurring?: boolean;
+  instruction?: string;
+  warning?: string;
   error?: string;
 };
 

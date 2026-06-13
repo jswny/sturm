@@ -3,6 +3,7 @@ import { z } from "zod";
 import type {
   CancelScheduledChannelTaskResult,
   ListScheduledChannelTasksResult,
+  ReplaceScheduledChannelTaskResult,
   ScheduleChannelTaskResult,
   ScheduledTaskController
 } from "../scheduled-tasks";
@@ -41,6 +42,24 @@ const cancelResultSchema = z.object({
   ok: z.boolean(),
   scheduleId: z.string(),
   cancelled: z.boolean().optional(),
+  error: z.string().optional()
+});
+
+const replaceResultSchema = z.object({
+  ok: z.boolean(),
+  scheduleId: z.string(),
+  replaced: z.boolean().optional(),
+  oldScheduleId: z.string().optional(),
+  oldTaskId: z.string().optional(),
+  oldScheduleCancelled: z.boolean().optional(),
+  newScheduleId: z.string().optional(),
+  newTaskId: z.string().optional(),
+  replacementCancelled: z.boolean().optional(),
+  type: z.string().optional(),
+  nextRunAt: z.string().optional(),
+  recurring: z.boolean().optional(),
+  instruction: z.string().optional(),
+  warning: z.string().optional(),
   error: z.string().optional()
 });
 
@@ -118,6 +137,63 @@ export function createScheduledTaskTools(
         value: formatListResult(output)
       })
     }),
+    replaceScheduledChannelTask: tool({
+      description:
+        "Replace an existing scheduled task in the current Discord channel or thread by schedule ID. Use this when a user asks to edit, update, reschedule, or change a scheduled task. This creates a replacement schedule, then cancels the old schedule; Cloudflare schedules are not edited in place. The caller can replace tasks they created; callers with Manage Messages can replace any channel task. Omit instruction to keep the existing instruction. Omit mode and timing fields to keep the existing time or recurrence. Provide mode whenever changing timing.",
+      inputSchema: z.object({
+        scheduleId: z.string().min(1).describe("Schedule ID to replace"),
+        instruction: z
+          .string()
+          .optional()
+          .describe(
+            "Replacement instruction. Omit to keep the current scheduled instruction."
+          ),
+        mode: z
+          .enum(["delay", "at", "cron", "interval"])
+          .optional()
+          .describe(
+            "delay runs after delaySeconds, at runs at runAt, cron runs on a UTC cron expression, interval repeats every intervalSeconds. Omit to keep the existing timing."
+          ),
+        delaySeconds: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe("Required when mode is delay"),
+        runAt: z
+          .string()
+          .optional()
+          .describe(
+            "Required when mode is at. ISO 8601 timestamp with timezone, for example 2026-05-26T18:30:00-04:00"
+          ),
+        cron: z
+          .string()
+          .optional()
+          .describe(
+            "Required when mode is cron. Five-field cron expression in UTC: minute hour day month weekday. Recurring tasks cannot run more than once per hour"
+          ),
+        intervalSeconds: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe(
+            "Required when mode is interval. Must be at least 3600 seconds"
+          )
+      }),
+      outputSchema: replaceResultSchema,
+      execute: async (input) =>
+        controller?.replace(input) ??
+        ({
+          ok: false,
+          scheduleId: input.scheduleId,
+          error: "Scheduling is unavailable outside a Discord channel turn."
+        } satisfies ReplaceScheduledChannelTaskResult),
+      toModelOutput: ({ output }) => ({
+        type: "text",
+        value: formatReplaceResult(output)
+      })
+    }),
     cancelScheduledChannelTask: tool({
       description:
         "Cancel a scheduled task in the current Discord channel or thread by schedule ID. The caller can cancel tasks they created; callers with Manage Messages can cancel any channel task.",
@@ -193,4 +269,46 @@ function formatCancelResult(output: CancelScheduledChannelTaskResult) {
   return output.cancelled
     ? `Scheduled channel task cancelled: ${output.scheduleId}`
     : `Scheduled channel task not found: ${output.scheduleId}`;
+}
+
+function formatReplaceResult(output: ReplaceScheduledChannelTaskResult) {
+  if (!output.ok) {
+    return [
+      `Scheduled task replacement failed for ${output.scheduleId}: ${output.error}`,
+      output.oldScheduleId ? `old_schedule_id: ${output.oldScheduleId}` : "",
+      output.oldTaskId ? `old_task_id: ${output.oldTaskId}` : "",
+      output.oldScheduleCancelled === undefined
+        ? ""
+        : `old_schedule_cancelled: ${output.oldScheduleCancelled ? "yes" : "no"}`,
+      output.newScheduleId ? `new_schedule_id: ${output.newScheduleId}` : "",
+      output.newTaskId ? `new_task_id: ${output.newTaskId}` : "",
+      output.replacementCancelled === undefined
+        ? ""
+        : `replacement_cancelled: ${output.replacementCancelled ? "yes" : "no"}`
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
+
+  if (!output.replaced) {
+    return `Scheduled channel task not found: ${output.scheduleId}`;
+  }
+
+  return [
+    "Scheduled channel task replaced.",
+    `old_schedule_id: ${output.oldScheduleId ?? output.scheduleId}`,
+    output.oldTaskId ? `old_task_id: ${output.oldTaskId}` : "",
+    output.oldScheduleCancelled === undefined
+      ? ""
+      : `old_schedule_cancelled: ${output.oldScheduleCancelled ? "yes" : "no"}`,
+    `new_schedule_id: ${output.newScheduleId}`,
+    `new_task_id: ${output.newTaskId}`,
+    `type: ${output.type}`,
+    `next_run_at: ${output.nextRunAt}`,
+    `recurring: ${output.recurring ? "yes" : "no"}`,
+    `instruction: ${output.instruction}`,
+    output.warning ? `warning: ${output.warning}` : ""
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
