@@ -1,6 +1,6 @@
 import type { Schedule } from "agents";
 import { PermissionFlagsBits } from "discord-api-types/v10";
-import { hasDiscordPermission } from "./discord/permissions";
+import { requireDiscordPermission } from "./discord/permissions";
 import type { DiscordChatRequest } from "./discord/types";
 import { getErrorMessage, logError } from "./logging";
 import {
@@ -499,16 +499,22 @@ function getScheduledChannelTaskMutationTarget(
 
   const callerCreatedTask =
     Boolean(payload.createdByUserId) && payload.createdByUserId === turn.userId;
-  const callerCanManageMessages = hasDiscordPermission(
-    turn.userPermissions,
-    PermissionFlagsBits.ManageMessages
-  );
 
-  if (!callerCreatedTask && !callerCanManageMessages) {
-    return {
-      ok: false,
-      error: `Only the task creator or a caller with Manage Messages can ${action} that scheduled task.`
-    };
+  if (!callerCreatedTask) {
+    const permission = requireDiscordPermission(
+      turn.userPermissions,
+      PermissionFlagsBits.ManageMessages,
+      {
+        deniedMessage: `Only the task creator or a caller with Manage Messages can ${action} that scheduled task.`
+      }
+    );
+
+    if (!permission.ok) {
+      return {
+        ok: false,
+        error: permission.error
+      };
+    }
   }
 
   return { ok: true, payload };

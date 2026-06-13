@@ -1,6 +1,6 @@
 import type { DiscordApiEnv } from "./api";
 import { DiscordApiError } from "./api";
-import { hasDiscordPermission } from "./permissions";
+import { requireDiscordPermission } from "./permissions";
 import { logError, logWarn } from "../logging";
 
 export type DiscordMemberActionContext = {
@@ -67,10 +67,15 @@ export function validateDiscordMemberActionContext(
     };
   }
 
-  if (!hasDiscordPermission(context.userPermissions, options.permission)) {
+  const permission = requireDiscordPermission(
+    context.userPermissions,
+    options.permission,
+    { deniedMessage: options.permissionError }
+  );
+  if (!permission.ok) {
     return {
       targetUserId,
-      error: options.permissionError
+      error: permission.error
     };
   }
 

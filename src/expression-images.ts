@@ -1,5 +1,5 @@
 import { PermissionFlagsBits } from "discord-api-types/v10";
-import { hasDiscordPermission } from "./discord/permissions";
+import { requireDiscordPermission } from "./discord/permissions";
 import type {
   DiscordChatRequest,
   DiscordRequestAttachment
@@ -72,16 +72,18 @@ export function prepareStaticExpressionAttachment(
     };
   }
 
-  if (
-    !hasDiscordPermission(
-      context.userPermissions,
-      PermissionFlagsBits.CreateGuildExpressions
-    )
-  ) {
+  const permission = requireDiscordPermission(
+    context.userPermissions,
+    PermissionFlagsBits.CreateGuildExpressions,
+    {
+      deniedMessage: `You need Discord's Create Guild Expressions permission to create ${options.targetNamePlural}.`
+    }
+  );
+  if (!permission.ok) {
     return {
       ok: false,
       baseFields,
-      error: `You need Discord's Create Guild Expressions permission to create ${options.targetNamePlural}.`
+      error: permission.error
     };
   }
 
