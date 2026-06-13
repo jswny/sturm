@@ -570,12 +570,14 @@ export class ChatAgent extends Think<Env> {
       const [
         completedDeliveryRecords,
         staleDebugResults,
+        staleComponentPrompts,
         terminalSubmissions,
         memoryReflectionRecords,
         managedFiberRecords
       ] = await Promise.all([
         this.discordDeliveries.pruneCompletedDeliveryRecords(),
         this.discordDeliveries.pruneStaleDebugResults(),
+        this.componentPrompts.pruneStalePrompts(),
         this.deleteSubmissions({
           status: ["completed", "aborted", "skipped", "error"],
           completedBefore: new Date(
@@ -598,6 +600,7 @@ export class ChatAgent extends Think<Env> {
       if (
         completedDeliveryRecords > 0 ||
         staleDebugResults > 0 ||
+        staleComponentPrompts > 0 ||
         terminalSubmissions > 0 ||
         memoryReflectionRecords > 0 ||
         managedFiberRecords > 0
@@ -606,6 +609,7 @@ export class ChatAgent extends Think<Env> {
           agentName: this.name,
           completedDeliveryRecords,
           staleDebugResults,
+          staleComponentPrompts,
           terminalSubmissions,
           memoryReflectionRecords,
           managedFiberRecords

@@ -105,6 +105,8 @@ export type ParsedComponentPromptCustomId = {
 const COMPONENT_PROMPT_KEY_PREFIX = "discord:component-prompt:";
 const CUSTOM_ID_PREFIX = "sturm:prompt";
 const DEFAULT_PROMPT_TTL_MS = 15 * 60 * 1000;
+const COMPONENT_PROMPT_RETENTION_MS = 24 * 60 * 60 * 1000;
+const COMPONENT_PROMPT_PRUNE_BATCH_SIZE = 100;
 const MAX_PROMPT_OPTIONS = 10;
 const MAX_PROMPT_QUESTION_LENGTH = 1200;
 const MAX_BUTTON_LABEL_LENGTH = 80;
@@ -230,6 +232,27 @@ export class DiscordComponentPromptStore {
 
       return { status: "accepted", prompt: consumed, option };
     });
+  }
+
+  async pruneStalePrompts(retentionMs = COMPONENT_PROMPT_RETENTION_MS) {
+    const cutoffMs = Date.now() - retentionMs;
+    const prompts = await this.storage.list<StoredComponentPrompt>({
+      prefix: COMPONENT_PROMPT_KEY_PREFIX,
+      limit: COMPONENT_PROMPT_PRUNE_BATCH_SIZE
+    });
+    const keysToDelete: string[] = [];
+
+    for (const [key, prompt] of prompts) {
+      if (shouldPruneComponentPrompt(prompt, cutoffMs)) {
+        keysToDelete.push(key);
+      }
+    }
+
+    if (keysToDelete.length > 0) {
+      await this.storage.delete(keysToDelete);
+    }
+
+    return keysToDelete.length;
   }
 }
 
@@ -424,6 +447,16 @@ function matchesOptionalField(
   actual: string | undefined
 ) {
   return expected === undefined || expected === actual;
+}
+
+function shouldPruneComponentPrompt(
+  prompt: StoredComponentPrompt,
+  cutoffMs: number
+) {
+  const timestamp =
+    prompt.status === "pending" ? prompt.expiresAt : prompt.updatedAt;
+  const timestampMs = Date.parse(timestamp);
+  return Number.isFinite(timestampMs) && timestampMs < cutoffMs;
 }
 
 function truncate(value: string, maxLength: number) {
