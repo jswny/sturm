@@ -1,6 +1,12 @@
+import type {
+  APIMessageTopLevelComponent,
+  MessageFlags
+} from "discord-api-types/v10";
+
 export type DiscordChatRequest = {
   interactionId: string;
   text: string;
+  emptyResponseBehavior?: "fallback" | "suppress";
   guildId?: string;
   channelId?: string;
   channel?: DiscordChannelContext;
@@ -14,6 +20,8 @@ export type DiscordChatRequest = {
 export type DiscordChatResponse = {
   content: string;
   attachments?: DiscordResponseAttachment[];
+  components?: APIMessageTopLevelComponent[];
+  flags?: MessageFlags;
 };
 
 export type DiscordGeneratedChatResponse = {

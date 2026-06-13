@@ -1,4 +1,6 @@
+import { MessageFlags } from "discord-api-types/v10";
 import type {
+  APIMessageTopLevelComponent,
   RESTAPIPartialCurrentUserGuild,
   RESTGetAPIChannelMessagesResult,
   RESTGetAPICurrentUserGuildsResult,
@@ -71,9 +73,17 @@ export async function getChannelMessages(
 export async function editOriginalInteractionResponse(
   target: DiscordWebhookResponseTarget,
   content: string,
-  attachments: DiscordResponseAttachment[] = []
+  attachments: DiscordResponseAttachment[] = [],
+  components: APIMessageTopLevelComponent[] = [],
+  flags?: MessageFlags
 ) {
-  const body = createDiscordResponseBody(content, attachments);
+  const body = createDiscordResponseBody(
+    content,
+    attachments,
+    components,
+    flags,
+    { clearLegacyContent: components.length > 0 }
+  );
   const response = await fetch(
     `${DISCORD_API_BASE}/webhooks/${target.applicationId}/${target.token}/messages/@original`,
     {
@@ -97,8 +107,21 @@ export async function editOriginalInteractionResponse(
 export async function deliverInteractionResponse(
   target: DiscordWebhookResponseTarget,
   content: string,
-  attachments: DiscordResponseAttachment[] = []
+  attachments: DiscordResponseAttachment[] = [],
+  components: APIMessageTopLevelComponent[] = [],
+  flags?: MessageFlags
 ) {
+  if (components.length > 0) {
+    await editOriginalInteractionResponse(
+      target,
+      content,
+      attachments,
+      components,
+      flags
+    );
+    return 1;
+  }
+
   const chunks = splitDiscordContent(content);
   const [firstChunk = "", ...followupChunks] = chunks;
 
@@ -114,8 +137,22 @@ export async function deliverChannelMessage(
   env: DiscordApiEnv,
   channelId: string,
   content: string,
-  attachments: DiscordResponseAttachment[] = []
+  attachments: DiscordResponseAttachment[] = [],
+  components: APIMessageTopLevelComponent[] = [],
+  flags?: MessageFlags
 ) {
+  if (components.length > 0) {
+    await createChannelMessage(
+      env,
+      channelId,
+      content,
+      attachments,
+      components,
+      flags
+    );
+    return 1;
+  }
+
   const chunks = splitDiscordContent(content);
   const [firstChunk = "", ...followupChunks] = chunks;
 
@@ -159,9 +196,16 @@ async function createChannelMessage(
   env: DiscordApiEnv,
   channelId: string,
   content: string,
-  attachments: DiscordResponseAttachment[] = []
+  attachments: DiscordResponseAttachment[] = [],
+  components: APIMessageTopLevelComponent[] = [],
+  flags?: MessageFlags
 ) {
-  const request = createDiscordRestMessageRequest(content, attachments);
+  const request = createDiscordRestMessageRequest(
+    content,
+    attachments,
+    components,
+    flags
+  );
   const result = await getDiscordRestDispatcher(env.DiscordRest).request({
     method: "POST",
     path: `/channels/${channelId}/messages`,
@@ -494,10 +538,19 @@ function createDiscordApiError(
 
 function createDiscordResponseBody(
   content: string,
-  attachments: DiscordResponseAttachment[]
+  attachments: DiscordResponseAttachment[],
+  components: APIMessageTopLevelComponent[],
+  flags?: MessageFlags,
+  options: { clearLegacyContent?: boolean } = {}
 ) {
-  assertDiscordContentLength(content);
-  const payload = createDiscordMessagePayload(content, attachments);
+  if (components.length === 0) assertDiscordContentLength(content);
+  const payload = createDiscordMessagePayload(
+    content,
+    attachments,
+    components,
+    flags,
+    options
+  );
 
   if (attachments.length === 0) {
     return {
@@ -522,10 +575,17 @@ function createDiscordResponseBody(
 
 function createDiscordRestMessageRequest(
   content: string,
-  attachments: DiscordResponseAttachment[]
+  attachments: DiscordResponseAttachment[],
+  components: APIMessageTopLevelComponent[],
+  flags?: MessageFlags
 ) {
-  assertDiscordContentLength(content);
-  const payload = createDiscordMessagePayload(content, attachments);
+  if (components.length === 0) assertDiscordContentLength(content);
+  const payload = createDiscordMessagePayload(
+    content,
+    attachments,
+    components,
+    flags
+  );
   const body = JSON.stringify(payload);
 
   if (attachments.length === 0) {
@@ -551,10 +611,27 @@ function createDiscordRestMessageRequest(
 
 function createDiscordMessagePayload(
   content: string,
-  attachments: DiscordResponseAttachment[]
+  attachments: DiscordResponseAttachment[],
+  components: APIMessageTopLevelComponent[] = [],
+  flags?: MessageFlags,
+  options: { clearLegacyContent?: boolean } = {}
 ):
   | RESTPatchAPIWebhookWithTokenMessageJSONBody
   | RESTPostAPIChannelMessageJSONBody {
+  if (components.length > 0) {
+    return {
+      allowed_mentions: { parse: [] },
+      content: options.clearLegacyContent ? null : undefined,
+      components,
+      flags: flags ?? MessageFlags.IsComponentsV2,
+      attachments: attachments.map((attachment, index) => ({
+        id: String(index),
+        filename: attachment.filename,
+        description: attachment.description
+      }))
+    };
+  }
+
   return {
     content,
     allowed_mentions: { parse: [] },

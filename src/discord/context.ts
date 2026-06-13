@@ -1,6 +1,7 @@
 import {
   ChannelType,
-  type APIChatInputApplicationCommandInteraction
+  type APIChatInputApplicationCommandInteraction,
+  type APIMessageComponentInteraction
 } from "discord-api-types/v10";
 import {
   createDiscordPermissionContext,
@@ -10,8 +11,12 @@ import type { DiscordChannelContext, DiscordChatRequest } from "./types";
 
 type UnknownRecord = Record<string, unknown>;
 
+type DiscordRuntimeInteraction =
+  | APIChatInputApplicationCommandInteraction
+  | APIMessageComponentInteraction;
+
 export function createDiscordRuntimeContext(
-  interaction: APIChatInputApplicationCommandInteraction
+  interaction: DiscordRuntimeInteraction
 ): Pick<DiscordChatRequest, "channel" | "appPermissions"> {
   return {
     channel: createDiscordChannelContext(interaction),
@@ -30,7 +35,7 @@ export function formatDiscordRuntimeContext(request: DiscordChatRequest) {
 }
 
 function createDiscordChannelContext(
-  interaction: APIChatInputApplicationCommandInteraction
+  interaction: DiscordRuntimeInteraction
 ): DiscordChannelContext {
   const channel = interaction.channel as UnknownRecord | undefined;
   return omitUndefined({

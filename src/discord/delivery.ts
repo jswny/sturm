@@ -33,6 +33,7 @@ export type DiscordChatDeliveryRecord = {
   createdAt: string;
   updatedAt: string;
   artifacts?: StoredResponseArtifact[];
+  componentPromptId?: string;
   error?: string;
 };
 
@@ -193,6 +194,20 @@ export class DiscordDeliveryStore {
           ...(record.artifacts ?? []),
           toStoredResponseArtifact(artifact)
         ],
+        updatedAt: new Date().toISOString()
+      };
+    });
+  }
+
+  async setComponentPrompt(interactionId: string, promptId: string) {
+    await this.updateDelivery(interactionId, (record) => {
+      if (record.type !== "chat" || isTerminalDeliveryStatus(record.status)) {
+        return record;
+      }
+
+      return {
+        ...record,
+        componentPromptId: promptId,
         updatedAt: new Date().toISOString()
       };
     });

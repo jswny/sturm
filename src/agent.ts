@@ -20,6 +20,11 @@ import { createCompactFunction } from "agents/experimental/memory/utils";
 import { generateText, type ToolSet } from "ai";
 import { createChannelScheduledTaskController } from "./channel-scheduler";
 import { createRecentDiscordChannelContext } from "./discord/channel-context";
+import {
+  DiscordComponentPromptStore,
+  formatComponentPromptContinuationText,
+  type DiscordComponentPromptInteractionInput
+} from "./discord/component-prompts";
 import { formatDiscordRuntimeContext } from "./discord/context";
 import { getGuildIdFromDiscordConversationName } from "./discord/conversation";
 import {
@@ -82,6 +87,7 @@ import {
   GUILD_MEMORY_CONTEXT_MAX_TOKENS
 } from "./session-context";
 import { createDiscordCodeModeTool, createDiscordTools } from "./tools";
+import type { UserPromptController } from "./tools/user-prompts";
 
 const HOUSEKEEPING_INTERVAL_SECONDS = 24 * 60 * 60;
 const TERMINAL_SUBMISSION_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
@@ -117,6 +123,7 @@ export class ChatAgent extends Think<Env> {
   });
 
   private discordDeliveries = new DiscordDeliveryStore(this.ctx.storage);
+  private componentPrompts = new DiscordComponentPromptStore(this.ctx.storage);
   private memoryReflections = new GuildMemoryReflectionStore(this.ctx.storage);
   private progressReporters = new Map<string, DiscordProgressReporter>();
   private guildMemoryProvider?: GuildMemoryProvider;
@@ -623,6 +630,7 @@ export class ChatAgent extends Think<Env> {
           scheduledTasks: turn
             ? this.createScheduledTaskController(turn)
             : undefined,
+          userPrompts: turn ? this.createUserPromptController(turn) : undefined,
           onArtifactCreated: async (artifact) => {
             if (!turn?.interactionId) return;
             await this.discordDeliveries.addArtifact(
@@ -658,6 +666,69 @@ export class ChatAgent extends Think<Env> {
       },
       turn
     );
+  }
+
+  private createUserPromptController(
+    turn: DiscordChatRequest
+  ): UserPromptController {
+    return {
+      create: async (input) => {
+        if (!turn.userId) {
+          throw new Error(
+            "Cannot create a user prompt without a Discord user ID."
+          );
+        }
+
+        const prompt = await this.componentPrompts.create({
+          ...input,
+          allowedUserId: turn.userId,
+          allowedUserDisplayName: turn.user?.displayName,
+          guildId: turn.guildId,
+          channelId: turn.channelId,
+          sourceInteractionId: turn.interactionId
+        });
+        await this.discordDeliveries.setComponentPrompt(
+          turn.interactionId,
+          prompt.id
+        );
+        return prompt;
+      }
+    };
+  }
+
+  async handleDiscordComponentPromptInteraction(
+    input: DiscordComponentPromptInteractionInput
+  ) {
+    const result = await this.componentPrompts.select(input);
+    if (result.status !== "accepted" || !result.option.pendingAction) {
+      return result;
+    }
+
+    const prompt = result.prompt;
+    const channelId = prompt.channelId ?? input.channelId;
+    if (!channelId) return result;
+
+    const text = formatComponentPromptContinuationText(prompt, result.option);
+    await this.enqueueDiscordChat({
+      responseTarget: {
+        type: "channel_message",
+        channelId
+      },
+      request: {
+        interactionId: input.interactionId,
+        text,
+        emptyResponseBehavior: "suppress",
+        guildId: prompt.guildId ?? input.guildId,
+        channelId: prompt.channelId ?? input.channelId,
+        channel: input.channel,
+        appPermissions: input.appPermissions,
+        userId: input.userId,
+        user: input.user,
+        userPermissions: input.userPermissions
+      }
+    });
+
+    return result;
   }
 
   private async createDiscordTurnRuntimeContext(turn: DiscordChatRequest) {
@@ -797,6 +868,7 @@ export class ChatAgent extends Think<Env> {
     return new DiscordDeliveryRunner({
       env: this.env,
       deliveries: this.discordDeliveries,
+      componentPrompts: this.componentPrompts,
       updateMessageInHistory: async (message) => {
         await this.updateMessageInHistory(message);
       },

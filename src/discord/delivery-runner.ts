@@ -18,6 +18,11 @@ import {
   hydrateStoredResponseArtifacts,
   withAssistantText
 } from "./turn";
+import {
+  createComponentPromptResponse,
+  formatComponentPromptHistoryText,
+  type DiscordComponentPromptStore
+} from "./component-prompts";
 import type { DiscordChatResponse } from "./types";
 import { getErrorMessage, logError, logInfo, logWarn } from "../logging";
 
@@ -28,6 +33,7 @@ const DISCORD_DEFERRED_RESPONSE_SETTLE_MS = 500;
 export type DiscordDeliveryRunnerOptions = {
   env: Env;
   deliveries: DiscordDeliveryStore;
+  componentPrompts: DiscordComponentPromptStore;
   updateMessageInHistory(message: UIMessage): Promise<void>;
   resetSession(): Promise<DiscordChatResponse>;
   afterFailedDelivery?(record: DiscordDeliveryRecord): Promise<void> | void;
@@ -57,7 +63,25 @@ export class DiscordDeliveryRunner {
       this.options.env,
       freshRecord.artifacts
     );
-    const historyText = createAssistantHistoryText(text, artifacts);
+    if (shouldSuppressEmptyResponse(freshRecord, text, artifacts)) {
+      logInfo("Skipped empty Discord channel response", {
+        sequence: freshRecord.sequence,
+        interactionId: freshRecord.interactionId,
+        responseTargetType: freshRecord.responseTarget.type
+      });
+      await this.options.deliveries.completeDelivery(freshRecord, "delivered");
+      return;
+    }
+
+    const componentPrompt = freshRecord.componentPromptId
+      ? await this.options.componentPrompts.get(freshRecord.componentPromptId)
+      : undefined;
+    const historyText = [
+      createAssistantHistoryText(text, artifacts),
+      componentPrompt ? formatComponentPromptHistoryText(componentPrompt) : ""
+    ]
+      .filter(Boolean)
+      .join("\n\n");
     if (historyText !== text) {
       try {
         await this.options.updateMessageInHistory(
@@ -71,7 +95,12 @@ export class DiscordDeliveryRunner {
       }
     }
 
-    const response = createDiscordResponseFromAssistantMessage(text, artifacts);
+    const response = componentPrompt
+      ? {
+          ...createDiscordResponseFromAssistantMessage(text, artifacts),
+          ...createComponentPromptResponse(componentPrompt)
+        }
+      : createDiscordResponseFromAssistantMessage(text, artifacts);
     await this.deliverResponse(freshRecord, response);
     await this.options.deliveries.completeDelivery(freshRecord, "delivered");
   }
@@ -93,6 +122,19 @@ export class DiscordDeliveryRunner {
         this.options.env,
         freshRecord.artifacts
       );
+      if (shouldSuppressEmptyResponse(freshRecord, "", artifacts)) {
+        logInfo("Skipped empty completed Discord submission response", {
+          sequence: freshRecord.sequence,
+          interactionId: freshRecord.interactionId,
+          responseTargetType: freshRecord.responseTarget.type
+        });
+        await this.options.deliveries.completeDelivery(
+          freshRecord,
+          "delivered"
+        );
+        return;
+      }
+
       const response = createDiscordResponseFromAssistantMessage("", artifacts);
       await this.deliverResponse(freshRecord, response);
       await this.options.deliveries.completeDelivery(freshRecord, "delivered");
@@ -182,7 +224,9 @@ export class DiscordDeliveryRunner {
         this.options.env,
         record.responseTarget.channelId,
         response.content,
-        response.attachments
+        response.attachments,
+        response.components,
+        response.flags
       );
       logInfo("Sent Discord channel message", {
         sequence: record.sequence,
@@ -205,7 +249,9 @@ export class DiscordDeliveryRunner {
     const messageCount = await deliverInteractionResponse(
       record.responseTarget,
       response.content,
-      response.attachments
+      response.attachments,
+      response.components,
+      response.flags
     );
     logInfo("Delivered Discord interaction response", {
       sequence: record.sequence,
@@ -251,6 +297,19 @@ async function waitForDiscordDeferredResponse(record: DiscordDeliveryRecord) {
     Date.parse(record.createdAt) + DISCORD_DEFERRED_RESPONSE_SETTLE_MS;
   const delayMs = readyAt - Date.now();
   if (delayMs > 0) await sleep(delayMs);
+}
+
+function shouldSuppressEmptyResponse(
+  record: DiscordDeliveryRecord,
+  text: string,
+  artifacts: unknown[]
+) {
+  return (
+    record.type === "chat" &&
+    record.request.emptyResponseBehavior === "suppress" &&
+    text.trim().length === 0 &&
+    artifacts.length === 0
+  );
 }
 
 function sleep(ms: number) {

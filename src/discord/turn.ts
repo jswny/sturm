@@ -14,6 +14,7 @@ import type { DiscordChatRequest, DiscordChatResponse } from "./types";
 type DiscordUserMessageMetadata = {
   source?: unknown;
   interactionId?: unknown;
+  emptyResponseBehavior?: unknown;
   guildId?: unknown;
   channelId?: unknown;
   channel?: unknown;
@@ -39,6 +40,7 @@ export function createDiscordUserMessage(
     metadata: {
       source: "discord",
       interactionId: request.interactionId,
+      emptyResponseBehavior: request.emptyResponseBehavior,
       guildId: request.guildId,
       channelId: request.channelId,
       channel: request.channel,
@@ -64,6 +66,8 @@ export function getDiscordTurnFromUserMessage(
   return {
     interactionId: metadata.interactionId,
     text: "",
+    emptyResponseBehavior:
+      metadata.emptyResponseBehavior === "suppress" ? "suppress" : undefined,
     guildId:
       typeof metadata.guildId === "string" ? metadata.guildId : undefined,
     channelId:

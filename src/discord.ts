@@ -1,18 +1,25 @@
 import {
   ApplicationCommandOptionType,
   ApplicationCommandType,
+  ComponentType,
   InteractionResponseType,
   InteractionType,
   MessageFlags,
   type APIAttachment,
   type APIChatInputApplicationCommandInteraction,
   type APIInteraction,
-  type APIInteractionResponse
+  type APIInteractionResponse,
+  type APIMessageComponentInteraction
 } from "discord-api-types/v10";
 import { verifyKey } from "discord-interactions";
 import { getAgentByName } from "agents";
 import { editOriginalInteractionResponse } from "./discord/api";
 import { C_COMMAND, MEMORY_COMMAND, RESET_COMMAND } from "./discord/commands";
+import {
+  parseComponentPromptCustomId,
+  renderComponentPromptComponents,
+  type ComponentPromptSelectionResult
+} from "./discord/component-prompts";
 import {
   getDiscordGuildChannelConversationName,
   type DiscordGuildChannelLocation
@@ -76,6 +83,10 @@ export async function handleDiscordRequest(
 
   if (interaction.type === InteractionType.Ping) {
     return interactionJson({ type: InteractionResponseType.Pong });
+  }
+
+  if (isMessageComponentInteraction(interaction)) {
+    return handleMessageComponentInteraction(interaction, env);
   }
 
   if (interaction.type !== InteractionType.ApplicationCommand) {
@@ -175,6 +186,91 @@ export async function handleDiscordRequest(
   );
 }
 
+async function handleMessageComponentInteraction(
+  interaction: APIMessageComponentInteraction,
+  env: Env
+) {
+  const parsed = parseComponentPromptCustomId(interaction.data.custom_id);
+  if (!parsed) {
+    return ephemeralInteractionResponse(
+      "This component is no longer available."
+    );
+  }
+
+  const location = getGuildChannelLocation(interaction);
+  if (!location) return guildOnlyInteractionResponse();
+
+  const optionId =
+    parsed.mode === "select"
+      ? getSelectedComponentOptionId(interaction)
+      : parsed.optionId;
+  if (!optionId) {
+    return ephemeralInteractionResponse("That option is no longer available.");
+  }
+
+  const conversationName = getDiscordGuildChannelConversationName(location);
+  const agent = await getAgentByName(env.ChatAgent, conversationName);
+  try {
+    const result = await agent.handleDiscordComponentPromptInteraction({
+      promptId: parsed.promptId,
+      optionId,
+      interactionId: interaction.id,
+      guildId: location.guildId,
+      channelId: location.channelId,
+      messageId: interaction.message.id,
+      ...createDiscordRuntimeContext(interaction),
+      userId: getUserId(interaction),
+      user: getUserContext(interaction),
+      userPermissions: interaction.member?.permissions
+    });
+
+    return interactionJson(createComponentPromptInteractionResponse(result));
+  } catch (error) {
+    logDiscordCommandError(
+      "Discord component prompt handling failed",
+      error,
+      interaction
+    );
+    return ephemeralInteractionResponse(
+      "Sorry, I could not handle that selection."
+    );
+  }
+}
+
+function createComponentPromptInteractionResponse(
+  result: ComponentPromptSelectionResult
+): APIInteractionResponse {
+  switch (result.status) {
+    case "accepted":
+    case "already_handled":
+    case "expired":
+      return {
+        type: InteractionResponseType.UpdateMessage,
+        data: {
+          allowed_mentions: { parse: [] },
+          flags: MessageFlags.IsComponentsV2,
+          components: renderComponentPromptComponents(result.prompt)
+        }
+      };
+    case "wrong_user":
+      return createEphemeralInteractionResponse(
+        `This prompt is for <@${result.prompt.allowedUserId}>.`
+      );
+    case "wrong_context":
+      return createEphemeralInteractionResponse(
+        "This prompt is not available here."
+      );
+    case "invalid_option":
+      return createEphemeralInteractionResponse(
+        "That option is no longer available."
+      );
+    case "not_found":
+      return createEphemeralInteractionResponse(
+        "This prompt is no longer available."
+      );
+  }
+}
+
 function deferDiscordWork(
   ctx: ExecutionContext,
   interaction: APIChatInputApplicationCommandInteraction,
@@ -216,6 +312,15 @@ function isChatInputApplicationCommandInteraction(
   return (
     interaction.type === InteractionType.ApplicationCommand &&
     interaction.data.type === ApplicationCommandType.ChatInput
+  );
+}
+
+function isMessageComponentInteraction(
+  interaction: APIInteraction
+): interaction is APIMessageComponentInteraction {
+  return (
+    interaction.type === InteractionType.MessageComponent &&
+    typeof interaction.data?.custom_id === "string"
   );
 }
 
@@ -270,8 +375,12 @@ async function enqueueResetCommand(
   return agent;
 }
 
+type DiscordRoutedInteraction =
+  | APIChatInputApplicationCommandInteraction
+  | APIMessageComponentInteraction;
+
 function getGuildChannelLocation(
-  interaction: APIChatInputApplicationCommandInteraction
+  interaction: DiscordRoutedInteraction
 ): DiscordGuildChannelLocation | null {
   if (!interaction.guild_id || !interaction.channel_id) return null;
   return {
@@ -280,12 +389,12 @@ function getGuildChannelLocation(
   };
 }
 
-function getUserId(interaction: APIChatInputApplicationCommandInteraction) {
+function getUserId(interaction: DiscordRoutedInteraction) {
   return interaction.member?.user?.id ?? interaction.user?.id;
 }
 
 function getUserContext(
-  interaction: APIChatInputApplicationCommandInteraction
+  interaction: DiscordRoutedInteraction
 ): DiscordUserContext | undefined {
   const user = interaction.member?.user ?? interaction.user;
   if (!user?.id) return undefined;
@@ -296,6 +405,19 @@ function getUserContext(
       ? resolveDiscordMemberDisplayName(interaction.member)
       : undefined
   };
+}
+
+function getSelectedComponentOptionId(
+  interaction: APIMessageComponentInteraction
+) {
+  if (
+    interaction.data.component_type !== ComponentType.StringSelect ||
+    !("values" in interaction.data)
+  ) {
+    return undefined;
+  }
+
+  return interaction.data.values[0];
 }
 
 function getStringOption(
@@ -384,6 +506,23 @@ function interactionJson(body: APIInteractionResponse, init?: ResponseInit) {
   return json(body, init);
 }
 
+function ephemeralInteractionResponse(content: string) {
+  return interactionJson(createEphemeralInteractionResponse(content));
+}
+
+function createEphemeralInteractionResponse(
+  content: string
+): APIInteractionResponse {
+  return {
+    type: InteractionResponseType.ChannelMessageWithSource,
+    data: {
+      content,
+      flags: MessageFlags.Ephemeral,
+      allowed_mentions: { parse: [] }
+    }
+  };
+}
+
 function guildOnlyInteractionResponse() {
   return interactionJson(
     {
@@ -400,14 +539,17 @@ function guildOnlyInteractionResponse() {
 function logDiscordCommandError(
   message: string,
   error: unknown,
-  interaction: APIChatInputApplicationCommandInteraction
+  interaction: DiscordRoutedInteraction
 ) {
   logError(message, error, {
     interactionId: interaction.id,
     applicationId: interaction.application_id,
     guildId: interaction.guild_id,
     channelId: interaction.channel_id,
-    commandName: interaction.data.name,
+    commandName:
+      interaction.type === InteractionType.ApplicationCommand
+        ? interaction.data.name
+        : undefined,
     userId: getUserId(interaction)
   });
 }

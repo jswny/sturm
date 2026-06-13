@@ -23,6 +23,10 @@ import { createNicknameTools } from "./nickname";
 import { createSearchTools } from "./search";
 import { createScheduledTaskTools } from "./scheduled-tasks";
 import { createStickerTools } from "./stickers";
+import {
+  createUserPromptTools,
+  type UserPromptController
+} from "./user-prompts";
 
 export type ToolEnv = SearchEnv &
   DiscordMessageSearchEnv &
@@ -42,6 +46,7 @@ export type ToolOptions = {
     EmojiRequestContext &
     StickerRequestContext;
   scheduledTasks?: ScheduledTaskController;
+  userPrompts?: UserPromptController;
   workspace?: WorkspaceFsLike;
   onArtifactCreated?: (artifact: ResponseArtifact) => void | Promise<void>;
 };
@@ -57,6 +62,7 @@ export function createDiscordTools(env: ToolEnv, options: ToolOptions = {}) {
     ...createEmojiTools(env, options.discordRequest ?? {}),
     ...createStickerTools(env, options.discordRequest ?? {}),
     ...createScheduledTaskTools(options.scheduledTasks),
+    ...createUserPromptTools(options.userPrompts),
     ...createImageTools(env, options),
     ...createArtifactTools(env, options.workspace, options)
   };
