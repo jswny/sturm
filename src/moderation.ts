@@ -10,9 +10,6 @@ import {
   type DiscordMemberActionContext
 } from "./discord/member-actions";
 
-const MIN_TEMPORARY_MUTE_SECONDS = 5;
-const MAX_TEMPORARY_MUTE_SECONDS = 60 * 60;
-
 export type ModerationEnv = DiscordApiEnv;
 
 export type ModerationRequestContext = DiscordMemberActionContext;
@@ -74,7 +71,6 @@ export async function muteGuildMember(
     env,
     context,
     targetUserId,
-    durationSeconds,
     reason
   );
   if (guard.error) {
@@ -82,7 +78,7 @@ export async function muteGuildMember(
   }
 
   const communicationDisabledUntil = new Date(
-    Date.now() + guard.durationSeconds * 1000
+    Date.now() + durationSeconds * 1000
   ).toISOString();
 
   return applyGuildMemberTimeoutChange(env, context, {
@@ -91,12 +87,12 @@ export async function muteGuildMember(
     reason: guard.reason,
     communicationDisabledUntil,
     auditLogLabel: "Sturm temporary mute",
-    auditLogFields: [`duration=${guard.durationSeconds}s`],
+    auditLogFields: [`duration=${durationSeconds}s`],
     apiLogMessage: "Discord temporary mute API request failed",
     operationLogMessage: "Discord temporary mute operation failed",
     formatError: formatTemporaryMuteError,
     responseFields: {
-      durationSeconds: guard.durationSeconds,
+      durationSeconds,
       communicationDisabledUntil
     }
   });
@@ -134,11 +130,9 @@ function validateTemporaryMuteContext(
   env: ModerationEnv,
   context: ModerationRequestContext,
   targetUserId: string | undefined,
-  durationSeconds: number,
   reason: string
 ): {
   targetUserId: string;
-  durationSeconds: number;
   reason: string;
   error?: string;
 } {
@@ -152,32 +146,9 @@ function validateTemporaryMuteContext(
   if (targetGuard.error)
     return {
       targetUserId: targetGuard.targetUserId,
-      durationSeconds,
       reason: preparedReason,
       error: targetGuard.error
     };
-
-  if (!Number.isFinite(durationSeconds)) {
-    return {
-      targetUserId: targetGuard.targetUserId,
-      durationSeconds,
-      reason: preparedReason,
-      error: "durationSeconds must be a finite number."
-    };
-  }
-
-  const preparedDurationSeconds = Math.trunc(durationSeconds);
-  if (
-    preparedDurationSeconds < MIN_TEMPORARY_MUTE_SECONDS ||
-    preparedDurationSeconds > MAX_TEMPORARY_MUTE_SECONDS
-  ) {
-    return {
-      targetUserId: targetGuard.targetUserId,
-      durationSeconds: preparedDurationSeconds,
-      reason: preparedReason,
-      error: `Temporary mute duration must be between ${MIN_TEMPORARY_MUTE_SECONDS} and ${MAX_TEMPORARY_MUTE_SECONDS} seconds.`
-    };
-  }
 
   const reasonGuard = validateModerationReason(
     preparedReason,
@@ -186,7 +157,6 @@ function validateTemporaryMuteContext(
   if (reasonGuard.error) {
     return {
       targetUserId: targetGuard.targetUserId,
-      durationSeconds: preparedDurationSeconds,
       reason: reasonGuard.reason,
       error: reasonGuard.error
     };
@@ -194,7 +164,6 @@ function validateTemporaryMuteContext(
 
   return {
     targetUserId: targetGuard.targetUserId,
-    durationSeconds: preparedDurationSeconds,
     reason: reasonGuard.reason
   };
 }
