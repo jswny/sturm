@@ -1,5 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import { logError, logWarn } from "../logging";
+import { pruneDurableStorageRecords } from "../storage-prune";
 import {
   DiscordGuildMemberCacheStore,
   type DiscordRestCacheMode
@@ -482,41 +483,26 @@ export class DiscordRestDispatcher extends DurableObject<DiscordRestEnv> {
 
   private async pruneExpiredJobs() {
     const now = Date.now();
-    const jobs = await this.ctx.storage.list<DiscordRestJob>({
-      prefix: "job:"
+    await pruneDurableStorageRecords<DiscordRestJob>(this.ctx.storage, {
+      prefix: "job:",
+      shouldPrune: (job) => job.expiresAt <= now
     });
-
-    await Promise.all(
-      [...jobs]
-        .filter(([, job]) => job.expiresAt <= now)
-        .map(([key]) => this.ctx.storage.delete(key))
-    );
   }
 
   private async pruneExpiredRateLimits() {
     const now = Date.now();
-    const limits = await this.ctx.storage.list<RateLimitState>({
-      prefix: "rate:"
+    await pruneDurableStorageRecords<RateLimitState>(this.ctx.storage, {
+      prefix: "rate:",
+      shouldPrune: (state) => state.resetAt <= now
     });
-
-    await Promise.all(
-      [...limits]
-        .filter(([, state]) => state.resetAt <= now)
-        .map(([key]) => this.ctx.storage.delete(key))
-    );
   }
 
   private async pruneExpiredBucketAliases() {
     const now = Date.now();
-    const aliases = await this.ctx.storage.list<BucketAliasState>({
-      prefix: "bucket-alias:"
+    await pruneDurableStorageRecords<BucketAliasState>(this.ctx.storage, {
+      prefix: "bucket-alias:",
+      shouldPrune: (state) => state.expiresAt <= now
     });
-
-    await Promise.all(
-      [...aliases]
-        .filter(([, state]) => state.expiresAt <= now)
-        .map(([key]) => this.ctx.storage.delete(key))
-    );
   }
 
   private async pruneExpiredGuildMemberCacheEntries() {

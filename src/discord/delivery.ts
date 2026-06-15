@@ -3,6 +3,10 @@ import {
   type ResponseArtifact,
   type StoredResponseArtifact
 } from "../artifacts";
+import {
+  isTimestampBefore,
+  pruneDurableStorageRecords
+} from "../storage-prune";
 import type {
   DiscordChatRequest,
   DiscordChatResponse,
@@ -239,46 +243,22 @@ export class DiscordDeliveryStore {
     retentionMs = DELIVERY_RECORD_RETENTION_MS
   ) {
     const cutoffMs = Date.now() - retentionMs;
-    const records = await this.storage.list<DiscordDeliveryRecord>({
+    return pruneDurableStorageRecords<DiscordDeliveryRecord>(this.storage, {
       prefix: DISCORD_DELIVERY_PREFIX,
-      limit: DELIVERY_RECORD_PRUNE_BATCH_SIZE
+      limit: DELIVERY_RECORD_PRUNE_BATCH_SIZE,
+      shouldPrune: (record) =>
+        isTerminalDeliveryStatus(record.status) &&
+        isTimestampBefore(record.updatedAt, cutoffMs)
     });
-    const keysToDelete: string[] = [];
-
-    for (const [key, record] of records) {
-      if (!isTerminalDeliveryStatus(record.status)) continue;
-
-      const updatedAtMs = Date.parse(record.updatedAt);
-      if (!Number.isFinite(updatedAtMs)) continue;
-      if (updatedAtMs < cutoffMs) keysToDelete.push(key);
-    }
-
-    if (keysToDelete.length > 0) {
-      await this.storage.delete(keysToDelete);
-    }
-
-    return keysToDelete.length;
   }
 
   async pruneStaleDebugResults(retentionMs = DEBUG_RESULT_RETENTION_MS) {
     const cutoffMs = Date.now() - retentionMs;
-    const results = await this.storage.list<DiscordDebugResult>({
+    return pruneDurableStorageRecords<DiscordDebugResult>(this.storage, {
       prefix: DISCORD_DEBUG_RESULT_PREFIX,
-      limit: DEBUG_RESULT_PRUNE_BATCH_SIZE
+      limit: DEBUG_RESULT_PRUNE_BATCH_SIZE,
+      shouldPrune: (result) => isTimestampBefore(result.updatedAt, cutoffMs)
     });
-    const keysToDelete: string[] = [];
-
-    for (const [key, result] of results) {
-      const updatedAtMs = Date.parse(result.updatedAt);
-      if (!Number.isFinite(updatedAtMs)) continue;
-      if (updatedAtMs < cutoffMs) keysToDelete.push(key);
-    }
-
-    if (keysToDelete.length > 0) {
-      await this.storage.delete(keysToDelete);
-    }
-
-    return keysToDelete.length;
   }
 
   async putDebugResult(

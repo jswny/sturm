@@ -12,6 +12,7 @@ import type {
   DiscordPermissionContext,
   DiscordUserContext
 } from "./types";
+import { pruneDurableStorageRecords } from "../storage-prune";
 
 export type ComponentPromptKind = "confirm" | "select";
 export type ComponentPromptPresentation = "buttons" | "select";
@@ -236,23 +237,11 @@ export class DiscordComponentPromptStore {
 
   async pruneStalePrompts(retentionMs = COMPONENT_PROMPT_RETENTION_MS) {
     const cutoffMs = Date.now() - retentionMs;
-    const prompts = await this.storage.list<StoredComponentPrompt>({
+    return pruneDurableStorageRecords<StoredComponentPrompt>(this.storage, {
       prefix: COMPONENT_PROMPT_KEY_PREFIX,
-      limit: COMPONENT_PROMPT_PRUNE_BATCH_SIZE
+      limit: COMPONENT_PROMPT_PRUNE_BATCH_SIZE,
+      shouldPrune: (prompt) => shouldPruneComponentPrompt(prompt, cutoffMs)
     });
-    const keysToDelete: string[] = [];
-
-    for (const [key, prompt] of prompts) {
-      if (shouldPruneComponentPrompt(prompt, cutoffMs)) {
-        keysToDelete.push(key);
-      }
-    }
-
-    if (keysToDelete.length > 0) {
-      await this.storage.delete(keysToDelete);
-    }
-
-    return keysToDelete.length;
   }
 }
 

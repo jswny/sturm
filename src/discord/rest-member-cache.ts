@@ -4,6 +4,7 @@ import {
   isDiscordSnowflake,
   type DiscordGuildMemberTarget
 } from "./rest-routes";
+import { pruneDurableStorageRecords } from "../storage-prune";
 
 export type DiscordRestCacheMode = "default" | "reload" | "no-store";
 
@@ -60,14 +61,12 @@ export class DiscordGuildMemberCacheStore {
   }
 
   async pruneExpired(now = Date.now()) {
-    const entries = await this.storage.list<DiscordGuildMemberCacheState>({
-      prefix: DISCORD_GUILD_MEMBER_CACHE_PREFIX
-    });
-
-    await Promise.all(
-      [...entries]
-        .filter(([, state]) => state.expiresAt <= now)
-        .map(([key]) => this.storage.delete(key))
+    await pruneDurableStorageRecords<DiscordGuildMemberCacheState>(
+      this.storage,
+      {
+        prefix: DISCORD_GUILD_MEMBER_CACHE_PREFIX,
+        shouldPrune: (state) => state.expiresAt <= now
+      }
     );
   }
 

@@ -5,6 +5,7 @@ import {
   MEMORY_REFLECTION_PROVIDER_OPTIONS,
   type ModelProviderOptions
 } from "./model";
+import { isTimestampBefore, pruneDurableStorageRecords } from "./storage-prune";
 
 const GUILD_MEMORY_REFLECTION_PREFIX = "guild-memory-reflection:";
 const MEMORY_REFLECTION_RECORD_PRUNE_BATCH_SIZE = 100;
@@ -142,24 +143,14 @@ export class GuildMemoryReflectionStore {
 
   async pruneTerminalRecords(retentionMs: number) {
     const cutoffMs = Date.now() - retentionMs;
-    const records = await this.storage.list<GuildMemoryReflectionRecord>({
-      prefix: GUILD_MEMORY_REFLECTION_PREFIX,
-      limit: MEMORY_REFLECTION_RECORD_PRUNE_BATCH_SIZE
-    });
-    const keysToDelete: string[] = [];
-
-    for (const [key, record] of records) {
-      const updatedAtMs = Date.parse(record.updatedAt);
-      if (!Number.isFinite(updatedAtMs)) continue;
-      if (record.status === "running" && updatedAtMs >= cutoffMs) continue;
-      if (updatedAtMs < cutoffMs) keysToDelete.push(key);
-    }
-
-    if (keysToDelete.length > 0) {
-      await this.storage.delete(keysToDelete);
-    }
-
-    return keysToDelete.length;
+    return pruneDurableStorageRecords<GuildMemoryReflectionRecord>(
+      this.storage,
+      {
+        prefix: GUILD_MEMORY_REFLECTION_PREFIX,
+        limit: MEMORY_REFLECTION_RECORD_PRUNE_BATCH_SIZE,
+        shouldPrune: (record) => isTimestampBefore(record.updatedAt, cutoffMs)
+      }
+    );
   }
 
   private async writeTerminalRecord(
