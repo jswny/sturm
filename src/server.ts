@@ -4,6 +4,7 @@ import { handleDiscordRequest } from "./discord";
 import { logError } from "./logging";
 
 export { ChatAgent } from "./agent";
+export { CodemodeRuntime } from "@cloudflare/codemode";
 export { DiscordRestDispatcher } from "./discord/rest-dispatcher";
 export { GuildMemoryObject } from "./memory";
 

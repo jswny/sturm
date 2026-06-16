@@ -13,7 +13,6 @@ import type { SearchEnv } from "../search";
 import type { StickerEnv, StickerRequestContext } from "../stickers";
 import { createArchiveTools } from "./archive";
 import { createArtifactTools } from "./artifacts";
-import { createRenderedPageTools, type BrowserEnv } from "./browser";
 import { createDiscordCodeModeTool, type CodeModeEnv } from "./codemode";
 import { createDiscordMessageSearchTools } from "./discord-message-search";
 import { createEmojiTools } from "./emojis";
@@ -36,8 +35,7 @@ export type ToolEnv = SearchEnv &
   NicknameEnv &
   EmojiEnv &
   StickerEnv &
-  CodeModeEnv &
-  BrowserEnv;
+  CodeModeEnv;
 
 export type ToolOptions = {
   discordRequest?: NicknameRequestContext &
@@ -55,7 +53,6 @@ export function createDiscordTools(env: ToolEnv, options: ToolOptions = {}) {
   return {
     ...createArchiveTools(),
     ...createSearchTools(env),
-    ...createRenderedPageTools(env),
     ...createDiscordMessageSearchTools(env, options.discordRequest ?? {}),
     ...createNicknameTools(env, options.discordRequest ?? {}),
     ...createModerationTools(env, options.discordRequest ?? {}),

@@ -648,7 +648,12 @@ export class ChatAgent extends Think<Env> {
     );
 
     return {
-      codemode: createDiscordCodeModeTool(this.env, directTools, this.workspace)
+      codemode: createDiscordCodeModeTool(
+        this.env,
+        directTools,
+        this.workspace,
+        this.ctx
+      )
     };
   }
 
