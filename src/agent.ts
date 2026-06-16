@@ -60,7 +60,7 @@ import {
   type GuildMemoryReflectionRecord
 } from "./memory-reflection";
 import {
-  CHAT_MODEL,
+  COMPACTION_CHAT_MODEL,
   COMPACTION_PROVIDER_OPTIONS,
   COMPACTION_TAIL_TOKEN_BUDGET,
   COMPACTION_TOKEN_THRESHOLD,
@@ -68,6 +68,7 @@ import {
   CONTEXT_OVERFLOW_MAX_INPUT_TOKENS,
   CHAT_AI_GATEWAY_FLOWS,
   createChatWorkersAI,
+  MEMORY_REFLECTION_CHAT_MODEL,
   MEMORY_REFLECTION_PROVIDER_OPTIONS,
   REPLY_CHAT_MODEL,
   REPLY_PROVIDER_OPTIONS
@@ -166,7 +167,7 @@ export class ChatAgent extends Think<Env> {
               CHAT_AI_GATEWAY_FLOWS.compaction
             );
             const result = await generateText({
-              model: workersai(CHAT_MODEL, {
+              model: workersai(COMPACTION_CHAT_MODEL, {
                 sessionAffinity: this.sessionAffinity
               }),
               providerOptions: COMPACTION_PROVIDER_OPTIONS,
@@ -851,7 +852,7 @@ export class ChatAgent extends Think<Env> {
       store: this.memoryReflections,
       getProvider: () => this.requireGuildMemoryProvider(),
       createModel: () =>
-        workersai(CHAT_MODEL, {
+        workersai(MEMORY_REFLECTION_CHAT_MODEL, {
           sessionAffinity: this.sessionAffinity
         }),
       providerOptions: MEMORY_REFLECTION_PROVIDER_OPTIONS
