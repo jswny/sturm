@@ -13,7 +13,11 @@ import type { SearchEnv } from "../search";
 import type { StickerEnv, StickerRequestContext } from "../stickers";
 import { createArchiveTools } from "./archive";
 import { createArtifactTools } from "./artifacts";
-import { createDiscordCodeModeTool, type CodeModeEnv } from "./codemode";
+import {
+  createDiscordCodeModeRuntime,
+  createDiscordCodeModeTool,
+  type CodeModeEnv
+} from "./codemode";
 import { createDiscordMessageSearchTools } from "./discord-message-search";
 import { createEmojiTools } from "./emojis";
 import { createImageTools } from "./images";
@@ -65,4 +69,4 @@ export function createDiscordTools(env: ToolEnv, options: ToolOptions = {}) {
   };
 }
 
-export { createDiscordCodeModeTool };
+export { createDiscordCodeModeRuntime, createDiscordCodeModeTool };

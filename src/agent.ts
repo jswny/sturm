@@ -88,11 +88,13 @@ import {
   GUILD_MEMORY_CONTEXT_LABEL,
   GUILD_MEMORY_CONTEXT_MAX_TOKENS
 } from "./session-context";
-import { createDiscordCodeModeTool, createDiscordTools } from "./tools";
+import { createDiscordCodeModeRuntime, createDiscordTools } from "./tools";
+import type { DiscordCodeModeRuntime } from "./tools/codemode";
 import type { UserPromptController } from "./tools/user-prompts";
 
 const HOUSEKEEPING_INTERVAL_SECONDS = 24 * 60 * 60;
 const TERMINAL_SUBMISSION_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+const CODEMODE_STALE_EXECUTION_TTL_MS = 24 * 60 * 60 * 1000;
 const DISCORD_ACTIVE_TOOLS = ["codemode"];
 const CHAT_RECOVERY_MAX_ATTEMPTS = 6;
 const CHAT_RECOVERY_STABLE_TIMEOUT_MS = 10_000;
@@ -129,6 +131,7 @@ export class ChatAgent extends Think<Env> {
   private memoryReflections = new GuildMemoryReflectionStore(this.ctx.storage);
   private progressReporters = new Map<string, DiscordProgressReporter>();
   private guildMemoryProvider?: GuildMemoryProvider;
+  private codeModeRuntime?: DiscordCodeModeRuntime["runtime"];
 
   override getModel() {
     const workersai = createChatWorkersAI(
@@ -575,7 +578,8 @@ export class ChatAgent extends Think<Env> {
         staleComponentPrompts,
         terminalSubmissions,
         memoryReflectionRecords,
-        managedFiberRecords
+        managedFiberRecords,
+        staleCodeModeExecutions
       ] = await Promise.all([
         this.discordDeliveries.pruneCompletedDeliveryRecords(),
         this.discordDeliveries.pruneStaleDebugResults(),
@@ -596,7 +600,8 @@ export class ChatAgent extends Think<Env> {
             Date.now() - TERMINAL_SUBMISSION_RETENTION_MS
           ),
           limit: 100
-        })
+        }),
+        this.expireStaleCodeModeExecutions()
       ]);
 
       if (
@@ -605,7 +610,8 @@ export class ChatAgent extends Think<Env> {
         staleComponentPrompts > 0 ||
         terminalSubmissions > 0 ||
         memoryReflectionRecords > 0 ||
-        managedFiberRecords > 0
+        managedFiberRecords > 0 ||
+        staleCodeModeExecutions > 0
       ) {
         logInfo("Discord housekeeping pruned stale records", {
           agentName: this.name,
@@ -614,7 +620,8 @@ export class ChatAgent extends Think<Env> {
           staleComponentPrompts,
           terminalSubmissions,
           memoryReflectionRecords,
-          managedFiberRecords
+          managedFiberRecords,
+          staleCodeModeExecutions
         });
       }
     } catch (error) {
@@ -624,10 +631,30 @@ export class ChatAgent extends Think<Env> {
     }
   }
 
+  private async expireStaleCodeModeExecutions() {
+    const runtime =
+      this.codeModeRuntime ??
+      (await this.createDiscordCodeModeRuntime(undefined, undefined)).runtime;
+    const expired = await runtime.expirePaused({
+      maxAgeMs: CODEMODE_STALE_EXECUTION_TTL_MS
+    });
+    return expired.length;
+  }
+
   private async createDiscordThinkTools(
     turn: DiscordChatRequest | undefined,
     progress: DiscordProgressReporter | undefined
   ): Promise<ToolSet> {
+    const codeMode = await this.createDiscordCodeModeRuntime(turn, progress);
+    return {
+      codemode: codeMode.tool
+    };
+  }
+
+  private async createDiscordCodeModeRuntime(
+    turn: DiscordChatRequest | undefined,
+    progress: DiscordProgressReporter | undefined
+  ): Promise<DiscordCodeModeRuntime> {
     const directTools = withProgressTools(
       {
         ...createDiscordTools(this.env, {
@@ -649,14 +676,14 @@ export class ChatAgent extends Think<Env> {
       progress
     );
 
-    return {
-      codemode: createDiscordCodeModeTool(
-        this.env,
-        directTools,
-        this.workspace,
-        this.ctx
-      )
-    };
+    const codeMode = createDiscordCodeModeRuntime(
+      this.env,
+      directTools,
+      this.workspace,
+      this.ctx
+    );
+    this.codeModeRuntime = codeMode.runtime;
+    return codeMode;
   }
 
   private createScheduledTaskController(turn: DiscordChatRequest) {

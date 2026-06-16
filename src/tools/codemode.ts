@@ -1,4 +1,7 @@
-import { createExecuteTool } from "@cloudflare/think/tools/execute";
+import {
+  createExecuteRuntime,
+  type ExecuteRuntime
+} from "@cloudflare/think/tools/execute";
 import {
   createWorkspaceStateBackend,
   type WorkspaceFsLike
@@ -12,13 +15,18 @@ export type CodeModeEnv = {
 
 const CODEMODE_TIMEOUT_MS = 30_000;
 
-export function createDiscordCodeModeTool(
+export type DiscordCodeModeRuntime = {
+  tool: ExecuteRuntime["tool"];
+  runtime: ExecuteRuntime["runtime"];
+};
+
+export function createDiscordCodeModeRuntime(
   env: CodeModeEnv,
   tools: ToolSet,
   workspace: WorkspaceFsLike,
   ctx: DurableObjectState
 ) {
-  const codeModeTool = createExecuteTool({
+  const codeModeRuntime = createExecuteRuntime({
     ctx,
     tools,
     state: createWorkspaceStateBackend(workspace),
@@ -27,11 +35,27 @@ export function createDiscordCodeModeTool(
     timeout: CODEMODE_TIMEOUT_MS,
     globalOutbound: null
   });
-  const execute = codeModeTool.execute;
-  if (!execute) return codeModeTool;
+  return {
+    ...codeModeRuntime,
+    tool: addCodeModeExecutionTimestamp(codeModeRuntime.tool)
+  };
+}
+
+export function createDiscordCodeModeTool(
+  env: CodeModeEnv,
+  tools: ToolSet,
+  workspace: WorkspaceFsLike,
+  ctx: DurableObjectState
+) {
+  return createDiscordCodeModeRuntime(env, tools, workspace, ctx).tool;
+}
+
+function addCodeModeExecutionTimestamp(tool: ExecuteRuntime["tool"]) {
+  const execute = tool.execute;
+  if (!execute) return tool;
 
   return {
-    ...codeModeTool,
+    ...tool,
     execute: async (...args: Parameters<typeof execute>) => {
       const output = await execute(...args);
       return {
