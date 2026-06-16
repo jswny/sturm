@@ -49,6 +49,15 @@ If the application uses Durable Objects or Workflows, refer to the relevant best
 - Durable Objects: https://developers.cloudflare.com/durable-objects/best-practices/rules-of-durable-objects/
 - Workflows: https://developers.cloudflare.com/workflows/build/rules-of-workflows/
 
+## Runtime Debugging Flow
+
+- Start from the observed symptom and identify the affected surface: Discord interaction, debug endpoint, scheduled task, Code Mode, Workers AI/AI Gateway model flow, Durable Object alarm, or Discord REST call.
+- Use the Cloudflare MCP/OpenAPI before guessing at platform behavior. For AI Gateway issues, inspect account `40444d2f11999fee857be59abe745754`, gateway `default`, and prefer logs filtered by Sturm metadata (`app: "sturm"` plus `flow: "reply"`, `"compaction"`, or `"memory-reflection"`). Check the log row first for model, provider, status, duration, token counts, path, and timestamp, then inspect `/logs/{id}/request` and `/logs/{id}/response` when payload retention is enabled.
+- Correlate Cloudflare evidence with app evidence: log IDs, timestamps, Worker event logs, `src/logging.ts` structured messages, debug `interactionId`, Think submission status, delivery status, and memory-reflection status. Distinguish model request/response payloads from metadata-only log rows.
+- Reproduce through the real debug surface when possible: run `npm run dev`, submit `/debug/chat`, and inspect `/debug/status`. Use stable test identifiers (`test-guild`, `test-channel`, `test-user`) unless real Discord API behavior matters; for real Discord checks use guild `556940307011338329` and test user `622546383462727690`.
+- Prefer read-only smoke checks before mutations. For Code Mode/tool issues, first verify the AI Gateway request shows native `codemode.search(...)` / `codemode.describe(...)` discovery and the expected inner tool names, then run a read-only inner tool call through `/debug/chat`. Only run mutating tools when the user explicitly approves the real side effect.
+- When reporting results, include the concrete evidence: checks run, relevant Cloudflare log IDs or timestamps, debug `interactionId`, whether request/response payloads were inspected, and any scope limits such as "read-only tool call only" or "Discord platform delivery not manually verified."
+
 ## Project Architecture
 
 - This repo is a Discord webhook bot, not a web UI.
