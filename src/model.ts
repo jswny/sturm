@@ -1,6 +1,7 @@
 import { createWorkersAI } from "workers-ai-provider";
 
 export const CHAT_MODEL = "@cf/moonshotai/kimi-k2.7-code";
+export const REPLY_CHAT_MODEL = "dynamic/sturm-reply";
 export const CHAT_AI_GATEWAY_ID = "default";
 export const CHAT_AI_GATEWAY_METADATA = {
   app: "sturm"

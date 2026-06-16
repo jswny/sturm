@@ -69,6 +69,7 @@ import {
   CHAT_AI_GATEWAY_FLOWS,
   createChatWorkersAI,
   MEMORY_REFLECTION_PROVIDER_OPTIONS,
+  REPLY_CHAT_MODEL,
   REPLY_PROVIDER_OPTIONS
 } from "./model";
 import { createBaseSystemPrompt } from "./prompts";
@@ -133,7 +134,7 @@ export class ChatAgent extends Think<Env> {
       this.env,
       CHAT_AI_GATEWAY_FLOWS.reply
     );
-    return workersai(CHAT_MODEL, {
+    return workersai(REPLY_CHAT_MODEL, {
       sessionAffinity: this.sessionAffinity
     });
   }
