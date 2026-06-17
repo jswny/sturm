@@ -14,7 +14,11 @@ import {
   type TurnContext
 } from "@cloudflare/think";
 import { Workspace } from "@cloudflare/shell";
-import type { FiberInspection, FiberRecoveryResult } from "agents";
+import {
+  isPlatformTransientError,
+  type FiberInspection,
+  type FiberRecoveryResult
+} from "agents";
 import { Session } from "agents/experimental/memory/session";
 import { createCompactFunction } from "agents/experimental/memory/utils";
 import { generateText, type ToolSet } from "ai";
@@ -78,6 +82,7 @@ import {
   createScheduledChannelTaskUserText,
   getScheduledChannelTaskPayload,
   SCHEDULED_CHANNEL_TASK_CALLBACK,
+  type ScheduledChannelTaskSchedule,
   type ScheduledChannelTaskPayload
 } from "./scheduled-tasks";
 import {
@@ -101,6 +106,11 @@ const CHAT_RECOVERY_STABLE_TIMEOUT_MS = 10_000;
 const CHAT_STREAM_STALL_TIMEOUT_MS = 120_000;
 const CHAT_RECOVERY_TERMINAL_MESSAGE =
   "Sorry, this request was interrupted and could not be recovered. Please try again.";
+
+type ScheduledChannelTaskExecution = Pick<
+  ScheduledChannelTaskSchedule,
+  "id" | "time" | "type"
+>;
 
 export class ChatAgent extends Think<Env> {
   override sendReasoning = false;
@@ -443,37 +453,65 @@ export class ChatAgent extends Think<Env> {
 
   async enqueueDiscordChat(input: DiscordDeliveryChatInput) {
     const result = await this.discordDeliveries.create(input);
-    if (!result.created || !result.record) return;
+    if (!result.record || result.record.type !== "chat") return;
 
     const record = result.record;
+    if (isTerminalDelivery(record)) return;
+
+    if (!result.created) {
+      const existingSubmission = await this.inspectSubmission(
+        record.interactionId
+      );
+      if (existingSubmission) return;
+
+      logWarn("Repairing pending Discord delivery without Think submission", {
+        sequence: record.sequence,
+        interactionId: record.interactionId,
+        deliveryType: record.type,
+        responseTargetType: record.responseTarget.type
+      });
+    }
+
     const progress = createDiscordProgressReporter(record.responseTarget, {
       createdAt: record.createdAt,
       interactionId: record.interactionId,
       sequence: record.sequence
     });
-    if (progress) this.progressReporters.set(record.interactionId, progress);
+    if (progress && !this.progressReporters.has(record.interactionId)) {
+      this.progressReporters.set(record.interactionId, progress);
+    }
 
     try {
-      await this.submitMessages([createDiscordUserMessage(input.request)], {
-        submissionId: input.request.interactionId,
-        idempotencyKey: input.request.interactionId,
+      await this.submitMessages([createDiscordUserMessage(record.request)], {
+        submissionId: record.interactionId,
+        idempotencyKey: record.interactionId,
         metadata: {
           source: "discord",
           type: "chat",
           sequence: record.sequence,
-          guildId: input.request.guildId,
-          channelId: input.request.channelId,
-          userId: input.request.userId
+          guildId: record.request.guildId,
+          channelId: record.request.channelId,
+          userId: record.request.userId
         }
       });
     } catch (error) {
       this.progressReporters.delete(record.interactionId);
-      await this.discordDeliveries.deleteCreatedDelivery(record);
-      logError("Discord Think submission failed", error, {
+      if (result.created) {
+        await this.discordDeliveries.deleteCreatedDelivery(record);
+      }
+      const context = {
         sequence: record.sequence,
         interactionId: record.interactionId,
         deliveryType: record.type
-      });
+      };
+      if (isPlatformTransientError(error)) {
+        logWarn("Discord Think submission hit transient platform error", {
+          ...context,
+          error: getErrorMessage(error)
+        });
+      } else {
+        logError("Discord Think submission failed", error, context);
+      }
       throw error;
     }
   }
@@ -533,7 +571,10 @@ export class ChatAgent extends Think<Env> {
     };
   }
 
-  async runScheduledChannelTask(payload: ScheduledChannelTaskPayload) {
+  async runScheduledChannelTask(
+    payload: ScheduledChannelTaskPayload,
+    schedule?: ScheduledChannelTaskExecution
+  ) {
     const task = getScheduledChannelTaskPayload(payload);
     if (!task) {
       logWarn("Scheduled channel task payload was invalid", {
@@ -542,7 +583,10 @@ export class ChatAgent extends Think<Env> {
       return;
     }
 
-    const interactionId = `scheduled-${task.taskId}-${crypto.randomUUID()}`;
+    const interactionId = createScheduledChannelTaskInteractionId(
+      task,
+      schedule
+    );
     try {
       await this.enqueueDiscordChat({
         responseTarget: {
@@ -561,12 +605,29 @@ export class ChatAgent extends Think<Env> {
         }
       });
     } catch (error) {
-      logError("Scheduled channel task submission failed", error, {
+      const context = {
         agentName: this.name,
         taskId: task.taskId,
+        scheduleId: schedule?.id,
+        scheduleType: schedule?.type,
+        scheduledFor: getScheduledChannelTaskExecutionTime(schedule),
+        interactionId,
         guildId: task.guildId,
         channelId: task.channelId
-      });
+      };
+
+      if (isPlatformTransientError(error)) {
+        logWarn(
+          "Scheduled channel task submission hit transient platform error",
+          {
+            ...context,
+            error: getErrorMessage(error)
+          }
+        );
+        throw error;
+      }
+
+      logError("Scheduled channel task submission failed", error, context);
     }
   }
 
@@ -1003,6 +1064,31 @@ function createDebugDeliveryStatus(record: DiscordDeliveryRecord) {
           }))
         : undefined
   };
+}
+
+function createScheduledChannelTaskInteractionId(
+  task: ScheduledChannelTaskPayload,
+  schedule: ScheduledChannelTaskExecution | undefined
+) {
+  const executionId = schedule
+    ? `${sanitizeInteractionIdFragment(schedule.id)}-${sanitizeInteractionIdFragment(
+        Math.trunc(schedule.time)
+      )}`
+    : crypto.randomUUID();
+
+  return `scheduled-${sanitizeInteractionIdFragment(task.taskId)}-${executionId}`;
+}
+
+function getScheduledChannelTaskExecutionTime(
+  schedule: ScheduledChannelTaskExecution | undefined
+) {
+  if (!schedule || !Number.isFinite(schedule.time)) return undefined;
+  const date = new Date(schedule.time * 1000);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : undefined;
+}
+
+function sanitizeInteractionIdFragment(value: string | number) {
+  return String(value).replace(/[^A-Za-z0-9_.:-]/g, "_");
 }
 
 function createDebugSubmissionStatus(submission: ThinkSubmissionInspection) {
