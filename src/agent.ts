@@ -40,6 +40,7 @@ import {
 } from "./discord/delivery";
 import { DiscordDeliveryRunner } from "./discord/delivery-runner";
 import { inlineDataUrls } from "./discord/format";
+import { getCurrentBotUser } from "./discord/api";
 import {
   createDiscordProgressReporter,
   withProgressTools
@@ -106,6 +107,7 @@ const CHAT_RECOVERY_STABLE_TIMEOUT_MS = 10_000;
 const CHAT_STREAM_STALL_TIMEOUT_MS = 120_000;
 const CHAT_RECOVERY_TERMINAL_MESSAGE =
   "Sorry, this request was interrupted and could not be recovered. Please try again.";
+const DISCORD_BOT_USER_ID_STORAGE_KEY = "discord:bot-user-id";
 
 type ScheduledChannelTaskExecution = Pick<
   ScheduledChannelTaskSchedule,
@@ -142,6 +144,8 @@ export class ChatAgent extends Think<Env> {
   private progressReporters = new Map<string, DiscordProgressReporter>();
   private guildMemoryProvider?: GuildMemoryProvider;
   private codeModeRuntime?: DiscordCodeModeRuntime["runtime"];
+  private botUserId?: string;
+  private botUserIdPromise?: Promise<string | undefined>;
 
   override getModel() {
     const workersai = createChatWorkersAI(
@@ -599,6 +603,7 @@ export class ChatAgent extends Think<Env> {
           guildId: task.guildId,
           channelId: task.channelId,
           channel: task.channel,
+          app: task.app,
           appPermissions: task.appPermissions,
           userId: task.createdByUserId,
           user: task.createdByUser
@@ -820,6 +825,7 @@ export class ChatAgent extends Think<Env> {
         guildId: prompt.guildId ?? input.guildId,
         channelId: prompt.channelId ?? input.channelId,
         channel: input.channel,
+        app: input.app,
         appPermissions: input.appPermissions,
         userId: input.userId,
         user: input.user,
@@ -831,11 +837,60 @@ export class ChatAgent extends Think<Env> {
   }
 
   private async createDiscordTurnRuntimeContext(turn: DiscordChatRequest) {
-    const sections = [formatDiscordRuntimeContext(turn)];
+    const runtimeTurn = await this.withResolvedDiscordAppContext(turn);
+    const sections = [formatDiscordRuntimeContext(runtimeTurn)];
     const recentChannelContext =
-      await this.createRecentDiscordChannelContext(turn);
+      await this.createRecentDiscordChannelContext(runtimeTurn);
     if (recentChannelContext) sections.push(recentChannelContext);
     return sections.filter(Boolean).join("\n\n");
+  }
+
+  private async withResolvedDiscordAppContext(
+    turn: DiscordChatRequest
+  ): Promise<DiscordChatRequest> {
+    if (turn.app?.botUserId) return turn;
+
+    const botUserId = await this.getDiscordBotUserId();
+    if (!botUserId) return turn;
+
+    return {
+      ...turn,
+      app: {
+        ...turn.app,
+        botUserId
+      }
+    };
+  }
+
+  private async getDiscordBotUserId() {
+    if (this.botUserId) return this.botUserId;
+
+    const stored = await this.ctx.storage.get<string>(
+      DISCORD_BOT_USER_ID_STORAGE_KEY
+    );
+    if (stored) {
+      this.botUserId = stored;
+      return stored;
+    }
+
+    if (!this.botUserIdPromise) {
+      this.botUserIdPromise = getCurrentBotUser(this.env)
+        .then(async (user) => {
+          this.botUserId = user.id;
+          await this.ctx.storage.put(DISCORD_BOT_USER_ID_STORAGE_KEY, user.id);
+          return user.id;
+        })
+        .catch((error) => {
+          this.botUserIdPromise = undefined;
+          logWarn("Discord bot user lookup failed", {
+            agentName: this.name,
+            error: getErrorMessage(error)
+          });
+          return undefined;
+        });
+    }
+
+    return this.botUserIdPromise;
   }
 
   private async createRecentDiscordChannelContext(turn: DiscordChatRequest) {

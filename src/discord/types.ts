@@ -11,6 +11,7 @@ export type DiscordChatRequest = {
   channelId?: string;
   channel?: DiscordChannelContext;
   attachments?: DiscordRequestAttachment[];
+  app?: DiscordAppContext;
   appPermissions?: DiscordPermissionContext;
   userId?: string;
   user?: DiscordUserContext;
@@ -83,6 +84,11 @@ export type DiscordChannelContext = {
   parentId?: string;
   nsfw?: boolean;
   slowmodeSeconds?: number;
+};
+
+export type DiscordAppContext = {
+  applicationId?: string;
+  botUserId?: string;
 };
 
 export type DiscordRequestAttachment = {

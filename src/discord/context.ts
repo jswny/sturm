@@ -7,7 +7,11 @@ import {
   createDiscordPermissionContext,
   formatDiscordPermissions
 } from "./permissions";
-import type { DiscordChannelContext, DiscordChatRequest } from "./types";
+import type {
+  DiscordAppContext,
+  DiscordChannelContext,
+  DiscordChatRequest
+} from "./types";
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -17,9 +21,10 @@ type DiscordRuntimeInteraction =
 
 export function createDiscordRuntimeContext(
   interaction: DiscordRuntimeInteraction
-): Pick<DiscordChatRequest, "channel" | "appPermissions"> {
+): Pick<DiscordChatRequest, "channel" | "app" | "appPermissions"> {
   return {
     channel: createDiscordChannelContext(interaction),
+    app: createDiscordAppContext(interaction),
     appPermissions: createDiscordPermissionContext(interaction.app_permissions)
   };
 }
@@ -51,6 +56,14 @@ function createDiscordChannelContext(
   });
 }
 
+function createDiscordAppContext(
+  interaction: DiscordRuntimeInteraction
+): DiscordAppContext {
+  return omitUndefined({
+    applicationId: interaction.application_id
+  });
+}
+
 function formatDiscordChannelContext(
   channel: DiscordChannelContext | undefined
 ) {
@@ -74,6 +87,10 @@ function formatDiscordChannelContext(
 function formatDiscordAppContext(request: DiscordChatRequest) {
   const lines = [
     "Current Discord app context:",
+    request.app?.applicationId
+      ? `application_id: ${request.app.applicationId}`
+      : "",
+    request.app?.botUserId ? `bot_user_id: ${request.app.botUserId}` : "",
     request.appPermissions
       ? `bot_permissions: ${formatDiscordPermissions(request.appPermissions)}`
       : ""

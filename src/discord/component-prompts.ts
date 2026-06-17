@@ -8,6 +8,7 @@ import {
   type APIStringSelectComponent
 } from "discord-api-types/v10";
 import type {
+  DiscordAppContext,
   DiscordChannelContext,
   DiscordPermissionContext,
   DiscordUserContext
@@ -79,6 +80,7 @@ export type ComponentPromptSelectionInput = {
 export type DiscordComponentPromptInteractionInput =
   ComponentPromptSelectionInput & {
     interactionId: string;
+    app?: DiscordAppContext;
     appPermissions?: DiscordPermissionContext;
     channel?: DiscordChannelContext;
     userPermissions?: string;

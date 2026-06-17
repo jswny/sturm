@@ -2,6 +2,7 @@ import { MessageFlags } from "discord-api-types/v10";
 import type {
   APIMessageTopLevelComponent,
   RESTAPIPartialCurrentUserGuild,
+  RESTGetAPICurrentUserResult,
   RESTGetAPIChannelMessagesResult,
   RESTGetAPICurrentUserGuildsResult,
   RESTGetAPIGuildMessagesSearchQuery,
@@ -228,6 +229,12 @@ export async function getGuildMember(
     `/guilds/${guildId}/members/${userId}`,
     { maxWaitMs: options.maxWaitMs, cache: options.cache }
   );
+}
+
+export async function getCurrentBotUser(
+  env: DiscordApiEnv
+): Promise<RESTGetAPICurrentUserResult> {
+  return discordApiFetch<RESTGetAPICurrentUserResult>(env, "/users/@me");
 }
 
 export async function searchGuildMembers(

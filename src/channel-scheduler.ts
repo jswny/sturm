@@ -423,6 +423,7 @@ function createScheduledChannelTaskPayload(
     guildId: turn.guildId,
     channelId: turn.channelId,
     channel: turn.channel,
+    app: turn.app,
     appPermissions: turn.appPermissions,
     createdByUserId: turn.userId,
     createdByUser: turn.user,

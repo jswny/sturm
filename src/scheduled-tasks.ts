@@ -1,5 +1,6 @@
 import type { Schedule } from "agents";
 import type {
+  DiscordAppContext,
   DiscordChannelContext,
   DiscordPermissionContext,
   DiscordUserContext
@@ -13,6 +14,7 @@ export type ScheduledChannelTaskPayload = {
   guildId: string;
   channelId: string;
   channel?: DiscordChannelContext;
+  app?: DiscordAppContext;
   appPermissions?: DiscordPermissionContext;
   createdByUserId?: string;
   createdByUser?: DiscordUserContext;

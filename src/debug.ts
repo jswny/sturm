@@ -2,6 +2,7 @@ import { getAgentByName } from "agents";
 import { getDiscordGuildChannelConversationName } from "./discord/conversation";
 import { createDiscordPermissionContext } from "./discord/permissions";
 import type {
+  DiscordAppContext,
   DiscordChannelContext,
   DiscordPermissionContext,
   DiscordRequestAttachment
@@ -9,6 +10,7 @@ import type {
 import { logWarn } from "./logging";
 
 type DebugEnv = Env & {
+  DISCORD_APPLICATION_ID?: string;
   STURM_DEBUG_ENABLED?: string;
 };
 
@@ -105,6 +107,7 @@ async function replyToDebugChat(payload: DebugChatPayload, env: DebugEnv) {
     channelId: payload.surface.channelId,
     channel: createDebugChannelContext(payload),
     attachments: payload.attachments,
+    app: createDebugAppContext(env),
     appPermissions: createDebugAppPermissions(payload),
     userId: payload.user.id,
     user: payload.user,
@@ -250,6 +253,12 @@ function createDebugAppPermissions(
     raw,
     names: payload.permissions.appNames
   };
+}
+
+function createDebugAppContext(env: DebugEnv): DiscordAppContext | undefined {
+  const applicationId = env.DISCORD_APPLICATION_ID?.trim();
+  if (!applicationId) return undefined;
+  return { applicationId };
 }
 
 function json(body: unknown, init?: ResponseInit) {

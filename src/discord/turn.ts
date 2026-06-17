@@ -19,6 +19,7 @@ type DiscordUserMessageMetadata = {
   channelId?: unknown;
   channel?: unknown;
   attachments?: unknown;
+  app?: unknown;
   appPermissions?: unknown;
   userId?: unknown;
   user?: unknown;
@@ -45,6 +46,7 @@ export function createDiscordUserMessage(
       channelId: request.channelId,
       channel: request.channel,
       attachments: request.attachments,
+      app: request.app,
       appPermissions: request.appPermissions,
       userId: request.userId,
       user: request.user,
@@ -74,6 +76,7 @@ export function getDiscordTurnFromUserMessage(
       typeof metadata.channelId === "string" ? metadata.channelId : undefined,
     channel: getDiscordChannelMetadata(metadata.channel),
     attachments: getDiscordAttachmentMetadata(metadata.attachments),
+    app: getDiscordAppMetadata(metadata.app),
     appPermissions: getDiscordPermissionMetadata(metadata.appPermissions),
     userId: typeof metadata.userId === "string" ? metadata.userId : undefined,
     user: getDiscordUserMetadata(metadata.user),
@@ -179,6 +182,16 @@ function getDiscordUserMetadata(value: unknown) {
     id: user.id,
     displayName:
       typeof user.displayName === "string" ? user.displayName : undefined
+  };
+}
+
+function getDiscordAppMetadata(value: unknown) {
+  if (!value || typeof value !== "object") return undefined;
+  const app = value as { applicationId?: unknown; botUserId?: unknown };
+  return {
+    applicationId:
+      typeof app.applicationId === "string" ? app.applicationId : undefined,
+    botUserId: typeof app.botUserId === "string" ? app.botUserId : undefined
   };
 }
 
