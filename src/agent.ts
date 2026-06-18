@@ -13,6 +13,7 @@ import {
   type TurnConfig,
   type TurnContext
 } from "@cloudflare/think";
+import type { ExecutionState } from "@cloudflare/codemode";
 import { Workspace } from "@cloudflare/shell";
 import {
   isPlatformTransientError,
@@ -23,6 +24,11 @@ import { Session } from "agents/experimental/memory/session";
 import { createCompactFunction } from "agents/experimental/memory/utils";
 import { generateText, type ToolSet } from "ai";
 import { createChannelScheduledTaskController } from "./channel-scheduler";
+import {
+  createCodeModeInspection,
+  normalizeCodeModeInspectionRequest,
+  type CodeModeInspectionRequest
+} from "./codemode-inspection";
 import { createRecentDiscordChannelContext } from "./discord/channel-context";
 import {
   DiscordComponentPromptStore,
@@ -101,6 +107,7 @@ import type { UserPromptController } from "./tools/user-prompts";
 const HOUSEKEEPING_INTERVAL_SECONDS = 24 * 60 * 60;
 const TERMINAL_SUBMISSION_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const CODEMODE_STALE_EXECUTION_TTL_MS = 24 * 60 * 60 * 1000;
+const CODEMODE_INSPECTION_MAX_EXECUTIONS = 50;
 const DISCORD_ACTIVE_TOOLS = ["codemode"];
 const CHAT_RECOVERY_MAX_ATTEMPTS = 6;
 const CHAT_RECOVERY_STABLE_TIMEOUT_MS = 10_000;
@@ -573,6 +580,27 @@ export class ChatAgent extends Think<Env> {
         memoryReflectionFiber
       )
     };
+  }
+
+  async inspectCodeModeRuntime(request: CodeModeInspectionRequest = {}) {
+    const normalized = normalizeCodeModeInspectionRequest(request);
+    const runtime =
+      this.codeModeRuntime ??
+      (await this.createDiscordCodeModeRuntime(undefined, undefined)).runtime;
+    const executionLimit = normalized.executionId
+      ? CODEMODE_INSPECTION_MAX_EXECUTIONS
+      : normalized.limit;
+    const [executions, pendingActions] = await Promise.all([
+      runtime.executions(executionLimit),
+      runtime.pending(normalized.executionId)
+    ]);
+
+    return createCodeModeInspection({
+      executions: executions as ExecutionState[],
+      pendingActions,
+      request: normalized,
+      inspectedAt: new Date().toISOString()
+    });
   }
 
   async runScheduledChannelTask(
