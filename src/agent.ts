@@ -40,6 +40,7 @@ import { getGuildIdFromDiscordConversationName } from "./discord/conversation";
 import {
   DiscordDeliveryStore,
   isTerminalDelivery,
+  type DiscordCodeModeExecutionReferenceInput,
   type DiscordDeliveryChatInput,
   type DiscordDeliveryRecord,
   type DiscordDeliveryResetInput
@@ -271,6 +272,9 @@ export class ChatAgent extends Think<Env> {
 
   override async afterToolCall(ctx: ToolCallResultContext) {
     if (ctx.toolName !== "codemode") return;
+    if (ctx.success) {
+      await this.recordCodeModeExecution(ctx);
+    }
     if (!ctx.success) {
       logWarn("Code mode tool call failed", {
         agentName: this.name,
@@ -587,19 +591,51 @@ export class ChatAgent extends Think<Env> {
     const runtime =
       this.codeModeRuntime ??
       (await this.createDiscordCodeModeRuntime(undefined, undefined)).runtime;
-    const executionLimit = normalized.executionId
-      ? CODEMODE_INSPECTION_MAX_EXECUTIONS
-      : normalized.limit;
-    const [executions, pendingActions] = await Promise.all([
-      runtime.executions(executionLimit),
-      runtime.pending(normalized.executionId)
-    ]);
+    const delivery = normalized.interactionId
+      ? await this.discordDeliveries.getDelivery(normalized.interactionId)
+      : undefined;
+    const codeModeExecutions =
+      delivery?.type === "chat" ? (delivery.codeModeExecutions ?? []) : [];
+    const correlatedExecutionIds = codeModeExecutions.map(
+      (execution) => execution.executionId
+    );
+    const requestedExecutionIds = normalized.executionId
+      ? [normalized.executionId]
+      : normalized.interactionId
+        ? correlatedExecutionIds
+        : undefined;
+    const executionLimit =
+      requestedExecutionIds !== undefined
+        ? CODEMODE_INSPECTION_MAX_EXECUTIONS
+        : normalized.limit;
+    const executions = await runtime.executions(executionLimit);
+    const pendingActions =
+      requestedExecutionIds !== undefined
+        ? requestedExecutionIds.length > 0
+          ? (
+              await Promise.all(
+                requestedExecutionIds.map((executionId) =>
+                  runtime.pending(executionId)
+                )
+              )
+            ).flat()
+          : []
+        : await runtime.pending(normalized.executionId);
 
     return createCodeModeInspection({
       executions: executions as ExecutionState[],
       pendingActions,
       request: normalized,
-      inspectedAt: new Date().toISOString()
+      inspectedAt: new Date().toISOString(),
+      requestedExecutionIds,
+      correlation: normalized.interactionId
+        ? {
+            interactionId: normalized.interactionId,
+            deliveryFound: Boolean(delivery),
+            deliveryType: delivery?.type,
+            codeModeExecutions
+          }
+        : undefined
     });
   }
 
@@ -1073,6 +1109,28 @@ export class ChatAgent extends Think<Env> {
     return turn ? this.progressReporters.get(turn.interactionId) : undefined;
   }
 
+  private async recordCodeModeExecution(ctx: ToolCallResultContext) {
+    const reference = createCodeModeExecutionReference(ctx);
+    if (!reference) return;
+
+    const turn = this.getLatestDiscordTurn();
+    if (!turn) return;
+
+    try {
+      await this.discordDeliveries.addCodeModeExecution(
+        turn.interactionId,
+        reference
+      );
+    } catch (error) {
+      logWarn("Code mode execution correlation failed", {
+        agentName: this.name,
+        interactionId: turn.interactionId,
+        executionId: reference.executionId,
+        error: getErrorMessage(error)
+      });
+    }
+  }
+
   private async reportDiscordRecoveryProgress(
     interactionId: string,
     event: Parameters<DiscordProgressReporter["report"]>[0]
@@ -1145,8 +1203,41 @@ function createDebugDeliveryStatus(record: DiscordDeliveryRecord) {
             source: artifact.source,
             description: artifact.description
           }))
-        : undefined
+        : undefined,
+    codeModeExecutions:
+      record.type === "chat" ? record.codeModeExecutions : undefined
   };
+}
+
+function createCodeModeExecutionReference(
+  ctx: ToolCallResultContext
+): DiscordCodeModeExecutionReferenceInput | undefined {
+  if (!ctx.success) return undefined;
+  const output = ctx.output;
+  if (!isObjectRecord(output)) return undefined;
+
+  const executionId = output.executionId;
+  if (typeof executionId !== "string" || !executionId.trim()) return undefined;
+
+  return {
+    executionId,
+    status: getCodeModeExecutionStatus(output.status),
+    toolCallId: typeof ctx.toolCallId === "string" ? ctx.toolCallId : undefined,
+    stepNumber: ctx.stepNumber,
+    durationMs: ctx.durationMs
+  };
+}
+
+function getCodeModeExecutionStatus(
+  status: unknown
+): DiscordCodeModeExecutionReferenceInput["status"] {
+  return status === "completed" || status === "paused" || status === "error"
+    ? status
+    : undefined;
+}
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object";
 }
 
 function createScheduledChannelTaskInteractionId(

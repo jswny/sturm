@@ -26,6 +26,20 @@ export type DiscordDeliveryLifecycle = {
   updatedAt: string;
 };
 
+export type DiscordCodeModeExecutionReference = {
+  executionId: string;
+  status?: "completed" | "paused" | "error";
+  toolCallId?: string;
+  stepNumber?: number;
+  durationMs?: number;
+  recordedAt: string;
+};
+
+export type DiscordCodeModeExecutionReferenceInput = Omit<
+  DiscordCodeModeExecutionReference,
+  "recordedAt"
+>;
+
 export type DiscordChatDeliveryRecord = {
   type: "chat";
   sequence: number;
@@ -37,6 +51,7 @@ export type DiscordChatDeliveryRecord = {
   createdAt: string;
   updatedAt: string;
   artifacts?: StoredResponseArtifact[];
+  codeModeExecutions?: DiscordCodeModeExecutionReference[];
   componentPromptId?: string;
   error?: string;
 };
@@ -99,6 +114,7 @@ const DELIVERY_RECORD_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const DELIVERY_RECORD_PRUNE_BATCH_SIZE = 100;
 const DEBUG_RESULT_RETENTION_MS = 24 * 60 * 60 * 1000;
 const DEBUG_RESULT_PRUNE_BATCH_SIZE = 100;
+const CODE_MODE_EXECUTION_REFERENCE_LIMIT = 20;
 
 export class DiscordDeliveryStore {
   constructor(private storage: DurableObjectStorage) {}
@@ -213,6 +229,41 @@ export class DiscordDeliveryStore {
         ...record,
         componentPromptId: promptId,
         updatedAt: new Date().toISOString()
+      };
+    });
+  }
+
+  async addCodeModeExecution(
+    interactionId: string,
+    input: DiscordCodeModeExecutionReferenceInput
+  ) {
+    await this.updateDelivery(interactionId, (record) => {
+      if (record.type !== "chat") return record;
+
+      const now = new Date().toISOString();
+      const nextReference = {
+        ...input,
+        recordedAt: now
+      } satisfies DiscordCodeModeExecutionReference;
+      const references = [...(record.codeModeExecutions ?? [])];
+      const existingIndex = references.findIndex(
+        (reference) => reference.executionId === input.executionId
+      );
+      if (existingIndex >= 0) {
+        references[existingIndex] = {
+          ...references[existingIndex],
+          ...nextReference
+        };
+      } else {
+        references.push(nextReference);
+      }
+
+      return {
+        ...record,
+        codeModeExecutions: references.slice(
+          -CODE_MODE_EXECUTION_REFERENCE_LIMIT
+        ),
+        updatedAt: now
       };
     });
   }

@@ -13,13 +13,29 @@ const MAX_EXECUTION_LOG_LINES = 20;
 export type CodeModeInspectionRequest = {
   limit?: number;
   executionId?: string;
+  interactionId?: string;
   previewMaxChars?: number;
 };
 
 export type NormalizedCodeModeInspectionRequest = {
   limit: number;
   executionId?: string;
+  interactionId?: string;
   previewMaxChars: number;
+};
+
+export type CodeModeInspectionCorrelation = {
+  interactionId: string;
+  deliveryFound: boolean;
+  deliveryType?: "chat" | "reset";
+  codeModeExecutions: Array<{
+    executionId: string;
+    status?: "completed" | "paused" | "error";
+    toolCallId?: string;
+    stepNumber?: number;
+    durationMs?: number;
+    recordedAt: string;
+  }>;
 };
 
 export type CodeModeInspectionInput = {
@@ -27,6 +43,8 @@ export type CodeModeInspectionInput = {
   pendingActions: PendingAction[];
   request: NormalizedCodeModeInspectionRequest;
   inspectedAt: string;
+  requestedExecutionIds?: string[];
+  correlation?: CodeModeInspectionCorrelation;
 };
 
 export function normalizeCodeModeInspectionRequest(
@@ -40,6 +58,7 @@ export function normalizeCodeModeInspectionRequest(
       MAX_INSPECTION_LIMIT
     ),
     executionId: request.executionId?.trim() || undefined,
+    interactionId: request.interactionId?.trim() || undefined,
     previewMaxChars: clampInteger(
       request.previewMaxChars,
       DEFAULT_PREVIEW_MAX_CHARS,
@@ -51,9 +70,12 @@ export function normalizeCodeModeInspectionRequest(
 
 export function createCodeModeInspection(input: CodeModeInspectionInput) {
   const { request } = input;
-  const executions = request.executionId
-    ? input.executions.filter(
-        (execution) => execution.id === request.executionId
+  const requestedExecutionIds = input.requestedExecutionIds
+    ? Array.from(new Set(input.requestedExecutionIds))
+    : undefined;
+  const executions = requestedExecutionIds
+    ? input.executions.filter((execution) =>
+        requestedExecutionIds.includes(execution.id)
       )
     : input.executions.slice(0, request.limit);
   const nonTerminalExecutions = input.executions.filter(
@@ -67,8 +89,20 @@ export function createCodeModeInspection(input: CodeModeInspectionInput) {
     query: {
       limit: request.limit,
       executionId: request.executionId,
+      interactionId: request.interactionId,
       previewMaxChars: request.previewMaxChars
     },
+    correlation: input.correlation
+      ? {
+          ...input.correlation,
+          requestedExecutionIds,
+          matchedExecutionIds: executions.map((execution) => execution.id),
+          missingExecutionIds: requestedExecutionIds?.filter(
+            (executionId) =>
+              !executions.some((execution) => execution.id === executionId)
+          )
+        }
+      : undefined,
     executionCount: executions.length,
     totalInspectedExecutionCount: input.executions.length,
     requestedExecutionFound: request.executionId
