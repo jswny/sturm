@@ -79,6 +79,7 @@ import {
   CONTEXT_OVERFLOW_HEADROOM,
   CONTEXT_OVERFLOW_MAX_INPUT_TOKENS,
   CHAT_AI_GATEWAY_FLOWS,
+  type ChatAiGatewayCorrelation,
   createChatWorkersAI,
   MEMORY_REFLECTION_CHAT_MODEL,
   MEMORY_REFLECTION_PROVIDER_OPTIONS,
@@ -156,9 +157,11 @@ export class ChatAgent extends Think<Env> {
   private botUserIdPromise?: Promise<string | undefined>;
 
   override getModel() {
+    const turn = this.getLatestDiscordTurn();
     const workersai = createChatWorkersAI(
       this.env,
-      CHAT_AI_GATEWAY_FLOWS.reply
+      CHAT_AI_GATEWAY_FLOWS.reply,
+      createChatAiGatewayCorrelation(turn)
     );
     return workersai(REPLY_CHAT_MODEL, {
       sessionAffinity: this.sessionAffinity
@@ -187,9 +190,11 @@ export class ChatAgent extends Think<Env> {
       .onCompaction(
         createCompactFunction({
           summarize: async (prompt) => {
+            const turn = this.getLatestDiscordTurn();
             const workersai = createChatWorkersAI(
               this.env,
-              CHAT_AI_GATEWAY_FLOWS.compaction
+              CHAT_AI_GATEWAY_FLOWS.compaction,
+              createChatAiGatewayCorrelation(turn)
             );
             const result = await generateText({
               model: workersai(COMPACTION_CHAT_MODEL, {
@@ -1051,17 +1056,19 @@ export class ChatAgent extends Think<Env> {
   }
 
   private createGuildMemoryReflectionRunner() {
-    const workersai = createChatWorkersAI(
-      this.env,
-      CHAT_AI_GATEWAY_FLOWS.memoryReflection
-    );
     return new GuildMemoryReflectionRunner({
       store: this.memoryReflections,
       getProvider: () => this.requireGuildMemoryProvider(),
-      createModel: () =>
-        workersai(MEMORY_REFLECTION_CHAT_MODEL, {
+      createModel: (snapshot) => {
+        const correlatedWorkersAI = createChatWorkersAI(
+          this.env,
+          CHAT_AI_GATEWAY_FLOWS.memoryReflection,
+          createChatAiGatewayCorrelation(snapshot.request)
+        );
+        return correlatedWorkersAI(MEMORY_REFLECTION_CHAT_MODEL, {
           sessionAffinity: this.sessionAffinity
-        }),
+        });
+      },
       providerOptions: MEMORY_REFLECTION_PROVIDER_OPTIONS
     });
   }
@@ -1206,6 +1213,16 @@ function createDebugDeliveryStatus(record: DiscordDeliveryRecord) {
         : undefined,
     codeModeExecutions:
       record.type === "chat" ? record.codeModeExecutions : undefined
+  };
+}
+
+function createChatAiGatewayCorrelation(
+  turn: DiscordChatRequest | undefined
+): ChatAiGatewayCorrelation {
+  return {
+    interactionId: turn?.interactionId,
+    guildId: turn?.guildId,
+    channelId: turn?.channelId
   };
 }
 

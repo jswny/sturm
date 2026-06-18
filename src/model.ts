@@ -16,6 +16,12 @@ export const CHAT_AI_GATEWAY_FLOWS = {
 
 export type ChatAiGatewayFlow =
   (typeof CHAT_AI_GATEWAY_FLOWS)[keyof typeof CHAT_AI_GATEWAY_FLOWS];
+export type ChatAiGatewayCorrelation = {
+  interactionId?: string;
+  guildId?: string;
+  channelId?: string;
+};
+type ChatAiGatewayMetadata = Record<string, string>;
 
 export const COMPACTION_TOKEN_THRESHOLD = 200_000;
 export const COMPACTION_TAIL_TOKEN_BUDGET = 64_000;
@@ -60,16 +66,35 @@ export type ModelProviderOptions =
 
 export function createChatWorkersAI(
   env: Pick<Env, "AI">,
-  flow: ChatAiGatewayFlow
+  flow: ChatAiGatewayFlow,
+  correlation: ChatAiGatewayCorrelation = {}
 ) {
   return createWorkersAI({
     binding: env.AI,
     gateway: {
       id: CHAT_AI_GATEWAY_ID,
-      metadata: {
-        ...CHAT_AI_GATEWAY_METADATA,
-        flow
-      }
+      metadata: createChatAiGatewayMetadata(flow, correlation)
     }
   });
+}
+
+function createChatAiGatewayMetadata(
+  flow: ChatAiGatewayFlow,
+  correlation: ChatAiGatewayCorrelation
+): ChatAiGatewayMetadata {
+  return removeUndefined({
+    ...CHAT_AI_GATEWAY_METADATA,
+    flow,
+    interactionId: correlation.interactionId,
+    guildId: correlation.guildId,
+    channelId: correlation.channelId
+  });
+}
+
+function removeUndefined(
+  value: Record<string, string | undefined>
+): ChatAiGatewayMetadata {
+  return Object.fromEntries(
+    Object.entries(value).filter(([, entry]) => entry !== undefined)
+  ) as ChatAiGatewayMetadata;
 }

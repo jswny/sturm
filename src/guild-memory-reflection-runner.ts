@@ -15,7 +15,7 @@ import type { ModelProviderOptions } from "./model";
 export type GuildMemoryReflectionRunnerOptions = {
   store: GuildMemoryReflectionStore;
   getProvider(): GuildMemoryProvider;
-  createModel(): LanguageModel;
+  createModel(snapshot: GuildMemoryReflectionSnapshot): LanguageModel;
   providerOptions?: ModelProviderOptions;
 };
 
@@ -56,7 +56,7 @@ export class GuildMemoryReflectionRunner {
       const currentMemory = (await provider.get()) ?? "";
       assertNotAborted(fiber, "before reflecting on guild memory");
       const reflection = await reflectGuildMemoryAfterTurn({
-        model: this.options.createModel(),
+        model: this.options.createModel(snapshot),
         currentMemory,
         request: snapshot.request,
         assistantText: snapshot.assistantText,
