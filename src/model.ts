@@ -26,7 +26,7 @@ type WorkersAIProviderOptions = {
   readonly "workers-ai": {
     readonly reasoning_effort?: "low" | "medium" | "high" | null;
     readonly chat_template_kwargs?: {
-      readonly enable_thinking?: boolean;
+      readonly thinking?: boolean;
       readonly clear_thinking?: boolean;
     };
   };
@@ -35,21 +35,21 @@ type WorkersAIProviderOptions = {
 export const REPLY_PROVIDER_OPTIONS = {
   "workers-ai": {
     reasoning_effort: "medium",
-    chat_template_kwargs: { enable_thinking: true }
+    chat_template_kwargs: { thinking: true }
   }
 } as const satisfies WorkersAIProviderOptions;
 
 export const COMPACTION_PROVIDER_OPTIONS = {
   "workers-ai": {
     reasoning_effort: null,
-    chat_template_kwargs: { enable_thinking: false }
+    chat_template_kwargs: { thinking: false }
   }
 } as const satisfies WorkersAIProviderOptions;
 
 export const MEMORY_REFLECTION_PROVIDER_OPTIONS = {
   "workers-ai": {
     reasoning_effort: "low",
-    chat_template_kwargs: { enable_thinking: true }
+    chat_template_kwargs: { thinking: true }
   }
 } as const satisfies WorkersAIProviderOptions;
 
