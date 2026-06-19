@@ -17,7 +17,7 @@ export const CHAT_AI_GATEWAY_FLOWS = {
 export type ChatAiGatewayFlow =
   (typeof CHAT_AI_GATEWAY_FLOWS)[keyof typeof CHAT_AI_GATEWAY_FLOWS];
 export type ChatAiGatewayCorrelation = {
-  interactionId?: string;
+  correlationId?: string;
   guildId?: string;
   channelId?: string;
 };
@@ -85,7 +85,7 @@ function createChatAiGatewayMetadata(
   return removeUndefined({
     ...CHAT_AI_GATEWAY_METADATA,
     flow,
-    interactionId: correlation.interactionId,
+    correlationId: correlation.correlationId,
     guildId: correlation.guildId,
     channelId: correlation.channelId
   });

@@ -339,7 +339,8 @@ async function enqueueCommand(
   await agent.enqueueDiscordChat({
     responseTarget: getResponseTarget(interaction),
     request: {
-      interactionId: interaction.id,
+      correlationId: interaction.id,
+      discordInteractionId: interaction.id,
       text,
       guildId: location.guildId,
       channelId: location.channelId,
@@ -365,7 +366,8 @@ async function enqueueResetCommand(
   const conversationName = getDiscordGuildChannelConversationName(location);
   const agent = await getAgentByName(env.ChatAgent, conversationName);
   await agent.enqueueDiscordReset({
-    interactionId: interaction.id,
+    correlationId: interaction.id,
+    discordInteractionId: interaction.id,
     guildId: location.guildId,
     channelId: location.channelId,
     userId: getUserId(interaction),

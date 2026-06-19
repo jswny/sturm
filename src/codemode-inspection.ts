@@ -13,19 +13,20 @@ const MAX_EXECUTION_LOG_LINES = 20;
 export type CodeModeInspectionRequest = {
   limit?: number;
   executionId?: string;
-  interactionId?: string;
+  correlationId?: string;
   previewMaxChars?: number;
 };
 
 export type NormalizedCodeModeInspectionRequest = {
   limit: number;
   executionId?: string;
-  interactionId?: string;
+  correlationId?: string;
   previewMaxChars: number;
 };
 
 export type CodeModeInspectionCorrelation = {
-  interactionId: string;
+  correlationId: string;
+  discordInteractionId?: string;
   deliveryFound: boolean;
   deliveryType?: "chat" | "reset";
   codeModeExecutions: Array<{
@@ -58,7 +59,7 @@ export function normalizeCodeModeInspectionRequest(
       MAX_INSPECTION_LIMIT
     ),
     executionId: request.executionId?.trim() || undefined,
-    interactionId: request.interactionId?.trim() || undefined,
+    correlationId: request.correlationId?.trim() || undefined,
     previewMaxChars: clampInteger(
       request.previewMaxChars,
       DEFAULT_PREVIEW_MAX_CHARS,
@@ -89,7 +90,7 @@ export function createCodeModeInspection(input: CodeModeInspectionInput) {
     query: {
       limit: request.limit,
       executionId: request.executionId,
-      interactionId: request.interactionId,
+      correlationId: request.correlationId,
       previewMaxChars: request.previewMaxChars
     },
     correlation: input.correlation

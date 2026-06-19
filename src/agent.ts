@@ -39,6 +39,7 @@ import { formatDiscordRuntimeContext } from "./discord/context";
 import { getGuildIdFromDiscordConversationName } from "./discord/conversation";
 import {
   DiscordDeliveryStore,
+  getDeliveryCorrelationId,
   isTerminalDelivery,
   type DiscordCodeModeExecutionReferenceInput,
   type DiscordDeliveryChatInput,
@@ -65,8 +66,8 @@ import { getErrorMessage, logError, logInfo, logWarn } from "./logging";
 import { GuildMemoryProvider } from "./memory";
 import {
   createGuildMemoryReflectionSnapshot,
+  getGuildMemoryReflectionCorrelationId,
   getGuildMemoryReflectionFiberName,
-  getGuildMemoryReflectionInteractionId,
   GuildMemoryReflectionStore,
   parseGuildMemoryReflectionSnapshot,
   type GuildMemoryReflectionRecord
@@ -229,7 +230,7 @@ export class ChatAgent extends Think<Env> {
   override async beforeTurn(ctx: TurnContext): Promise<TurnConfig> {
     const turn = this.getLatestDiscordTurn();
     const progress = turn
-      ? this.progressReporters.get(turn.interactionId)
+      ? this.progressReporters.get(turn.correlationId)
       : undefined;
     await progress?.report({
       type: "phase",
@@ -372,12 +373,12 @@ export class ChatAgent extends Think<Env> {
       } catch (error) {
         logWarn("Guild memory reflection failed after Discord delivery", {
           agentName: this.name,
-          interactionId: record.interactionId,
+          ...getDeliveryLogContext(record),
           error: getErrorMessage(error)
         });
       }
     } finally {
-      this.progressReporters.delete(record.interactionId);
+      this.progressReporters.delete(getDeliveryCorrelationId(record));
       await this.housekeeping();
     }
   }
@@ -389,7 +390,9 @@ export class ChatAgent extends Think<Env> {
     if (!record || isTerminalDelivery(record)) return;
 
     if (submission.status === "running") {
-      await this.discordDeliveries.markRunning(record.interactionId);
+      await this.discordDeliveries.markRunning(
+        getDeliveryCorrelationId(record)
+      );
       return;
     }
 
@@ -426,17 +429,17 @@ export class ChatAgent extends Think<Env> {
   override async onFiberRecovered(
     ctx: FiberRecoveryContext
   ): Promise<void | FiberRecoveryResult> {
-    const interactionId = getGuildMemoryReflectionInteractionId(ctx.name);
-    if (!interactionId) return super.onFiberRecovered(ctx);
+    const correlationId = getGuildMemoryReflectionCorrelationId(ctx.name);
+    if (!correlationId) return super.onFiberRecovered(ctx);
 
     const snapshot = parseGuildMemoryReflectionSnapshot(ctx.snapshot);
     if (!snapshot) {
       const message =
         "Guild memory reflection recovery could not resume without a valid checkpoint.";
-      await this.memoryReflections.fail(interactionId, message);
+      await this.memoryReflections.fail(correlationId, message);
       logWarn(message, {
         agentName: this.name,
-        interactionId,
+        correlationId,
         fiberId: ctx.id,
         fiberName: ctx.name,
         fiberAgeMs: Date.now() - ctx.createdAt
@@ -450,7 +453,7 @@ export class ChatAgent extends Think<Env> {
       if (reflection?.changed) {
         logInfo("Recovered guild memory reflection updated memory", {
           agentName: this.name,
-          interactionId,
+          correlationId,
           operation: reflection.operation,
           attempts: reflection.attempts
         });
@@ -463,7 +466,7 @@ export class ChatAgent extends Think<Env> {
       const message = getErrorMessage(error);
       logWarn("Recovered guild memory reflection failed", {
         agentName: this.name,
-        interactionId,
+        correlationId,
         fiberId: ctx.id,
         error: message
       });
@@ -477,16 +480,16 @@ export class ChatAgent extends Think<Env> {
 
     const record = result.record;
     if (isTerminalDelivery(record)) return;
+    const correlationId = getDeliveryCorrelationId(record);
+    const request = record.request;
 
     if (!result.created) {
-      const existingSubmission = await this.inspectSubmission(
-        record.interactionId
-      );
+      const existingSubmission = await this.inspectSubmission(correlationId);
       if (existingSubmission) return;
 
       logWarn("Repairing pending Discord delivery without Think submission", {
         sequence: record.sequence,
-        interactionId: record.interactionId,
+        ...getDeliveryLogContext(record),
         deliveryType: record.type,
         responseTargetType: record.responseTarget.type
       });
@@ -494,34 +497,36 @@ export class ChatAgent extends Think<Env> {
 
     const progress = createDiscordProgressReporter(record.responseTarget, {
       createdAt: record.createdAt,
-      interactionId: record.interactionId,
+      correlationId,
       sequence: record.sequence
     });
-    if (progress && !this.progressReporters.has(record.interactionId)) {
-      this.progressReporters.set(record.interactionId, progress);
+    if (progress && !this.progressReporters.has(correlationId)) {
+      this.progressReporters.set(correlationId, progress);
     }
 
     try {
-      await this.submitMessages([createDiscordUserMessage(record.request)], {
-        submissionId: record.interactionId,
-        idempotencyKey: record.interactionId,
+      await this.submitMessages([createDiscordUserMessage(request)], {
+        submissionId: correlationId,
+        idempotencyKey: correlationId,
         metadata: {
           source: "discord",
           type: "chat",
+          correlationId,
+          discordInteractionId: record.discordInteractionId,
           sequence: record.sequence,
-          guildId: record.request.guildId,
-          channelId: record.request.channelId,
-          userId: record.request.userId
+          guildId: request.guildId,
+          channelId: request.channelId,
+          userId: request.userId
         }
       });
     } catch (error) {
-      this.progressReporters.delete(record.interactionId);
+      this.progressReporters.delete(correlationId);
       if (result.created) {
         await this.discordDeliveries.deleteCreatedDelivery(record);
       }
       const context = {
         sequence: record.sequence,
-        interactionId: record.interactionId,
+        ...getDeliveryLogContext(record),
         deliveryType: record.type
       };
       if (isPlatformTransientError(error)) {
@@ -552,11 +557,11 @@ export class ChatAgent extends Think<Env> {
     request: DiscordChatRequest
   ): Promise<DiscordChatResponse> {
     await this.enqueueDiscordChat({
-      responseTarget: { type: "debug", id: request.interactionId },
+      responseTarget: { type: "debug", id: request.correlationId },
       request
     });
     return this.createDiscordDeliveryRunner().waitForDebugQueuedResponse(
-      request.interactionId
+      request.correlationId
     );
   }
 
@@ -565,20 +570,20 @@ export class ChatAgent extends Think<Env> {
   ): Promise<DiscordChatResponse> {
     await this.enqueueDiscordReset({
       ...input,
-      responseTarget: { type: "debug", id: input.interactionId }
+      responseTarget: { type: "debug", id: input.correlationId }
     });
     return this.createDiscordDeliveryRunner().waitForDebugQueuedResponse(
-      input.interactionId
+      input.correlationId
     );
   }
 
-  async getDebugDiscordStatus(interactionId: string) {
+  async getDebugDiscordStatus(correlationId: string) {
     const [delivery, submission, memoryReflection, memoryReflectionFiber] =
       await Promise.all([
-        this.discordDeliveries.getDelivery(interactionId),
-        this.inspectSubmission(interactionId),
-        this.memoryReflections.get(interactionId),
-        this.inspectFiberByKey(getGuildMemoryReflectionFiberName(interactionId))
+        this.discordDeliveries.getDelivery(correlationId),
+        this.inspectSubmission(correlationId),
+        this.memoryReflections.get(correlationId),
+        this.inspectFiberByKey(getGuildMemoryReflectionFiberName(correlationId))
       ]);
 
     return {
@@ -596,8 +601,8 @@ export class ChatAgent extends Think<Env> {
     const runtime =
       this.codeModeRuntime ??
       (await this.createDiscordCodeModeRuntime(undefined, undefined)).runtime;
-    const delivery = normalized.interactionId
-      ? await this.discordDeliveries.getDelivery(normalized.interactionId)
+    const delivery = normalized.correlationId
+      ? await this.discordDeliveries.getDelivery(normalized.correlationId)
       : undefined;
     const codeModeExecutions =
       delivery?.type === "chat" ? (delivery.codeModeExecutions ?? []) : [];
@@ -606,7 +611,7 @@ export class ChatAgent extends Think<Env> {
     );
     const requestedExecutionIds = normalized.executionId
       ? [normalized.executionId]
-      : normalized.interactionId
+      : normalized.correlationId
         ? correlatedExecutionIds
         : undefined;
     const executionLimit =
@@ -633,9 +638,10 @@ export class ChatAgent extends Think<Env> {
       request: normalized,
       inspectedAt: new Date().toISOString(),
       requestedExecutionIds,
-      correlation: normalized.interactionId
+      correlation: normalized.correlationId
         ? {
-            interactionId: normalized.interactionId,
+            correlationId: normalized.correlationId,
+            discordInteractionId: delivery?.discordInteractionId,
             deliveryFound: Boolean(delivery),
             deliveryType: delivery?.type,
             codeModeExecutions
@@ -656,7 +662,7 @@ export class ChatAgent extends Think<Env> {
       return;
     }
 
-    const interactionId = createScheduledChannelTaskInteractionId(
+    const correlationId = createScheduledChannelTaskCorrelationId(
       task,
       schedule
     );
@@ -667,7 +673,7 @@ export class ChatAgent extends Think<Env> {
           channelId: task.channelId
         },
         request: {
-          interactionId,
+          correlationId,
           text: createScheduledChannelTaskUserText(task),
           guildId: task.guildId,
           channelId: task.channelId,
@@ -685,7 +691,7 @@ export class ChatAgent extends Think<Env> {
         scheduleId: schedule?.id,
         scheduleType: schedule?.type,
         scheduledFor: getScheduledChannelTaskExecutionTime(schedule),
-        interactionId,
+        correlationId,
         guildId: task.guildId,
         channelId: task.channelId
       };
@@ -800,9 +806,9 @@ export class ChatAgent extends Think<Env> {
             : undefined,
           userPrompts: turn ? this.createUserPromptController(turn) : undefined,
           onArtifactCreated: async (artifact) => {
-            if (!turn?.interactionId) return;
+            if (!turn?.correlationId) return;
             await this.discordDeliveries.addArtifact(
-              turn.interactionId,
+              turn.correlationId,
               artifact
             );
           }
@@ -858,10 +864,11 @@ export class ChatAgent extends Think<Env> {
           allowedUserDisplayName: turn.user?.displayName,
           guildId: turn.guildId,
           channelId: turn.channelId,
-          sourceInteractionId: turn.interactionId
+          sourceInteractionId: turn.discordInteractionId,
+          sourceCorrelationId: turn.correlationId
         });
         await this.discordDeliveries.setComponentPrompt(
-          turn.interactionId,
+          turn.correlationId,
           prompt.id
         );
         return prompt;
@@ -888,7 +895,10 @@ export class ChatAgent extends Think<Env> {
         channelId
       },
       request: {
-        interactionId: input.interactionId,
+        correlationId: input.interactionId,
+        discordInteractionId: input.interactionId,
+        sourceCorrelationId: prompt.sourceCorrelationId,
+        sourceInteractionId: prompt.sourceInteractionId,
         text,
         emptyResponseBehavior: "suppress",
         guildId: prompt.guildId ?? input.guildId,
@@ -968,7 +978,8 @@ export class ChatAgent extends Think<Env> {
     } catch (error) {
       logWarn("Discord recent channel context fetch failed", {
         agentName: this.name,
-        interactionId: turn.interactionId,
+        correlationId: turn.correlationId,
+        discordInteractionId: turn.discordInteractionId,
         guildId: turn.guildId,
         channelId: turn.channelId,
         error: getErrorMessage(error)
@@ -1004,7 +1015,8 @@ export class ChatAgent extends Think<Env> {
       record.request,
       getDiscordMessageText(result.message)
     );
-    const fiberName = getGuildMemoryReflectionFiberName(record.interactionId);
+    const correlationId = getDeliveryCorrelationId(record);
+    const fiberName = getGuildMemoryReflectionFiberName(correlationId);
 
     try {
       const fiber = await this.startFiber(
@@ -1017,7 +1029,7 @@ export class ChatAgent extends Think<Env> {
           if (reflection?.changed) {
             logInfo("Guild memory reflection updated memory", {
               agentName: this.name,
-              interactionId: record.interactionId,
+              ...getDeliveryLogContext(record),
               operation: reflection.operation,
               attempts: reflection.attempts
             });
@@ -1032,14 +1044,14 @@ export class ChatAgent extends Think<Env> {
       if (!fiber.accepted) {
         logInfo("Guild memory reflection fiber already exists", {
           agentName: this.name,
-          interactionId: record.interactionId,
+          ...getDeliveryLogContext(record),
           fiberId: fiber.fiberId,
           fiberStatus: fiber.status
         });
       }
     } catch (error) {
       const message = getErrorMessage(error);
-      await this.memoryReflections.fail(record.interactionId, message);
+      await this.memoryReflections.fail(correlationId, message);
       throw error;
     }
   }
@@ -1104,7 +1116,7 @@ export class ChatAgent extends Think<Env> {
           clearWorkspace: () => this.clearWorkspace()
         }),
       afterFailedDelivery: async (record) => {
-        this.progressReporters.delete(record.interactionId);
+        this.progressReporters.delete(getDeliveryCorrelationId(record));
         await this.housekeeping();
       },
       afterReset: () => this.housekeeping()
@@ -1113,7 +1125,7 @@ export class ChatAgent extends Think<Env> {
 
   private getActiveProgressReporter() {
     const turn = this.getLatestDiscordTurn();
-    return turn ? this.progressReporters.get(turn.interactionId) : undefined;
+    return turn ? this.progressReporters.get(turn.correlationId) : undefined;
   }
 
   private async recordCodeModeExecution(ctx: ToolCallResultContext) {
@@ -1125,13 +1137,14 @@ export class ChatAgent extends Think<Env> {
 
     try {
       await this.discordDeliveries.addCodeModeExecution(
-        turn.interactionId,
+        turn.correlationId,
         reference
       );
     } catch (error) {
       logWarn("Code mode execution correlation failed", {
         agentName: this.name,
-        interactionId: turn.interactionId,
+        correlationId: turn.correlationId,
+        discordInteractionId: turn.discordInteractionId,
         executionId: reference.executionId,
         error: getErrorMessage(error)
       });
@@ -1139,23 +1152,23 @@ export class ChatAgent extends Think<Env> {
   }
 
   private async reportDiscordRecoveryProgress(
-    interactionId: string,
+    correlationId: string,
     event: Parameters<DiscordProgressReporter["report"]>[0]
   ) {
-    const reporter = this.progressReporters.get(interactionId);
+    const reporter = this.progressReporters.get(correlationId);
     if (reporter) {
       await reporter.report(event);
       return;
     }
 
-    const record = await this.discordDeliveries.getDelivery(interactionId);
+    const record = await this.discordDeliveries.getDelivery(correlationId);
     if (!record) return;
 
     const recoveryReporter = createDiscordProgressReporter(
       record.responseTarget,
       {
         createdAt: record.createdAt,
-        interactionId: record.interactionId,
+        correlationId: getDeliveryCorrelationId(record),
         sequence: record.sequence
       }
     );
@@ -1173,10 +1186,12 @@ export class ChatAgent extends Think<Env> {
 }
 
 function createDebugDeliveryStatus(record: DiscordDeliveryRecord) {
+  const correlationId = getDeliveryCorrelationId(record);
   return {
     type: record.type,
     sequence: record.sequence,
-    interactionId: record.interactionId,
+    correlationId,
+    discordInteractionId: record.discordInteractionId,
     status: record.status,
     lifecycle: record.lifecycle,
     responseTargetType: record.responseTarget.type,
@@ -1216,11 +1231,18 @@ function createDebugDeliveryStatus(record: DiscordDeliveryRecord) {
   };
 }
 
+function getDeliveryLogContext(record: DiscordDeliveryRecord) {
+  return {
+    correlationId: getDeliveryCorrelationId(record),
+    discordInteractionId: record.discordInteractionId
+  };
+}
+
 function createChatAiGatewayCorrelation(
   turn: DiscordChatRequest | undefined
 ): ChatAiGatewayCorrelation {
   return {
-    interactionId: turn?.interactionId,
+    correlationId: turn?.correlationId,
     guildId: turn?.guildId,
     channelId: turn?.channelId
   };
@@ -1257,17 +1279,17 @@ function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object";
 }
 
-function createScheduledChannelTaskInteractionId(
+function createScheduledChannelTaskCorrelationId(
   task: ScheduledChannelTaskPayload,
   schedule: ScheduledChannelTaskExecution | undefined
 ) {
   const executionId = schedule
-    ? `${sanitizeInteractionIdFragment(schedule.id)}-${sanitizeInteractionIdFragment(
+    ? `${sanitizeCorrelationIdFragment(schedule.id)}-${sanitizeCorrelationIdFragment(
         Math.trunc(schedule.time)
       )}`
     : crypto.randomUUID();
 
-  return `scheduled-${sanitizeInteractionIdFragment(task.taskId)}-${executionId}`;
+  return `scheduled-${sanitizeCorrelationIdFragment(task.taskId)}-${executionId}`;
 }
 
 function getScheduledChannelTaskExecutionTime(
@@ -1278,7 +1300,7 @@ function getScheduledChannelTaskExecutionTime(
   return Number.isFinite(date.getTime()) ? date.toISOString() : undefined;
 }
 
-function sanitizeInteractionIdFragment(value: string | number) {
+function sanitizeCorrelationIdFragment(value: string | number) {
   return String(value).replace(/[^A-Za-z0-9_.:-]/g, "_");
 }
 
@@ -1301,11 +1323,14 @@ function createDebugMemoryReflectionStatus(
   fiber: FiberInspection | null
 ) {
   if (!reflection && !fiber) return null;
+  const fiberCorrelationId = getGuildMemoryReflectionCorrelationId(
+    fiber?.name ?? ""
+  );
+  const correlationId = reflection?.correlationId ?? fiberCorrelationId;
 
   return {
-    interactionId:
-      reflection?.interactionId ??
-      getGuildMemoryReflectionInteractionId(fiber?.name ?? ""),
+    correlationId,
+    discordInteractionId: reflection?.discordInteractionId,
     status: reflection?.status,
     changed: reflection?.changed,
     operation: reflection?.operation,
@@ -1337,7 +1362,8 @@ function createGuildMemoryReflectionFiberMetadata(
   return {
     source: "discord",
     type: "guild_memory_reflection",
-    interactionId: request.interactionId,
+    correlationId: request.correlationId,
+    discordInteractionId: request.discordInteractionId,
     guildId: request.guildId,
     channelId: request.channelId,
     userId: request.userId
@@ -1350,7 +1376,8 @@ function sanitizeSubmissionMetadata(metadata?: Record<string, unknown>) {
   const safeKeys = [
     "source",
     "type",
-    "interactionId",
+    "correlationId",
+    "discordInteractionId",
     "sequence",
     "guildId",
     "channelId",

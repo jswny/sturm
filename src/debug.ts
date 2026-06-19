@@ -29,7 +29,7 @@ type DebugChatPayload = {
   surface: DebugSurface;
   user: DebugUser;
   text: string;
-  interactionId?: string;
+  correlationId?: string;
   channel?: Partial<DiscordChannelContext>;
   attachments?: DiscordRequestAttachment[];
   permissions?: {
@@ -41,12 +41,12 @@ type DebugChatPayload = {
 
 type DebugResetPayload = {
   surface: DebugSurface;
-  interactionId?: string;
+  correlationId?: string;
 };
 
 type DebugStatusPayload = {
   surface: DebugSurface;
-  interactionId: string;
+  correlationId?: string;
 };
 
 export async function handleDebugRequest(
@@ -99,9 +99,9 @@ async function replyToDebugChat(payload: DebugChatPayload, env: DebugEnv) {
     payload.surface
   );
   const agent = await getAgentByName(env.ChatAgent, conversationName);
-  const interactionId = payload.interactionId ?? crypto.randomUUID();
+  const correlationId = getPayloadCorrelationId(payload) ?? crypto.randomUUID();
   const response = await agent.runDebugQueuedDiscordChat({
-    interactionId,
+    correlationId,
     text: payload.text.trim(),
     guildId: payload.surface.guildId,
     channelId: payload.surface.channelId,
@@ -117,7 +117,7 @@ async function replyToDebugChat(payload: DebugChatPayload, env: DebugEnv) {
   return json({
     ok: true,
     conversationName,
-    interactionId,
+    correlationId,
     queued: true,
     response: response.content,
     attachments: response.attachments?.map((attachment) => ({
@@ -140,9 +140,9 @@ async function replyToDebugReset(payload: DebugResetPayload, env: DebugEnv) {
     payload.surface
   );
   const agent = await getAgentByName(env.ChatAgent, conversationName);
-  const interactionId = payload.interactionId ?? crypto.randomUUID();
+  const correlationId = getPayloadCorrelationId(payload) ?? crypto.randomUUID();
   const response = await agent.runDebugQueuedDiscordReset({
-    interactionId,
+    correlationId,
     guildId: payload.surface.guildId,
     channelId: payload.surface.channelId
   });
@@ -150,7 +150,7 @@ async function replyToDebugReset(payload: DebugResetPayload, env: DebugEnv) {
   return json({
     ok: true,
     conversationName,
-    interactionId,
+    correlationId,
     queued: true,
     response: response.content
   });
@@ -164,12 +164,16 @@ async function replyToDebugStatus(payload: DebugStatusPayload, env: DebugEnv) {
     payload.surface
   );
   const agent = await getAgentByName(env.ChatAgent, conversationName);
-  const status = await agent.getDebugDiscordStatus(payload.interactionId);
+  const correlationId = getPayloadCorrelationId(payload);
+  if (!correlationId) {
+    return json({ error: "Missing correlationId." }, { status: 400 });
+  }
+  const status = await agent.getDebugDiscordStatus(correlationId);
 
   return json({
     ok: true,
     conversationName,
-    interactionId: payload.interactionId,
+    correlationId,
     ...status
   });
 }
@@ -211,9 +215,13 @@ function validateDebugStatusPayload(payload: DebugStatusPayload) {
   const surfaceError = validateDebugSurface(payload.surface);
   if (surfaceError) return surfaceError;
 
-  if (!payload.interactionId?.trim()) return "Missing interactionId.";
+  if (!getPayloadCorrelationId(payload)) return "Missing correlationId.";
 
   return null;
+}
+
+function getPayloadCorrelationId(payload: { correlationId?: string }) {
+  return payload.correlationId?.trim();
 }
 
 function validateDebugSurface(surface: DebugSurface | undefined) {

@@ -37,7 +37,8 @@ export type GuildMemoryReflectionDecision = {
 };
 
 export type GuildMemoryReflectionRecord = {
-  interactionId: string;
+  correlationId: string;
+  discordInteractionId?: string;
   status: "running" | "completed" | "failed" | "aborted";
   createdAt: string;
   updatedAt: string;
@@ -70,7 +71,8 @@ export type GuildMemoryReflectionSnapshot = {
   kind: "guild_memory_reflection";
   version: 1;
   phase: GuildMemoryReflectionFiberPhase;
-  interactionId: string;
+  correlationId: string;
+  discordInteractionId?: string;
   request: DiscordChatRequest;
   assistantText: string;
   reflection?: GuildMemoryReflectionSummary;
@@ -87,23 +89,25 @@ export type ReflectGuildMemoryInput = {
 export class GuildMemoryReflectionStore {
   constructor(private storage: DurableObjectStorage) {}
 
-  async get(interactionId: string) {
+  async get(correlationId: string) {
     return this.storage.get<GuildMemoryReflectionRecord>(
-      getMemoryReflectionRecordKey(interactionId)
+      getMemoryReflectionRecordKey(correlationId)
     );
   }
 
-  async markRunning(interactionId: string) {
+  async markRunning(correlationId: string, discordInteractionId?: string) {
     const now = new Date().toISOString();
     return this.storage.transaction(async (txn) => {
-      const key = getMemoryReflectionRecordKey(interactionId);
+      const key = getMemoryReflectionRecordKey(correlationId);
       const existing = await txn.get<GuildMemoryReflectionRecord>(key);
       if (existing?.status === "completed") {
         return { started: false, record: existing };
       }
 
       const record = {
-        interactionId,
+        correlationId,
+        discordInteractionId:
+          existing?.discordInteractionId ?? discordInteractionId,
         status: "running",
         createdAt: existing?.createdAt ?? now,
         updatedAt: now
@@ -114,12 +118,12 @@ export class GuildMemoryReflectionStore {
   }
 
   async complete(
-    interactionId: string,
+    correlationId: string,
     changed: boolean,
     operation: GuildMemoryReflectionOperation,
     attempts: number | undefined
   ) {
-    await this.writeTerminalRecord(interactionId, {
+    await this.writeTerminalRecord(correlationId, {
       status: "completed",
       changed,
       operation,
@@ -127,15 +131,15 @@ export class GuildMemoryReflectionStore {
     });
   }
 
-  async fail(interactionId: string, error: string) {
-    await this.writeTerminalRecord(interactionId, {
+  async fail(correlationId: string, error: string) {
+    await this.writeTerminalRecord(correlationId, {
       status: "failed",
       error
     });
   }
 
-  async abort(interactionId: string, error: string) {
-    await this.writeTerminalRecord(interactionId, {
+  async abort(correlationId: string, error: string) {
+    await this.writeTerminalRecord(correlationId, {
       status: "aborted",
       error
     });
@@ -154,15 +158,16 @@ export class GuildMemoryReflectionStore {
   }
 
   private async writeTerminalRecord(
-    interactionId: string,
+    correlationId: string,
     update: Pick<GuildMemoryReflectionRecord, "status"> &
       Partial<GuildMemoryReflectionRecord>
   ) {
     const now = new Date().toISOString();
-    const key = getMemoryReflectionRecordKey(interactionId);
+    const key = getMemoryReflectionRecordKey(correlationId);
     const existing = await this.storage.get<GuildMemoryReflectionRecord>(key);
     await this.storage.put<GuildMemoryReflectionRecord>(key, {
-      interactionId,
+      correlationId,
+      discordInteractionId: existing?.discordInteractionId,
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
       ...update
@@ -229,14 +234,14 @@ export function applyGuildMemoryReflectionDecision(
   };
 }
 
-export function getGuildMemoryReflectionFiberName(interactionId: string) {
-  return `${GUILD_MEMORY_REFLECTION_PREFIX}${interactionId}`;
+export function getGuildMemoryReflectionFiberName(correlationId: string) {
+  return `${GUILD_MEMORY_REFLECTION_PREFIX}${correlationId}`;
 }
 
-export function getGuildMemoryReflectionInteractionId(name: string) {
+export function getGuildMemoryReflectionCorrelationId(name: string) {
   if (!name.startsWith(GUILD_MEMORY_REFLECTION_PREFIX)) return undefined;
-  const interactionId = name.slice(GUILD_MEMORY_REFLECTION_PREFIX.length);
-  return interactionId || undefined;
+  const correlationId = name.slice(GUILD_MEMORY_REFLECTION_PREFIX.length);
+  return correlationId || undefined;
 }
 
 export function createGuildMemoryReflectionSnapshot(
@@ -247,7 +252,8 @@ export function createGuildMemoryReflectionSnapshot(
     kind: "guild_memory_reflection",
     version: 1,
     phase: "input",
-    interactionId: request.interactionId,
+    correlationId: request.correlationId,
+    discordInteractionId: request.discordInteractionId,
     request,
     assistantText
   };
@@ -260,10 +266,10 @@ export function parseGuildMemoryReflectionSnapshot(
   if (value.kind !== "guild_memory_reflection") return null;
   if (value.version !== 1) return null;
   if (!isGuildMemoryReflectionPhase(value.phase)) return null;
-  if (typeof value.interactionId !== "string") return null;
+  if (typeof value.correlationId !== "string") return null;
   if (typeof value.assistantText !== "string") return null;
   if (!isObject(value.request)) return null;
-  if (typeof value.request.interactionId !== "string") return null;
+  if (typeof value.request.correlationId !== "string") return null;
   if (typeof value.request.text !== "string") return null;
 
   const reflection = parseGuildMemoryReflectionSummary(value.reflection);
@@ -273,7 +279,11 @@ export function parseGuildMemoryReflectionSnapshot(
     kind: "guild_memory_reflection",
     version: 1,
     phase: value.phase,
-    interactionId: value.interactionId,
+    correlationId: value.correlationId,
+    discordInteractionId:
+      typeof value.discordInteractionId === "string"
+        ? value.discordInteractionId
+        : undefined,
     request: value.request as DiscordChatRequest,
     assistantText: value.assistantText,
     ...(reflection ? { reflection } : {})
@@ -419,8 +429,8 @@ function getAppendMemoryEntries(decision: GuildMemoryReflectionDecision) {
     .filter((entry) => entry.length > 0);
 }
 
-function getMemoryReflectionRecordKey(interactionId: string) {
-  return `${GUILD_MEMORY_REFLECTION_PREFIX}${interactionId}`;
+function getMemoryReflectionRecordKey(correlationId: string) {
+  return `${GUILD_MEMORY_REFLECTION_PREFIX}${correlationId}`;
 }
 
 function parseGuildMemoryReflectionSummary(value: unknown) {

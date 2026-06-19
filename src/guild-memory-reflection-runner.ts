@@ -37,7 +37,8 @@ export class GuildMemoryReflectionRunner {
 
     stash(snapshot.phase, snapshot.reflection);
     const started = await this.options.store.markRunning(
-      snapshot.interactionId
+      snapshot.correlationId,
+      snapshot.discordInteractionId
     );
     if (!started.started) return null;
 
@@ -46,7 +47,7 @@ export class GuildMemoryReflectionRunner {
         (snapshot.phase === "written" || snapshot.phase === "completed") &&
         snapshot.reflection
       ) {
-        await this.complete(snapshot.interactionId, snapshot.reflection);
+        await this.complete(snapshot.correlationId, snapshot.reflection);
         stash("completed", snapshot.reflection);
         return snapshot.reflection;
       }
@@ -72,26 +73,26 @@ export class GuildMemoryReflectionRunner {
       }
 
       assertNotAborted(fiber, "before completing");
-      await this.complete(snapshot.interactionId, reflectionSummary);
+      await this.complete(snapshot.correlationId, reflectionSummary);
       stash("completed", reflectionSummary);
       return reflectionSummary;
     } catch (error) {
       const message = getErrorMessage(error);
       if (error instanceof GuildMemoryReflectionAbortError) {
-        await this.options.store.abort(snapshot.interactionId, message);
+        await this.options.store.abort(snapshot.correlationId, message);
       } else {
-        await this.options.store.fail(snapshot.interactionId, message);
+        await this.options.store.fail(snapshot.correlationId, message);
       }
       throw error;
     }
   }
 
   private async complete(
-    interactionId: string,
+    correlationId: string,
     reflection: GuildMemoryReflectionSummary
   ) {
     await this.options.store.complete(
-      interactionId,
+      correlationId,
       reflection.changed,
       reflection.operation,
       reflection.attempts

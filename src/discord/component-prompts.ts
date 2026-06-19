@@ -43,7 +43,8 @@ export type StoredComponentPrompt = {
   allowedUserDisplayName?: string;
   guildId?: string;
   channelId?: string;
-  sourceInteractionId: string;
+  sourceCorrelationId: string;
+  sourceInteractionId?: string;
   messageId?: string;
   options: ComponentPromptOption[];
   status: ComponentPromptStatus;
@@ -62,7 +63,8 @@ export type CreateComponentPromptInput = {
   allowedUserDisplayName?: string;
   guildId?: string;
   channelId?: string;
-  sourceInteractionId: string;
+  sourceCorrelationId: string;
+  sourceInteractionId?: string;
   options: Array<Omit<ComponentPromptOption, "id">>;
   ttlMs?: number;
 };
@@ -132,6 +134,7 @@ export class DiscordComponentPromptStore {
       allowedUserDisplayName: input.allowedUserDisplayName,
       guildId: input.guildId,
       channelId: input.channelId,
+      sourceCorrelationId: input.sourceCorrelationId,
       sourceInteractionId: input.sourceInteractionId,
       options: input.options
         .slice(0, MAX_PROMPT_OPTIONS)

@@ -4,7 +4,10 @@ import type {
 } from "discord-api-types/v10";
 
 export type DiscordChatRequest = {
-  interactionId: string;
+  correlationId: string;
+  discordInteractionId?: string;
+  sourceCorrelationId?: string;
+  sourceInteractionId?: string;
   text: string;
   emptyResponseBehavior?: "fallback" | "suppress";
   guildId?: string;

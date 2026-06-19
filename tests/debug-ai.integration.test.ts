@@ -22,8 +22,8 @@ const user = {
 
 describe("debug AI integration", () => {
   it("runs a debug chat through the durable Agent path", async () => {
-    const interactionId = `debug-ai-integration-${crypto.randomUUID()}`;
-    const resetInteractionId = `${interactionId}-reset`;
+    const correlationId = `debug-ai-integration-${crypto.randomUUID()}`;
+    const resetCorrelationId = `${correlationId}-reset`;
 
     const health = await requestJson("GET", "/");
     expect(health.status).toBe(200);
@@ -34,7 +34,7 @@ describe("debug AI integration", () => {
 
     const missingStatus = await postJson("/debug/status", {
       surface,
-      interactionId: `${interactionId}-missing`
+      correlationId: `${correlationId}-missing`
     });
     expect(missingStatus.status).toBe(200);
     expect(missingStatus.body).toMatchObject({
@@ -47,13 +47,13 @@ describe("debug AI integration", () => {
     const chat = await postJson("/debug/chat", {
       surface,
       user,
-      interactionId,
+      correlationId,
       text: "Integration health check. Reply with exactly: integration ok. No tools are needed."
     });
     expect(chat.status).toBe(200);
     expect(chat.body).toMatchObject({
       ok: true,
-      interactionId,
+      correlationId,
       queued: true
     });
 
@@ -61,7 +61,7 @@ describe("debug AI integration", () => {
     expect(chatResponse.length).toBeGreaterThan(0);
     expect(chatResponse.toLowerCase()).toContain("integration ok");
 
-    const chatStatus = await waitForDebugStatus(interactionId, (status) => {
+    const chatStatus = await waitForDebugStatus(correlationId, (status) => {
       const delivery = getOptionalRecord(status, "delivery");
       const submission = getOptionalRecord(status, "submission");
       const memoryReflection = getOptionalRecord(status, "memoryReflection");
@@ -79,35 +79,35 @@ describe("debug AI integration", () => {
 
     expect(getRecord(chatStatus, "delivery")).toMatchObject({
       type: "chat",
-      interactionId,
+      correlationId,
       status: "delivered",
       responseTargetType: "debug"
     });
     expect(getRecord(chatStatus, "submission")).toMatchObject({
-      submissionId: interactionId,
-      idempotencyKey: interactionId,
+      submissionId: correlationId,
+      idempotencyKey: correlationId,
       status: "completed"
     });
     expect(getRecord(chatStatus, "memoryReflection")).toMatchObject({
-      interactionId,
+      correlationId,
       status: "completed"
     });
     expect(
       getRecord(getRecord(chatStatus, "memoryReflection"), "fiber")
     ).toMatchObject({
-      name: `guild-memory-reflection:${interactionId}`,
-      idempotencyKey: `guild-memory-reflection:${interactionId}`,
+      name: `guild-memory-reflection:${correlationId}`,
+      idempotencyKey: `guild-memory-reflection:${correlationId}`,
       status: "completed"
     });
 
     const reset = await postJson("/debug/reset", {
       surface,
-      interactionId: resetInteractionId
+      correlationId: resetCorrelationId
     });
     expect(reset.status).toBe(200);
     expect(reset.body).toMatchObject({
       ok: true,
-      interactionId: resetInteractionId,
+      correlationId: resetCorrelationId,
       queued: true
     });
 
@@ -115,12 +115,12 @@ describe("debug AI integration", () => {
     expect(resetResponse.length).toBeGreaterThan(0);
 
     const resetStatus = await waitForDebugStatus(
-      resetInteractionId,
+      resetCorrelationId,
       (status) => getOptionalRecord(status, "delivery")?.status === "delivered"
     );
     expect(getRecord(resetStatus, "delivery")).toMatchObject({
       type: "reset",
-      interactionId: resetInteractionId,
+      correlationId: resetCorrelationId,
       status: "delivered",
       responseTargetType: "debug"
     });
@@ -130,7 +130,7 @@ describe("debug AI integration", () => {
 });
 
 async function waitForDebugStatus(
-  interactionId: string,
+  correlationId: string,
   isReady: (status: JsonRecord) => boolean
 ) {
   const deadline = Date.now() + 180_000;
@@ -139,7 +139,7 @@ async function waitForDebugStatus(
   while (Date.now() < deadline) {
     const status = await postJson("/debug/status", {
       surface,
-      interactionId
+      correlationId
     });
     expect(status.status).toBe(200);
     lastStatus = status.body;
@@ -149,7 +149,7 @@ async function waitForDebugStatus(
   }
 
   throw new Error(
-    `Timed out waiting for debug status ${interactionId}: ${JSON.stringify(
+    `Timed out waiting for debug status ${correlationId}: ${JSON.stringify(
       lastStatus
     )}`
   );

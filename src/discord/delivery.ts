@@ -43,7 +43,8 @@ export type DiscordCodeModeExecutionReferenceInput = Omit<
 export type DiscordChatDeliveryRecord = {
   type: "chat";
   sequence: number;
-  interactionId: string;
+  correlationId: string;
+  discordInteractionId?: string;
   responseTarget: DiscordResponseTarget;
   request: DiscordChatRequest;
   status: DiscordDeliveryStatus;
@@ -59,7 +60,8 @@ export type DiscordChatDeliveryRecord = {
 export type DiscordResetDeliveryRecord = {
   type: "reset";
   sequence: number;
-  interactionId: string;
+  correlationId: string;
+  discordInteractionId?: string;
   responseTarget: DiscordResponseTarget;
   guildId?: string;
   channelId?: string;
@@ -94,7 +96,8 @@ export type DiscordDeliveryChatInput = {
 };
 
 export type DiscordDeliveryResetInput = {
-  interactionId: string;
+  correlationId: string;
+  discordInteractionId?: string;
   responseTarget: DiscordResponseTarget;
   guildId?: string;
   channelId?: string;
@@ -123,9 +126,9 @@ export class DiscordDeliveryStore {
     input: DiscordDeliveryChatInput | DiscordDeliveryResetInput
   ): Promise<DiscordDeliveryCreateResult> {
     const now = new Date().toISOString();
-    const interactionId =
-      "request" in input ? input.request.interactionId : input.interactionId;
-    const deliveryKey = getDiscordDeliveryKey(interactionId);
+    const correlationId =
+      "request" in input ? input.request.correlationId : input.correlationId;
+    const deliveryKey = getDiscordDeliveryKey(correlationId);
 
     return this.storage.transaction(async (txn) => {
       const existing = await txn.get<DiscordDeliveryRecord>(deliveryKey);
@@ -146,7 +149,7 @@ export class DiscordDeliveryStore {
 
   async deleteCreatedDelivery(record: DiscordDeliveryRecord) {
     await this.storage.transaction(async (txn) => {
-      const key = getDiscordDeliveryKey(record.interactionId);
+      const key = getDiscordDeliveryKey(getDeliveryCorrelationId(record));
       const current = await txn.get<DiscordDeliveryRecord>(key);
       if (
         current?.sequence !== record.sequence ||
@@ -159,14 +162,14 @@ export class DiscordDeliveryStore {
     });
   }
 
-  async getDelivery(interactionId: string) {
+  async getDelivery(correlationId: string) {
     return this.storage.get<DiscordDeliveryRecord>(
-      getDiscordDeliveryKey(interactionId)
+      getDiscordDeliveryKey(correlationId)
     );
   }
 
-  async markRunning(interactionId: string) {
-    await this.updateDelivery(interactionId, (record) => {
+  async markRunning(correlationId: string) {
+    await this.updateDelivery(correlationId, (record) => {
       if (isTerminalDeliveryStatus(record.status)) return record;
 
       const now = new Date().toISOString();
@@ -185,8 +188,8 @@ export class DiscordDeliveryStore {
     });
   }
 
-  async markRecovering(interactionId: string) {
-    await this.updateDelivery(interactionId, (record) => {
+  async markRecovering(correlationId: string) {
+    await this.updateDelivery(correlationId, (record) => {
       if (isTerminalDeliveryStatus(record.status)) return record;
 
       const now = new Date().toISOString();
@@ -202,8 +205,8 @@ export class DiscordDeliveryStore {
     });
   }
 
-  async addArtifact(interactionId: string, artifact: ResponseArtifact) {
-    await this.updateDelivery(interactionId, (record) => {
+  async addArtifact(correlationId: string, artifact: ResponseArtifact) {
+    await this.updateDelivery(correlationId, (record) => {
       if (record.type !== "chat" || isTerminalDeliveryStatus(record.status)) {
         return record;
       }
@@ -219,8 +222,8 @@ export class DiscordDeliveryStore {
     });
   }
 
-  async setComponentPrompt(interactionId: string, promptId: string) {
-    await this.updateDelivery(interactionId, (record) => {
+  async setComponentPrompt(correlationId: string, promptId: string) {
+    await this.updateDelivery(correlationId, (record) => {
       if (record.type !== "chat" || isTerminalDeliveryStatus(record.status)) {
         return record;
       }
@@ -234,10 +237,10 @@ export class DiscordDeliveryStore {
   }
 
   async addCodeModeExecution(
-    interactionId: string,
+    correlationId: string,
     input: DiscordCodeModeExecutionReferenceInput
   ) {
-    await this.updateDelivery(interactionId, (record) => {
+    await this.updateDelivery(correlationId, (record) => {
       if (record.type !== "chat") return record;
 
       const now = new Date().toISOString();
@@ -274,7 +277,7 @@ export class DiscordDeliveryStore {
     error?: string
   ) {
     await this.storage.transaction(async (txn) => {
-      const key = getDiscordDeliveryKey(record.interactionId);
+      const key = getDiscordDeliveryKey(getDeliveryCorrelationId(record));
       const current = await txn.get<DiscordDeliveryRecord>(key);
       if (!current || current.sequence !== record.sequence) return;
 
@@ -338,11 +341,11 @@ export class DiscordDeliveryStore {
   }
 
   private async updateDelivery(
-    interactionId: string,
+    correlationId: string,
     update: (record: DiscordDeliveryRecord) => DiscordDeliveryRecord
   ) {
     await this.storage.transaction(async (txn) => {
-      const key = getDiscordDeliveryKey(interactionId);
+      const key = getDiscordDeliveryKey(correlationId);
       const record = await txn.get<DiscordDeliveryRecord>(key);
       if (!record) return;
 
@@ -360,7 +363,8 @@ function createDiscordDeliveryRecord(
     return {
       type: "chat",
       sequence,
-      interactionId: input.request.interactionId,
+      correlationId: input.request.correlationId,
+      discordInteractionId: input.request.discordInteractionId,
       responseTarget: input.responseTarget,
       request: input.request,
       status: "pending",
@@ -372,7 +376,8 @@ function createDiscordDeliveryRecord(
   return {
     type: "reset",
     sequence,
-    interactionId: input.interactionId,
+    correlationId: input.correlationId,
+    discordInteractionId: input.discordInteractionId,
     responseTarget: input.responseTarget,
     guildId: input.guildId,
     channelId: input.channelId,
@@ -398,8 +403,12 @@ export function isTerminalDelivery(record: DiscordDeliveryRecord) {
   return isTerminalDeliveryStatus(record.status);
 }
 
-function getDiscordDeliveryKey(interactionId: string) {
-  return `${DISCORD_DELIVERY_PREFIX}${interactionId}`;
+export function getDeliveryCorrelationId(record: DiscordDeliveryRecord) {
+  return record.correlationId;
+}
+
+function getDiscordDeliveryKey(correlationId: string) {
+  return `${DISCORD_DELIVERY_PREFIX}${correlationId}`;
 }
 
 function getDiscordDebugResultKey(targetId: string) {

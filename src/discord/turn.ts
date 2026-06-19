@@ -13,7 +13,10 @@ import type { DiscordChatRequest, DiscordChatResponse } from "./types";
 
 type DiscordUserMessageMetadata = {
   source?: unknown;
-  interactionId?: unknown;
+  correlationId?: unknown;
+  discordInteractionId?: unknown;
+  sourceCorrelationId?: unknown;
+  sourceInteractionId?: unknown;
   emptyResponseBehavior?: unknown;
   guildId?: unknown;
   channelId?: unknown;
@@ -36,11 +39,14 @@ export function createDiscordUserMessage(
   request: DiscordChatRequest
 ): UIMessage {
   return {
-    id: `discord-${request.interactionId}`,
+    id: `discord-${request.correlationId}`,
     role: "user",
     metadata: {
       source: "discord",
-      interactionId: request.interactionId,
+      correlationId: request.correlationId,
+      discordInteractionId: request.discordInteractionId,
+      sourceCorrelationId: request.sourceCorrelationId,
+      sourceInteractionId: request.sourceInteractionId,
       emptyResponseBehavior: request.emptyResponseBehavior,
       guildId: request.guildId,
       channelId: request.channelId,
@@ -63,10 +69,22 @@ export function getDiscordTurnFromUserMessage(
 
   const metadata = message.metadata as DiscordUserMessageMetadata;
   if (metadata?.source !== "discord") return undefined;
-  if (typeof metadata.interactionId !== "string") return undefined;
+  if (typeof metadata.correlationId !== "string") return undefined;
 
   return {
-    interactionId: metadata.interactionId,
+    correlationId: metadata.correlationId,
+    discordInteractionId:
+      typeof metadata.discordInteractionId === "string"
+        ? metadata.discordInteractionId
+        : undefined,
+    sourceCorrelationId:
+      typeof metadata.sourceCorrelationId === "string"
+        ? metadata.sourceCorrelationId
+        : undefined,
+    sourceInteractionId:
+      typeof metadata.sourceInteractionId === "string"
+        ? metadata.sourceInteractionId
+        : undefined,
     text: "",
     emptyResponseBehavior:
       metadata.emptyResponseBehavior === "suppress" ? "suppress" : undefined,

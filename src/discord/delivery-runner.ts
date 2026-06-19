@@ -7,6 +7,7 @@ import {
 } from "./api";
 import {
   DiscordDeliveryStore,
+  getDeliveryCorrelationId,
   isTerminalDelivery,
   type DiscordDeliveryRecord,
   type DiscordResetDeliveryRecord
@@ -52,10 +53,10 @@ export class DiscordDeliveryRunner {
     result: ChatResponseResult
   ) {
     if (record.type !== "chat") return;
+    const correlationId = getDeliveryCorrelationId(record);
 
     const freshRecord =
-      (await this.options.deliveries.getDelivery(record.interactionId)) ??
-      record;
+      (await this.options.deliveries.getDelivery(correlationId)) ?? record;
     if (freshRecord.type !== "chat") return;
 
     const text = getDiscordMessageText(result.message);
@@ -66,7 +67,7 @@ export class DiscordDeliveryRunner {
     if (shouldSuppressEmptyResponse(freshRecord, text, artifacts)) {
       logInfo("Skipped empty Discord channel response", {
         sequence: freshRecord.sequence,
-        interactionId: freshRecord.interactionId,
+        ...getDeliveryLogContext(freshRecord),
         responseTargetType: freshRecord.responseTarget.type
       });
       await this.options.deliveries.completeDelivery(freshRecord, "delivered");
@@ -90,7 +91,7 @@ export class DiscordDeliveryRunner {
       } catch (error) {
         logError("Discord assistant history update failed", error, {
           sequence: freshRecord.sequence,
-          interactionId: freshRecord.interactionId
+          ...getDeliveryLogContext(freshRecord)
         });
       }
     }
@@ -111,9 +112,9 @@ export class DiscordDeliveryRunner {
     if (record.type !== "chat") return;
 
     try {
+      const correlationId = getDeliveryCorrelationId(record);
       const freshRecord =
-        (await this.options.deliveries.getDelivery(record.interactionId)) ??
-        record;
+        (await this.options.deliveries.getDelivery(correlationId)) ?? record;
       if (freshRecord.type !== "chat" || isTerminalDelivery(freshRecord)) {
         return;
       }
@@ -125,7 +126,7 @@ export class DiscordDeliveryRunner {
       if (shouldSuppressEmptyResponse(freshRecord, "", artifacts)) {
         logInfo("Skipped empty completed Discord submission response", {
           sequence: freshRecord.sequence,
-          interactionId: freshRecord.interactionId,
+          ...getDeliveryLogContext(freshRecord),
           responseTargetType: freshRecord.responseTarget.type
         });
         await this.options.deliveries.completeDelivery(
@@ -145,7 +146,9 @@ export class DiscordDeliveryRunner {
 
   async processReset(record: DiscordResetDeliveryRecord) {
     try {
-      await this.options.deliveries.markRunning(record.interactionId);
+      await this.options.deliveries.markRunning(
+        getDeliveryCorrelationId(record)
+      );
       const response = await this.options.resetSession();
       await this.deliverResponse(record, response);
       await this.options.deliveries.completeDelivery(record, "delivered");
@@ -163,7 +166,7 @@ export class DiscordDeliveryRunner {
   ) {
     logError("Discord delivery failed", error, {
       sequence: record.sequence,
-      interactionId: record.interactionId,
+      ...getDeliveryLogContext(record),
       deliveryType: record.type,
       responseTargetType: record.responseTarget.type
     });
@@ -215,7 +218,7 @@ export class DiscordDeliveryRunner {
     if (record.responseTarget.type === "channel_message") {
       logInfo("Sending Discord channel message", {
         sequence: record.sequence,
-        interactionId: record.interactionId,
+        ...getDeliveryLogContext(record),
         channelId: record.responseTarget.channelId,
         contentLength: response.content.length,
         attachments: response.attachments?.length ?? 0
@@ -230,7 +233,7 @@ export class DiscordDeliveryRunner {
       );
       logInfo("Sent Discord channel message", {
         sequence: record.sequence,
-        interactionId: record.interactionId,
+        ...getDeliveryLogContext(record),
         channelId: record.responseTarget.channelId,
         contentLength: response.content.length,
         messageCount,
@@ -242,7 +245,7 @@ export class DiscordDeliveryRunner {
     await waitForDiscordDeferredResponse(record);
     logInfo("Editing Discord interaction response", {
       sequence: record.sequence,
-      interactionId: record.interactionId,
+      ...getDeliveryLogContext(record),
       contentLength: response.content.length,
       attachments: response.attachments?.length ?? 0
     });
@@ -255,7 +258,7 @@ export class DiscordDeliveryRunner {
     );
     logInfo("Delivered Discord interaction response", {
       sequence: record.sequence,
-      interactionId: record.interactionId,
+      ...getDeliveryLogContext(record),
       contentLength: response.content.length,
       messageCount,
       attachments: response.attachments?.length ?? 0
@@ -286,10 +289,17 @@ export class DiscordDeliveryRunner {
     } catch (editError) {
       logError("Discord failure response edit failed", editError, {
         sequence: record.sequence,
-        interactionId: record.interactionId
+        ...getDeliveryLogContext(record)
       });
     }
   }
+}
+
+function getDeliveryLogContext(record: DiscordDeliveryRecord) {
+  return {
+    correlationId: getDeliveryCorrelationId(record),
+    discordInteractionId: record.discordInteractionId
+  };
 }
 
 async function waitForDiscordDeferredResponse(record: DiscordDeliveryRecord) {

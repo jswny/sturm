@@ -79,7 +79,7 @@ Inspect recent Code Mode executions for a guild channel:
 ```bash
 curl -X POST https://<worker-host>/api/admin/codemode/inspect \
   -H "Content-Type: application/json" \
-  --data '{"surface":{"type":"guild_channel","guildId":"<guild-id>","channelId":"<channel-id>"},"interactionId":"<interaction-id>"}'
+  --data '{"surface":{"type":"guild_channel","guildId":"<guild-id>","channelId":"<channel-id>"},"correlationId":"<correlation-id>"}'
 ```
 
 ## Commands

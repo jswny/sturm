@@ -27,7 +27,7 @@ export type DiscordProgressReporter = {
 
 type DiscordProgressOptions = {
   createdAt: string;
-  interactionId: string;
+  correlationId: string;
   sequence: number;
 };
 
@@ -104,7 +104,7 @@ class DiscordInteractionProgressReporter implements DiscordProgressReporter {
     } catch (error) {
       logWarn("Discord progress response edit failed", {
         sequence: this.options.sequence,
-        interactionId: this.options.interactionId,
+        correlationId: this.options.correlationId,
         error: error instanceof Error ? error.message : String(error)
       });
     }

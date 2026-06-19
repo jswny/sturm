@@ -89,7 +89,7 @@ async function inspectCodeMode(payload: CodeModeInspectPayload, env: AdminEnv) {
   const codeMode = await agent.inspectCodeModeRuntime({
     limit: payload.limit,
     executionId: payload.executionId,
-    interactionId: payload.interactionId,
+    correlationId: payload.correlationId,
     previewMaxChars: payload.previewMaxChars
   });
 
@@ -140,10 +140,10 @@ function validateCodeModeInspectPayload(payload: CodeModeInspectPayload) {
   }
 
   if (
-    payload.interactionId !== undefined &&
-    (typeof payload.interactionId !== "string" || !payload.interactionId.trim())
+    payload.correlationId !== undefined &&
+    (typeof payload.correlationId !== "string" || !payload.correlationId.trim())
   ) {
-    return "interactionId must be a non-empty string.";
+    return "correlationId must be a non-empty string.";
   }
 
   return null;
