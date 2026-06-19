@@ -1,4 +1,9 @@
-<!-- BEGIN Cloudflare C3 generated AGENTS.md baseline; do not edit in place. Refresh this block from upstream C3, and put repo-specific guidance under "Sturm Additions". -->
+<!--
+BEGIN Cloudflare C3 generated AGENTS.md baseline.
+Source: cloudflare/workers-sdk:packages/create-cloudflare/src/agents-md.ts (`getAgentsMd`).
+URL: https://github.com/cloudflare/workers-sdk/blob/main/packages/create-cloudflare/src/agents-md.ts
+Do not edit in place. Refresh this block from upstream C3, and put repo-specific guidance under "Sturm Additions".
+-->
 
 # Cloudflare Workers
 
