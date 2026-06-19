@@ -37,6 +37,7 @@ import {
 } from "./discord/component-prompts";
 import { formatDiscordRuntimeContext } from "./discord/context";
 import { getGuildIdFromDiscordConversationName } from "./discord/conversation";
+import { addCurrentTurnImagesToModelMessages } from "./discord/current-turn-images";
 import {
   DiscordDeliveryStore,
   getDeliveryCorrelationId,
@@ -247,7 +248,11 @@ export class ChatAgent extends Think<Env> {
 
     return {
       system: createDiscordThinkSystemPrompt(sessionContext, runtimeContext),
-      messages: inlineDataUrls(ctx.messages),
+      messages: inlineDataUrls(
+        turn
+          ? await addCurrentTurnImagesToModelMessages(ctx.messages, turn)
+          : ctx.messages
+      ),
       tools: await this.createDiscordThinkTools(turn, progress),
       activeTools: DISCORD_ACTIVE_TOOLS,
       maxSteps: this.maxSteps,
