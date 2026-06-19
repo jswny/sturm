@@ -1,3 +1,5 @@
+<!-- BEGIN Cloudflare C3 generated AGENTS.md baseline; do not edit in place. Refresh this block from upstream C3, and put repo-specific guidance under "Sturm Additions". -->
+
 # Cloudflare Workers
 
 STOP. Your knowledge of Cloudflare Workers APIs and limits may be outdated. Always retrieve current documentation before any Workers, KV, R2, D1, Durable Objects, Queues, Vectorize, AI, or Agents SDK task.
@@ -5,7 +7,6 @@ STOP. Your knowledge of Cloudflare Workers APIs and limits may be outdated. Alwa
 ## Docs
 
 - https://developers.cloudflare.com/workers/
-- Long-running Agents: https://developers.cloudflare.com/agents/concepts/long-running-agents/
 - MCP: `https://docs.mcp.cloudflare.com/mcp`
 
 For all limits and quotas, retrieve from the product's `/platform/limits/` page. eg. `/workers/platform/limits`
@@ -19,14 +20,6 @@ For all limits and quotas, retrieve from the product's `/platform/limits/` page.
 | `npx wrangler types`  | Generate TypeScript types |
 
 Run `wrangler types` after changing bindings in wrangler.jsonc.
-
-For local Discord slash-command testing, run `npm run dev`, then register
-guild-scoped commands through
-`curl -X POST http://localhost:8787/api/admin/register-commands`. This
-registers commands in every guild the configured bot is in.
-Design principle: use guild-scoped Discord commands for this bot. Do not add
-global command registration unless explicitly requested; global command
-propagation is too slow for the current development and deployment workflow.
 
 ## Node.js Compatibility
 
@@ -48,6 +41,29 @@ If the application uses Durable Objects or Workflows, refer to the relevant best
 
 - Durable Objects: https://developers.cloudflare.com/durable-objects/best-practices/rules-of-durable-objects/
 - Workflows: https://developers.cloudflare.com/workflows/build/rules-of-workflows/
+
+<!-- END Cloudflare C3 generated AGENTS.md baseline -->
+
+---
+
+# Sturm Additions
+
+These instructions are repo-specific additions layered after the Cloudflare C3
+baseline above.
+
+## Docs
+
+- Long-running Agents: https://developers.cloudflare.com/agents/concepts/long-running-agents/
+
+## Commands
+
+For local Discord slash-command testing, run `npm run dev`, then register
+guild-scoped commands through
+`curl -X POST http://localhost:8787/api/admin/register-commands`. This
+registers commands in every guild the configured bot is in.
+Design principle: use guild-scoped Discord commands for this bot. Do not add
+global command registration unless explicitly requested; global command
+propagation is too slow for the current development and deployment workflow.
 
 ## Runtime Debugging Flow
 
