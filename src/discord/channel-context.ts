@@ -13,6 +13,13 @@ type DiscordChannelContextEnv = DiscordApiEnv & {
   DISCORD_APPLICATION_ID?: string;
 };
 
+type RecentDiscordChannelMessageOptions = {
+  applicationId?: string;
+  botUserId?: string;
+  currentInteractionId?: string;
+  memberDisplayNames: Map<string, string>;
+};
+
 export async function createRecentDiscordChannelContext(
   env: DiscordChannelContextEnv,
   request: DiscordChatRequest
@@ -31,49 +38,58 @@ export async function createRecentDiscordChannelContext(
 
   return formatRecentDiscordChannelMessages(messages, {
     applicationId: env.DISCORD_APPLICATION_ID?.trim(),
+    botUserId: request.app?.botUserId,
+    currentInteractionId: request.discordInteractionId,
     memberDisplayNames
   });
 }
 
 function formatRecentDiscordChannelMessages(
   messages: APIMessage[],
-  options: { applicationId?: string; memberDisplayNames: Map<string, string> }
+  options: RecentDiscordChannelMessageOptions
 ) {
   const lines = messages
-    .filter((message) => !isCurrentApplicationMessage(message, options))
-    .map((message) =>
-      formatRecentDiscordChannelMessage(message, options.memberDisplayNames)
-    )
+    .map((message) => formatRecentDiscordChannelMessage(message, options))
     .filter(Boolean)
     .reverse();
 
   if (lines.length === 0) return "";
 
   const header = [
-    "Recent Discord channel messages (read-only context fetched at turn time; may be incomplete):",
-    "all timestamps are ISO 8601 UTC"
+    "Live Discord channel transcript snapshot (fetched at turn time; may be incomplete):",
+    "all timestamps are ISO 8601 UTC",
+    "messages are ordered oldest to newest",
+    "Sturm assistant responses are marker-only entries; their content is represented in persisted assistant history",
+    "Sturm markers correspond chronologically to prior assistant responses in persisted assistant history",
+    "the current Discord user message appears after this snapshot as the final user message in the model input"
   ].join("\n");
+  const transcriptHeader = "Recent messages:";
   let keptLines = lines;
   while (
-    [header, ...keptLines].join("\n").length >
+    [header, transcriptHeader, ...keptLines].join("\n").length >
       RECENT_CHANNEL_CONTEXT_MAX_CHARS &&
     keptLines.length > 1
   ) {
     keptLines = keptLines.slice(1);
   }
 
-  const block = [header, ...keptLines].join("\n");
+  const block = [header, transcriptHeader, ...keptLines].join("\n");
   return limitText(block, RECENT_CHANNEL_CONTEXT_MAX_CHARS);
 }
 
 function formatRecentDiscordChannelMessage(
   message: APIMessage,
-  memberDisplayNames: Map<string, string>
-) {
+  options: RecentDiscordChannelMessageOptions
+): string {
+  if (isCurrentSturmInteractionMessage(message, options)) return "";
+  if (isSturmMessage(message, options)) {
+    return `- ${formatMessageTimestamps(message)} Sturm (bot): [assistant response omitted; see persisted assistant history]`;
+  }
+
   const body = formatMessageBody(message);
   if (!body) return "";
 
-  const author = formatMessageAuthor(message, memberDisplayNames);
+  const author = formatMessageAuthor(message, options.memberDisplayNames);
   return `- ${formatMessageTimestamps(message)} ${author}: ${body}`;
 }
 
@@ -135,13 +151,30 @@ function formatAttachment(attachment: APIMessage["attachments"][number]) {
   return `${attachment.filename}${contentType}`;
 }
 
-function isCurrentApplicationMessage(
+function isCurrentSturmInteractionMessage(
   message: APIMessage,
-  options: { applicationId?: string }
+  options: RecentDiscordChannelMessageOptions
 ) {
   return Boolean(
-    options.applicationId && message.application_id === options.applicationId
+    options.currentInteractionId &&
+    isSturmMessage(message, options) &&
+    getMessageInteractionId(message) === options.currentInteractionId
   );
+}
+
+function isSturmMessage(
+  message: APIMessage,
+  options: RecentDiscordChannelMessageOptions
+) {
+  return Boolean(
+    (options.applicationId &&
+      message.application_id === options.applicationId) ||
+    (options.botUserId && message.author.id === options.botUserId)
+  );
+}
+
+function getMessageInteractionId(message: APIMessage) {
+  return message.interaction_metadata?.id ?? message.interaction?.id;
 }
 
 async function resolveRecentMessageAuthorDisplayNames(
