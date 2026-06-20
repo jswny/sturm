@@ -19,6 +19,7 @@ import {
   hydrateStoredResponseArtifacts,
   withAssistantText
 } from "./turn";
+import { renderDiscordResponseTemplate } from "./response-template";
 import {
   createComponentPromptResponse,
   formatComponentPromptHistoryText,
@@ -96,12 +97,27 @@ export class DiscordDeliveryRunner {
       }
     }
 
+    const renderedText = renderDiscordResponseTemplate(text);
+    if (renderedText.error) {
+      logWarn("Discord response template render failed", {
+        sequence: freshRecord.sequence,
+        ...getDeliveryLogContext(freshRecord),
+        error: renderedText.error
+      });
+    }
+
     const response = componentPrompt
       ? {
-          ...createDiscordResponseFromAssistantMessage(text, artifacts),
+          ...createDiscordResponseFromAssistantMessage(
+            renderedText.content,
+            artifacts
+          ),
           ...createComponentPromptResponse(componentPrompt)
         }
-      : createDiscordResponseFromAssistantMessage(text, artifacts);
+      : createDiscordResponseFromAssistantMessage(
+          renderedText.content,
+          artifacts
+        );
     await this.deliverResponse(freshRecord, response);
     await this.options.deliveries.completeDelivery(freshRecord, "delivered");
   }

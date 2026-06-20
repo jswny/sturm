@@ -73,8 +73,10 @@ export function createModerationTools(
           failurePrefix: "Temporary mute failed",
           successHeader: "Temporary mute applied.",
           extraLines: [
-            `Duration: ${output.durationSeconds} seconds`,
-            `Muted until: ${output.communicationDisabledUntil}`
+            `duration_seconds: ${output.durationSeconds}`,
+            output.communicationDisabledUntil
+              ? `muted_until_utc: ${output.communicationDisabledUntil}`
+              : ""
           ]
         })
       })

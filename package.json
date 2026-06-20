@@ -30,6 +30,7 @@
     "ai": "^6.0.206",
     "discord-api-types": "^0.38.47",
     "discord-interactions": "^4.4.0",
+    "liquidjs": "^10.27.0",
     "workers-ai-provider": "^3.1.14",
     "zod": "^4.4.3"
   },
