@@ -13,6 +13,11 @@ const STICKER_SIZE_PX = 320;
 const MAX_STICKER_BYTES = 512 * 1024;
 const STATIC_STICKER_FILENAME = "sticker.png";
 const FALLBACK_DESCRIPTION = "Sticker created by Sturm";
+export const STICKER_NAME_MIN_CHARS = 2;
+export const STICKER_NAME_MAX_CHARS = 30;
+export const STICKER_DESCRIPTION_MIN_CHARS = 2;
+export const STICKER_DESCRIPTION_MAX_CHARS = 100;
+export const STICKER_TAGS_MAX_TOTAL_CHARS = 200;
 
 export type StickerEnv = DiscordApiEnv;
 
@@ -220,11 +225,10 @@ function sanitizeStickerTags(
     };
   }
 
-  if (tagsText.length > 200) {
+  if (tagsText.length > STICKER_TAGS_MAX_TOTAL_CHARS) {
     return {
       ok: false,
-      error:
-        "Sticker tags are too long. Provide shorter tags totaling at most 200 characters."
+      error: `Sticker tags are too long. Provide shorter tags totaling at most ${STICKER_TAGS_MAX_TOTAL_CHARS} characters.`
     };
   }
 
@@ -237,16 +241,16 @@ function sanitizeStickerName(value: string | undefined) {
     .toLowerCase()
     .replace(/[^a-z0-9_-]+/g, "-")
     .replace(/^-+|-+$/g, "")
-    .slice(0, 30);
+    .slice(0, STICKER_NAME_MAX_CHARS);
 
-  return name && name.length >= 2 ? name : undefined;
+  return name && name.length >= STICKER_NAME_MIN_CHARS ? name : undefined;
 }
 
 function sanitizeStickerDescription(value: string | undefined) {
   const description = value?.trim();
   if (!description) return undefined;
-  if (description.length < 2) return undefined;
-  return description.slice(0, 100);
+  if (description.length < STICKER_DESCRIPTION_MIN_CHARS) return undefined;
+  return description.slice(0, STICKER_DESCRIPTION_MAX_CHARS);
 }
 
 function inferStickerDescription(
@@ -258,7 +262,8 @@ function inferStickerDescription(
     ? `${capitalize(words)} sticker`
     : FALLBACK_DESCRIPTION;
   return (
-    sanitizeStickerDescription(attachment.description) ?? fallback.slice(0, 100)
+    sanitizeStickerDescription(attachment.description) ??
+    fallback.slice(0, STICKER_DESCRIPTION_MAX_CHARS)
   );
 }
 

@@ -112,12 +112,12 @@ const CUSTOM_ID_PREFIX = "sturm:prompt";
 const DEFAULT_PROMPT_TTL_MS = 15 * 60 * 1000;
 const COMPONENT_PROMPT_RETENTION_MS = 24 * 60 * 60 * 1000;
 const COMPONENT_PROMPT_PRUNE_BATCH_SIZE = 100;
-const MAX_PROMPT_OPTIONS = 10;
-const MAX_PROMPT_QUESTION_LENGTH = 1200;
-const MAX_BUTTON_LABEL_LENGTH = 80;
-const MAX_SELECT_LABEL_LENGTH = 100;
-const MAX_SELECT_DESCRIPTION_LENGTH = 100;
-const MAX_TERMINAL_TEXT_LENGTH = 300;
+export const MAX_PROMPT_OPTIONS = 10;
+export const MAX_PROMPT_QUESTION_LENGTH = 1200;
+export const MAX_BUTTON_LABEL_LENGTH = 80;
+export const MAX_SELECT_LABEL_LENGTH = 100;
+export const MAX_SELECT_DESCRIPTION_LENGTH = 100;
+export const MAX_TERMINAL_TEXT_LENGTH = 300;
 
 export class DiscordComponentPromptStore {
   constructor(private storage: DurableObjectStorage) {}

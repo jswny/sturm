@@ -5,6 +5,7 @@ import type { DiscordChatRequest } from "./discord/types";
 import { getErrorMessage, logError } from "./logging";
 import {
   getScheduledChannelTaskPayload,
+  MIN_RECURRING_SCHEDULE_SECONDS,
   SCHEDULED_CHANNEL_TASK_CALLBACK,
   summarizeScheduledChannelTask,
   type CancelScheduledChannelTaskResult,
@@ -17,8 +18,6 @@ import {
   type ScheduledChannelTaskSchedule,
   type ScheduledTaskController
 } from "./scheduled-tasks";
-
-const MIN_RECURRING_SCHEDULE_SECONDS = 60 * 60;
 
 type ScheduleTimingInput = Omit<ScheduleChannelTaskInput, "instruction">;
 

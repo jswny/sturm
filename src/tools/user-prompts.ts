@@ -1,10 +1,23 @@
 import { tool } from "ai";
 import { z } from "zod";
-import type {
-  ComponentPromptKind,
-  CreateComponentPromptInput,
-  StoredComponentPrompt
+import {
+  MAX_BUTTON_LABEL_LENGTH,
+  MAX_PROMPT_OPTIONS,
+  MAX_PROMPT_QUESTION_LENGTH,
+  MAX_SELECT_DESCRIPTION_LENGTH,
+  MAX_SELECT_LABEL_LENGTH,
+  MAX_TERMINAL_TEXT_LENGTH,
+  type ComponentPromptKind,
+  type CreateComponentPromptInput,
+  type StoredComponentPrompt
 } from "../discord/component-prompts";
+
+const MIN_PROMPT_TEXT_LENGTH = 1;
+const MIN_PROMPT_OPTION_COUNT = 2;
+const MAX_PENDING_ACTION_LENGTH = 2000;
+
+const QUESTION_DESCRIPTION = `Public question to show in Discord, from ${MIN_PROMPT_TEXT_LENGTH} to ${MAX_PROMPT_QUESTION_LENGTH} characters`;
+const PENDING_ACTION_DESCRIPTION = `Durable description of the exact work Sturm should continue after the user responds, from ${MIN_PROMPT_TEXT_LENGTH} to ${MAX_PENDING_ACTION_LENGTH} characters. Include targets, IDs, durations, reasons, user constraints, and other parameters needed to perform the work later.`;
 
 export type UserPromptController = {
   create(
@@ -34,64 +47,76 @@ const userPromptResponseSchema = z.object({
 const confirmPromptInputSchema = z.object({
   question: z
     .string()
-    .min(1)
-    .max(1200)
-    .describe("Public confirmation question to show in Discord"),
+    .min(MIN_PROMPT_TEXT_LENGTH)
+    .max(MAX_PROMPT_QUESTION_LENGTH)
+    .describe(QUESTION_DESCRIPTION),
   confirmLabel: z
     .string()
-    .min(1)
-    .max(80)
+    .min(MIN_PROMPT_TEXT_LENGTH)
+    .max(MAX_BUTTON_LABEL_LENGTH)
     .optional()
-    .describe("Button label for confirming. Defaults to Confirm."),
+    .describe(
+      `Confirmation button label, from ${MIN_PROMPT_TEXT_LENGTH} to ${MAX_BUTTON_LABEL_LENGTH} characters. Defaults to Confirm.`
+    ),
   cancelLabel: z
     .string()
-    .min(1)
-    .max(80)
+    .min(MIN_PROMPT_TEXT_LENGTH)
+    .max(MAX_BUTTON_LABEL_LENGTH)
     .optional()
-    .describe("Button label for cancelling. Defaults to Cancel."),
+    .describe(
+      `Cancel button label, from ${MIN_PROMPT_TEXT_LENGTH} to ${MAX_BUTTON_LABEL_LENGTH} characters. Defaults to Cancel.`
+    ),
   pendingAction: z
     .string()
-    .min(1)
-    .max(2000)
-    .describe(
-      "Durable description of the exact work Sturm should continue after confirmation. Include targets, IDs, durations, reasons, user constraints, and other parameters needed to perform the work later."
-    ),
+    .min(MIN_PROMPT_TEXT_LENGTH)
+    .max(MAX_PENDING_ACTION_LENGTH)
+    .describe(PENDING_ACTION_DESCRIPTION),
   cancelMessage: z
     .string()
-    .min(1)
-    .max(300)
+    .min(MIN_PROMPT_TEXT_LENGTH)
+    .max(MAX_TERMINAL_TEXT_LENGTH)
     .optional()
-    .describe("Message to show on the prompt if the user cancels.")
+    .describe(
+      `Message to show on the prompt if the user cancels, from ${MIN_PROMPT_TEXT_LENGTH} to ${MAX_TERMINAL_TEXT_LENGTH} characters`
+    )
 });
 
 const selectPromptInputSchema = z.object({
   question: z
     .string()
-    .min(1)
-    .max(1200)
-    .describe("Public selection question to show in Discord"),
+    .min(MIN_PROMPT_TEXT_LENGTH)
+    .max(MAX_PROMPT_QUESTION_LENGTH)
+    .describe(QUESTION_DESCRIPTION),
   options: z
     .array(
       z.object({
-        label: z.string().min(1).max(100).describe("Visible option label"),
+        label: z
+          .string()
+          .min(MIN_PROMPT_TEXT_LENGTH)
+          .max(MAX_SELECT_LABEL_LENGTH)
+          .describe(
+            `Visible option label, from ${MIN_PROMPT_TEXT_LENGTH} to ${MAX_SELECT_LABEL_LENGTH} characters`
+          ),
         description: z
           .string()
-          .min(1)
-          .max(100)
+          .min(MIN_PROMPT_TEXT_LENGTH)
+          .max(MAX_SELECT_DESCRIPTION_LENGTH)
           .optional()
-          .describe("Optional short option description"),
+          .describe(
+            `Optional short option description, from ${MIN_PROMPT_TEXT_LENGTH} to ${MAX_SELECT_DESCRIPTION_LENGTH} characters`
+          ),
         pendingAction: z
           .string()
-          .min(1)
-          .max(2000)
-          .describe(
-            "Durable meaning of this option and the exact work Sturm should continue if selected. Include all identifiers, selected values, user constraints, and context needed to perform the work later."
-          )
+          .min(MIN_PROMPT_TEXT_LENGTH)
+          .max(MAX_PENDING_ACTION_LENGTH)
+          .describe(PENDING_ACTION_DESCRIPTION)
       })
     )
-    .min(2)
-    .max(10)
-    .describe("Options the user can choose from")
+    .min(MIN_PROMPT_OPTION_COUNT)
+    .max(MAX_PROMPT_OPTIONS)
+    .describe(
+      `Options the user can choose from, from ${MIN_PROMPT_OPTION_COUNT} to ${MAX_PROMPT_OPTIONS} options`
+    )
 });
 
 type ConfirmPromptInput = z.infer<typeof confirmPromptInputSchema>;

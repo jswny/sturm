@@ -1,11 +1,21 @@
 import { tool } from "ai";
 import { z } from "zod";
 import {
+  STICKER_DESCRIPTION_MAX_CHARS,
+  STICKER_DESCRIPTION_MIN_CHARS,
+  STICKER_NAME_MAX_CHARS,
+  STICKER_NAME_MIN_CHARS,
+  STICKER_TAGS_MAX_TOTAL_CHARS,
   createGuildStickerFromAttachment,
   type CreateStickerFromAttachmentResponse,
   type StickerEnv,
   type StickerRequestContext
 } from "../stickers";
+
+const STICKER_TAG_MIN_CHARS = 1;
+const STICKER_TAG_MAX_CHARS = 50;
+const STICKER_TAG_MIN_COUNT = 1;
+const STICKER_TAG_MAX_COUNT = 20;
 
 const createStickerResponseSchema = z.object({
   ok: z.boolean().describe("Whether the sticker was created"),
@@ -47,22 +57,28 @@ export function createStickerTools(
           .describe("ID of the current /c image attachment to use"),
         name: z
           .string()
-          .min(2)
-          .max(30)
+          .min(STICKER_NAME_MIN_CHARS)
+          .max(STICKER_NAME_MAX_CHARS)
           .optional()
-          .describe("Discord sticker name"),
+          .describe(
+            `Discord sticker name, from ${STICKER_NAME_MIN_CHARS} to ${STICKER_NAME_MAX_CHARS} characters after sanitization`
+          ),
         description: z
           .string()
-          .min(2)
-          .max(100)
+          .min(STICKER_DESCRIPTION_MIN_CHARS)
+          .max(STICKER_DESCRIPTION_MAX_CHARS)
           .optional()
-          .describe("Short sticker description inferred from the request"),
-        tags: z
-          .array(z.string().min(1).max(50))
-          .min(1)
-          .max(20)
           .describe(
-            "One or more short Discord search tags for this sticker; infer them from the user request and image when not explicitly provided"
+            `Short sticker description inferred from the request, from ${STICKER_DESCRIPTION_MIN_CHARS} to ${STICKER_DESCRIPTION_MAX_CHARS} characters`
+          ),
+        tags: z
+          .array(
+            z.string().min(STICKER_TAG_MIN_CHARS).max(STICKER_TAG_MAX_CHARS)
+          )
+          .min(STICKER_TAG_MIN_COUNT)
+          .max(STICKER_TAG_MAX_COUNT)
+          .describe(
+            `One or more short Discord search tags for this sticker; provide ${STICKER_TAG_MIN_COUNT} to ${STICKER_TAG_MAX_COUNT} tags, each ${STICKER_TAG_MIN_CHARS} to ${STICKER_TAG_MAX_CHARS} characters, totaling at most ${STICKER_TAGS_MAX_TOTAL_CHARS} characters when comma-separated. Infer them from the user request and image when not explicitly provided.`
           )
       }),
       outputSchema: createStickerResponseSchema,

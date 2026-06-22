@@ -14,6 +14,9 @@ export type ModerationEnv = DiscordApiEnv;
 
 export type ModerationRequestContext = DiscordMemberActionContext;
 
+export const MODERATION_REASON_MIN_CHARS = 1;
+export const MODERATION_REASON_MAX_CHARS = 200;
+
 type ModerationAction = "muted" | "unmuted";
 
 type ModerationResponse<Action extends ModerationAction> = {
@@ -231,7 +234,7 @@ function validateModerationReason(
     return { reason: preparedReason, error: emptyReasonError };
   }
 
-  return { reason: preparedReason.slice(0, 200) };
+  return { reason: preparedReason.slice(0, MODERATION_REASON_MAX_CHARS) };
 }
 
 async function applyGuildMemberTimeoutChange<Action extends ModerationAction>(

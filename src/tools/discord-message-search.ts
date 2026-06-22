@@ -1,12 +1,18 @@
 import { tool } from "ai";
 import { z } from "zod";
 import {
+  DISCORD_MESSAGE_SEARCH_DEFAULT_LIMIT,
+  DISCORD_MESSAGE_SEARCH_MAX_CONTENT_CHARS,
+  DISCORD_MESSAGE_SEARCH_MAX_LIMIT,
+  DISCORD_MESSAGE_SEARCH_MIN_LIMIT,
   searchDiscordMessages,
   type DiscordMessageSearchEnv,
   type DiscordMessageSearchContext,
   type DiscordMessageSearchResponse
 } from "../discord-message-search";
 import { formatUtcTimestampField } from "../discord/timestamps";
+
+const DISCORD_MESSAGE_SEARCH_MAX_HAS_FILTERS = 3;
 
 const discordMessageSearchHasSchema = z.enum([
   "image",
@@ -62,9 +68,11 @@ export function createDiscordMessageSearchTools(
         content: z
           .string()
           .min(1)
-          .max(1024)
+          .max(DISCORD_MESSAGE_SEARCH_MAX_CONTENT_CHARS)
           .optional()
-          .describe("Text to search for in message content"),
+          .describe(
+            `Text to search for in message content, up to ${DISCORD_MESSAGE_SEARCH_MAX_CONTENT_CHARS} characters`
+          ),
         authorUserId: z
           .string()
           .optional()
@@ -77,9 +85,11 @@ export function createDiscordMessageSearchTools(
           ),
         has: z
           .array(discordMessageSearchHasSchema)
-          .max(3)
+          .max(DISCORD_MESSAGE_SEARCH_MAX_HAS_FILTERS)
           .optional()
-          .describe("Only return messages with these attachment/content types"),
+          .describe(
+            `Only return messages with these attachment/content types; include up to ${DISCORD_MESSAGE_SEARCH_MAX_HAS_FILTERS} filters`
+          ),
         pinned: z
           .boolean()
           .optional()
@@ -103,10 +113,12 @@ export function createDiscordMessageSearchTools(
         limit: z
           .number()
           .int()
-          .min(1)
-          .max(25)
-          .default(10)
-          .describe("Maximum results to return, up to 25")
+          .min(DISCORD_MESSAGE_SEARCH_MIN_LIMIT)
+          .max(DISCORD_MESSAGE_SEARCH_MAX_LIMIT)
+          .default(DISCORD_MESSAGE_SEARCH_DEFAULT_LIMIT)
+          .describe(
+            `Maximum results to return, from ${DISCORD_MESSAGE_SEARCH_MIN_LIMIT} to ${DISCORD_MESSAGE_SEARCH_MAX_LIMIT} inclusive`
+          )
       }),
       outputSchema: discordMessageSearchResponseSchema,
       execute: async (input) => searchDiscordMessages(env, context, input),

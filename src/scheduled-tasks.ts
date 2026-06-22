@@ -7,6 +7,7 @@ import type {
 } from "./discord/types";
 
 export const SCHEDULED_CHANNEL_TASK_CALLBACK = "runScheduledChannelTask";
+export const MIN_RECURRING_SCHEDULE_SECONDS = 60 * 60;
 
 export type ScheduledChannelTaskPayload = {
   kind: "discord_channel_task";

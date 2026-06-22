@@ -1,11 +1,15 @@
 import { tool } from "ai";
 import { z } from "zod";
 import {
+  EMOJI_NAME_MAX_CHARS,
+  EMOJI_NAME_MIN_CHARS,
   createGuildEmojiFromAttachment,
   type CreateEmojiFromAttachmentResponse,
   type EmojiEnv,
   type EmojiRequestContext
 } from "../emojis";
+
+const EMOJI_INPUT_NAME_MAX_CHARS = 64;
 
 const createEmojiResponseSchema = z.object({
   ok: z.boolean().describe("Whether the emoji was created"),
@@ -44,11 +48,11 @@ export function createEmojiTools(env: EmojiEnv, context: EmojiRequestContext) {
           .describe("ID of the current /c image attachment to use"),
         name: z
           .string()
-          .min(2)
-          .max(64)
+          .min(EMOJI_NAME_MIN_CHARS)
+          .max(EMOJI_INPUT_NAME_MAX_CHARS)
           .optional()
           .describe(
-            "Semantic emoji name from the user request; spaces are allowed and will be sanitized"
+            `Semantic emoji name from the user request, from ${EMOJI_NAME_MIN_CHARS} to ${EMOJI_INPUT_NAME_MAX_CHARS} characters before sanitization. Spaces are allowed; the final Discord emoji name is sanitized and capped at ${EMOJI_NAME_MAX_CHARS} characters.`
           )
       }),
       outputSchema: createEmojiResponseSchema,

@@ -17,6 +17,9 @@ import {
 import { logError, logWarn } from "./logging";
 
 const SPECIAL_SPACE = " ";
+export const GUILD_MEMBER_SEARCH_MIN_LIMIT = 1;
+export const GUILD_MEMBER_SEARCH_MAX_LIMIT = 10;
+export const GUILD_MEMBER_SEARCH_DEFAULT_LIMIT = 5;
 
 export type NicknameEnv = DiscordApiEnv;
 
@@ -58,7 +61,7 @@ export async function searchGuildMembers(
   env: NicknameEnv,
   context: NicknameRequestContext,
   query: string,
-  limit = 5
+  limit = GUILD_MEMBER_SEARCH_DEFAULT_LIMIT
 ): Promise<GuildMemberSearchResult> {
   const preparedQuery = query.trim();
   if (!preparedQuery) {
@@ -87,7 +90,10 @@ export async function searchGuildMembers(
     };
   }
 
-  const preparedLimit = Math.max(1, Math.min(limit, 10));
+  const preparedLimit = Math.max(
+    GUILD_MEMBER_SEARCH_MIN_LIMIT,
+    Math.min(limit, GUILD_MEMBER_SEARCH_MAX_LIMIT)
+  );
 
   try {
     const members = await searchDiscordGuildMembers(

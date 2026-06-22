@@ -14,6 +14,7 @@ import { logError, logWarn } from "../logging";
 const WORKSPACE_EXPORT_KEY_PREFIX = "files/workspace";
 const DEFAULT_WORKSPACE_EXPORT_MIME_TYPE = "application/octet-stream";
 const MAX_WORKSPACE_EXPORT_BYTES = 20 * 1024 * 1024;
+const MAX_WORKSPACE_EXPORT_MIB = MAX_WORKSPACE_EXPORT_BYTES / (1024 * 1024);
 
 export type WorkspaceArtifactOptions = {
   onArtifactCreated?: (artifact: ResponseArtifact) => void | Promise<void>;
@@ -46,8 +47,7 @@ export function createArtifactTools(
 ) {
   return {
     exportWorkspaceFile: tool({
-      description:
-        "Attach a file from the persistent channel workspace to the Discord response. Use after creating or updating a workspace file when the user should receive it as a downloadable attachment.",
+      description: `Attach a file from the persistent channel workspace to the Discord response. Use after creating or updating a workspace file when the user should receive it as a downloadable attachment. Files larger than ${MAX_WORKSPACE_EXPORT_MIB} MiB cannot be attached.`,
       inputSchema: z.object({
         path: z
           .string()

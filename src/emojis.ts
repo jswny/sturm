@@ -11,6 +11,8 @@ import { getErrorMessage } from "./logging";
 
 const EMOJI_SIZE_PX = 128;
 const MAX_EMOJI_BYTES = 256 * 1024;
+export const EMOJI_NAME_MIN_CHARS = 2;
+export const EMOJI_NAME_MAX_CHARS = 32;
 
 export type EmojiEnv = DiscordApiEnv;
 
@@ -131,7 +133,7 @@ function sanitizeEmojiName(value: string | undefined) {
     .replace(/[^a-z0-9_]+/g, "_")
     .replace(/_+/g, "_")
     .replace(/^_+|_+$/g, "")
-    .slice(0, 32);
+    .slice(0, EMOJI_NAME_MAX_CHARS);
 
-  return name && name.length >= 2 ? name : undefined;
+  return name && name.length >= EMOJI_NAME_MIN_CHARS ? name : undefined;
 }

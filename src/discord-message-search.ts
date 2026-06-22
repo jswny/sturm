@@ -13,6 +13,11 @@ import { resolveDiscordMemberDisplayName } from "./discord/display-name";
 import { normalizeUtcTimestamp } from "./discord/timestamps";
 import { logError, logWarn } from "./logging";
 
+export const DISCORD_MESSAGE_SEARCH_MAX_CONTENT_CHARS = 1024;
+export const DISCORD_MESSAGE_SEARCH_MIN_LIMIT = 1;
+export const DISCORD_MESSAGE_SEARCH_MAX_LIMIT = 25;
+export const DISCORD_MESSAGE_SEARCH_DEFAULT_LIMIT = 10;
+
 const DISCORD_MESSAGE_SEARCH_MAX_WAIT_MS = 5_000;
 
 export type DiscordMessageSearchEnv = DiscordApiEnv;
@@ -180,7 +185,10 @@ function prepareSearchInput(input: DiscordMessageSearchInput): {
   error?: string;
 } {
   const prepared: DiscordMessageSearchInput = {
-    content: input.content?.trim().slice(0, 1024) || undefined,
+    content:
+      input.content
+        ?.trim()
+        .slice(0, DISCORD_MESSAGE_SEARCH_MAX_CONTENT_CHARS) || undefined,
     authorUserId: input.authorUserId?.trim() || undefined,
     mentionsUserId: input.mentionsUserId?.trim() || undefined,
     has: input.has?.length ? [...new Set(input.has)] : undefined,
@@ -189,7 +197,7 @@ function prepareSearchInput(input: DiscordMessageSearchInput): {
     afterMessageId: input.afterMessageId?.trim() || undefined,
     sortBy: input.sortBy,
     sortOrder: input.sortOrder,
-    limit: clampSearchLimit(input.limit ?? 10)
+    limit: clampSearchLimit(input.limit ?? DISCORD_MESSAGE_SEARCH_DEFAULT_LIMIT)
   };
 
   for (const [label, value] of [
@@ -366,8 +374,11 @@ function normalizeMessageContent(content: string) {
 }
 
 function clampSearchLimit(limit: number) {
-  if (!Number.isFinite(limit)) return 10;
-  return Math.min(25, Math.max(1, Math.trunc(limit)));
+  if (!Number.isFinite(limit)) return DISCORD_MESSAGE_SEARCH_DEFAULT_LIMIT;
+  return Math.min(
+    DISCORD_MESSAGE_SEARCH_MAX_LIMIT,
+    Math.max(DISCORD_MESSAGE_SEARCH_MIN_LIMIT, Math.trunc(limit))
+  );
 }
 
 function isDiscordSnowflake(value: string) {

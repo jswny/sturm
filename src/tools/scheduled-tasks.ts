@@ -1,12 +1,18 @@
 import { tool } from "ai";
 import { z } from "zod";
-import type {
-  CancelScheduledChannelTaskResult,
-  ListScheduledChannelTasksResult,
-  ReplaceScheduledChannelTaskResult,
-  ScheduleChannelTaskResult,
-  ScheduledTaskController
+import {
+  MIN_RECURRING_SCHEDULE_SECONDS,
+  type CancelScheduledChannelTaskResult,
+  type ListScheduledChannelTasksResult,
+  type ReplaceScheduledChannelTaskResult,
+  type ScheduleChannelTaskResult,
+  type ScheduledTaskController
 } from "../scheduled-tasks";
+
+const MIN_DELAY_SECONDS = 1;
+
+const DELAY_SECONDS_DESCRIPTION = `Required when mode is delay. Must be an integer number of seconds, at least ${MIN_DELAY_SECONDS}.`;
+const INTERVAL_SECONDS_DESCRIPTION = `Required when mode is interval. Must be an integer number of seconds, at least ${MIN_RECURRING_SCHEDULE_SECONDS}.`;
 
 const scheduleResultSchema = z.object({
   ok: z.boolean(),
@@ -85,9 +91,9 @@ export function createScheduledTaskTools(
         delaySeconds: z
           .number()
           .int()
-          .positive()
+          .min(MIN_DELAY_SECONDS)
           .optional()
-          .describe("Required when mode is delay"),
+          .describe(DELAY_SECONDS_DESCRIPTION),
         runAt: z
           .string()
           .optional()
@@ -103,11 +109,9 @@ export function createScheduledTaskTools(
         intervalSeconds: z
           .number()
           .int()
-          .positive()
+          .min(MIN_RECURRING_SCHEDULE_SECONDS)
           .optional()
-          .describe(
-            "Required when mode is interval. Must be at least 3600 seconds"
-          )
+          .describe(INTERVAL_SECONDS_DESCRIPTION)
       }),
       outputSchema: scheduleResultSchema,
       execute: async (input) =>
@@ -157,9 +161,9 @@ export function createScheduledTaskTools(
         delaySeconds: z
           .number()
           .int()
-          .positive()
+          .min(MIN_DELAY_SECONDS)
           .optional()
-          .describe("Required when mode is delay"),
+          .describe(DELAY_SECONDS_DESCRIPTION),
         runAt: z
           .string()
           .optional()
@@ -175,11 +179,9 @@ export function createScheduledTaskTools(
         intervalSeconds: z
           .number()
           .int()
-          .positive()
+          .min(MIN_RECURRING_SCHEDULE_SECONDS)
           .optional()
-          .describe(
-            "Required when mode is interval. Must be at least 3600 seconds"
-          )
+          .describe(INTERVAL_SECONDS_DESCRIPTION)
       }),
       outputSchema: replaceResultSchema,
       execute: async (input) =>

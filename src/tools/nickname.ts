@@ -1,6 +1,9 @@
 import { tool } from "ai";
 import { z } from "zod";
 import {
+  GUILD_MEMBER_SEARCH_DEFAULT_LIMIT,
+  GUILD_MEMBER_SEARCH_MAX_LIMIT,
+  GUILD_MEMBER_SEARCH_MIN_LIMIT,
   clearNicknamePostfix,
   setNicknamePostfix,
   searchGuildMembers,
@@ -60,10 +63,12 @@ export function createNicknameTools(
         limit: z
           .number()
           .int()
-          .min(1)
-          .max(10)
-          .default(5)
-          .describe("Maximum number of matches to return, up to 10")
+          .min(GUILD_MEMBER_SEARCH_MIN_LIMIT)
+          .max(GUILD_MEMBER_SEARCH_MAX_LIMIT)
+          .default(GUILD_MEMBER_SEARCH_DEFAULT_LIMIT)
+          .describe(
+            `Maximum number of matches to return, from ${GUILD_MEMBER_SEARCH_MIN_LIMIT} to ${GUILD_MEMBER_SEARCH_MAX_LIMIT} inclusive`
+          )
       }),
       outputSchema: guildMemberSearchResponseSchema,
       execute: async ({ query, limit }) =>
