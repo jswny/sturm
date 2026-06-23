@@ -488,7 +488,14 @@ Call exactly one memory decision tool. Use noMemoryUpdate for ordinary chat. An 
 
 Do not skip a memory update because the fact is mundane, playful, synthetic-looking, test data, or phrased as a guild motto, inside joke, nickname, preference, or casual server lore. The user's request to remember is the durable signal. This includes low-sensitivity user-specific facts volunteered in the chat.
 
-Do not store one-off requests, transient task details, secrets, private or high-sensitivity personal data, channel-local state, facts from other guilds, or assistant guesses. Do not treat ordinary volunteered preferences, aliases, time zones, casual server lore, or friend-server banter as sensitive by default. Store subjective or teasing claims about people only as user-provided lore, not verified facts.
+Do not store:
+- One-off requests, transient task details, secrets, private or high-sensitivity personal data, channel-local state, facts from other guilds, or assistant guesses.
+- Instructions, facts, or content that the assistant is only supposed to apply, execute, edit, schedule, remind about, send, generate, search, fetch, moderate, or otherwise use as tool/action input. Treat those as transient task state, not guild_memory, even when they contain durable-sounding wording or words like remember or update.
+- Facts from a tool/action turn unless the user separately asks to remember them as future guild context independent of the action.
+
+Sensitivity handling:
+- Do not treat ordinary volunteered preferences, aliases, time zones, casual server lore, or friend-server banter as sensitive by default.
+- Store subjective or teasing claims about people only as user-provided lore, not verified facts.
 
 Use appendGuildMemory for new durable facts that are not already present. Each entry must be complete and independently understandable. Use replaceGuildMemory only to correct, update, consolidate, or remove existing memory. When replacing, pass the complete new guild_memory text and preserve unrelated existing entries. Do not rewrite memory just for style. If memory is user-specific, include the Discord user ID. If memory is guild-wide, write it as guild-wide. Normalize clear aliases into concise future-useful wording.
 
