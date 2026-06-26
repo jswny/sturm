@@ -146,3 +146,7 @@ dist
 .dev.vars*
 !.dev.vars.example
 !.env.example
+
+# Local prompt replay benchmark fixtures
+tests/fixtures/prompt-replay/*.local.json
+tests/fixtures/prompt-replay/*.results.json

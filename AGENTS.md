@@ -80,6 +80,14 @@ propagation is too slow for the current development and deployment workflow.
 - Prefer read-only smoke checks before mutations. For Code Mode/tool issues, first verify the AI Gateway request shows native `codemode.search(...)` / `codemode.describe(...)` discovery and the expected inner tool names, then run a read-only inner tool call through `/debug/chat`. Only run mutating tools when the user explicitly approves the real side effect.
 - When reporting results, include the concrete evidence: checks run, relevant Cloudflare log IDs or timestamps, debug `correlationId`, whether request/response payloads were inspected, and any scope limits such as "read-only tool call only" or "Discord platform delivery not manually verified."
 
+## Prompt Replay Benchmarks
+
+- Only use the opt-in prompt replay benchmark when explicitly benchmarking a change to the chat flow, such as prompt text, context shaping, tool exposure, or model request assembly. It gives a stable retained AI Gateway `request_head` fixture for A/B checks without adding a permanent CI test.
+- Store local replay fixtures as gitignored `tests/fixtures/prompt-replay/*.local.json` files. These fixtures may contain private Discord context, so do not commit fixture payloads or generated `*.results.json` files.
+- Run prompt replay explicitly with `npm run bench:prompt-replay`; normal `npm test` skips `tests/prompt-replay.benchmark.test.ts`.
+- Use fixture `variants` for manual A/B testing, especially `systemReplacements`, `appendSystem`, and `disableTools`. Use fixture `scoring.includeAny` and `scoring.excludeAny` as lightweight behavior counters, not as authoritative correctness claims.
+- When reporting replay results, include the source AI Gateway log ID, whether payload retention had a complete request, fixture variant names, run counts, and the exact scoring criteria. Separate model comprehension results from full production behavior when tools are disabled or request fields are edited for benchmarking.
+
 ## Project Architecture
 
 - This repo is a Discord webhook bot, not a web UI.

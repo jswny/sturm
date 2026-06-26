@@ -18,7 +18,8 @@
     "format": "oxfmt --write .",
     "lint": "oxlint src/",
     "check": "oxfmt --check . && oxlint src/ && tsc",
-    "test": "vitest run --config vitest.config.ts"
+    "test": "vitest run --config vitest.config.ts",
+    "bench:prompt-replay": "STURM_RUN_PROMPT_REPLAY=true vitest run --config vitest.config.ts tests/prompt-replay.benchmark.test.ts --reporter verbose"
   },
   "dependencies": {
     "@cloudflare/ai-chat": "^0.8.5",
