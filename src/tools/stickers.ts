@@ -46,7 +46,7 @@ const createStickerResponseSchema = z.object({
 });
 
 const createStickerInputSchema = z.object({
-  artifact_id: z.string().min(1).describe("artifact_id for an image artifact."),
+  artifactId: z.string().min(1).describe("artifactId for an image artifact."),
   name: z
     .string()
     .min(STICKER_NAME_MIN_CHARS)
@@ -79,12 +79,12 @@ export function createStickerTools(
   return {
     createGuildStickerFromArtifact: tool({
       description:
-        "Create a static Discord guild sticker from an image artifact. Use the listed artifact_id. Use only when the user provides a sticker name or the request makes one obvious; a normal text follow-up is fine if the later tool call uses the same durable artifact_id. The caller must have Discord's Create Guild Expressions permission. The tool resizes without cropping to a 320x320 transparent PNG and uploads it to the current guild. Infer a description and tags when the user does not provide them.",
+        "Create a static Discord guild sticker from an image artifact. Use the listed artifactId. Use only when the user provides a sticker name or the request makes one obvious; a normal text follow-up is fine if the later tool call uses the same durable artifactId. The caller must have Discord's Create Guild Expressions permission. The tool resizes without cropping to a 320x320 transparent PNG and uploads it to the current guild. Infer a description and tags when the user does not provide them.",
       inputSchema: createStickerInputSchema,
       outputSchema: createStickerResponseSchema,
       execute: async (input) =>
         createGuildStickerFromArtifact(env, context, {
-          artifactId: input.artifact_id,
+          artifactId: input.artifactId,
           name: input.name,
           description: input.description,
           tags: input.tags

@@ -23,7 +23,7 @@ function formatGenerateImageOutput(output: GenerateImageResponse) {
   }
 
   const lines = [
-    `Generated image artifact_id: ${output.artifactId}`,
+    `Generated image artifactId: ${output.artifactId}`,
     "Source: image_generation",
     `Prompt: ${output.prompt}`,
     `Model: ${output.model}`,

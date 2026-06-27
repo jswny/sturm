@@ -159,7 +159,7 @@ function createArtifactStatusPart(
     type: "text",
     text: [
       "Current /c image attachment status:",
-      `artifact_id: ${artifact.id}`,
+      `artifactId: ${artifact.id}`,
       `filename: ${artifact.filename}`,
       `status: ${status}.`
     ].join("\n")

@@ -112,7 +112,7 @@ export function prepareStaticExpressionArtifact(
       ok: false,
       baseFields,
       error:
-        "That artifact reference is not available in the current conversation context. Use a listed artifact_id, or ask the user to reattach the image."
+        "That artifact reference is not available in the current conversation context. Use a listed artifactId, or ask the user to reattach the image."
     };
   }
 

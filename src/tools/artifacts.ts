@@ -184,7 +184,7 @@ function formatExportWorkspaceFileOutput(output: ExportWorkspaceFileResponse) {
   }
 
   const lines = [
-    `Exported workspace file artifact_id: ${output.artifactId}`,
+    `Exported workspace file artifactId: ${output.artifactId}`,
     "Source: workspace_export",
     `Path: ${output.path}`,
     `Filename: ${output.filename}`,

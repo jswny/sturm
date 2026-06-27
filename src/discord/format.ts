@@ -72,10 +72,10 @@ function formatArtifactMessage(artifacts: ResponseArtifact[]) {
     .map((artifact) => {
       const lines = [
         `${formatArtifactKind(artifact)} artifact:`,
-        `artifact_id: ${artifact.id}`,
+        `artifactId: ${artifact.id}`,
         `source: ${artifact.source}`,
         `filename: ${artifact.filename}`,
-        `mime_type: ${artifact.mimeType}`
+        `mimeType: ${artifact.mimeType}`
       ];
 
       lines.push(...formatArtifactMetadata(artifact));
@@ -97,7 +97,7 @@ function formatArtifactMetadata(artifact: StoredResponseArtifact) {
   switch (artifact.source) {
     case "discord_attachment":
       return [
-        `source_turn_correlation_id: ${artifact.metadata.correlationId}`,
+        `sourceTurnCorrelationId: ${artifact.metadata.correlationId}`,
         artifact.metadata.width && artifact.metadata.height
           ? `dimensions: ${artifact.metadata.width}x${artifact.metadata.height}`
           : ""
@@ -109,7 +109,7 @@ function formatArtifactMetadata(artifact: StoredResponseArtifact) {
         `dimensions: ${artifact.metadata.width}x${artifact.metadata.height}`
       ];
     case "workspace_export":
-      return [`workspace_path: ${artifact.metadata.workspacePath}`];
+      return [`workspacePath: ${artifact.metadata.workspacePath}`];
   }
 }
 
@@ -120,13 +120,13 @@ function formatArtifactReferences(
 
   return [
     "Artifact references:",
-    "Use artifact_id for tools that operate on uploaded, generated, or exported files. The source field states where the artifact came from.",
+    "Use artifactId for tools that operate on uploaded, generated, or exported files. The source field states where the artifact came from.",
     ...artifacts.map((artifact) =>
       [
-        `- artifact_id: ${artifact.id}`,
+        `- artifactId: ${artifact.id}`,
         `source: ${artifact.source}`,
         `filename: ${artifact.filename}`,
-        `mime_type: ${artifact.mimeType}`,
+        `mimeType: ${artifact.mimeType}`,
         `sha256: ${artifact.sha256}`,
         ...formatArtifactMetadata(artifact)
       ]
@@ -148,8 +148,8 @@ function formatUnstoredDiscordAttachments(request: DiscordChatRequest) {
     ...attachments.map((attachment) =>
       [
         `- filename: ${attachment.filename}`,
-        `mime_type: ${attachment.mimeType}`,
-        `size_bytes: ${attachment.sizeBytes}`,
+        `mimeType: ${attachment.mimeType}`,
+        `sizeBytes: ${attachment.sizeBytes}`,
         `width: ${attachment.width}`,
         `height: ${attachment.height}`,
         `description: ${attachment.description}`

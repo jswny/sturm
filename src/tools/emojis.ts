@@ -44,12 +44,12 @@ export function createEmojiTools(env: EmojiEnv, context: EmojiRequestContext) {
   return {
     createGuildEmojiFromArtifact: tool({
       description:
-        "Create a static Discord guild emoji from an image artifact. Use the listed artifact_id. Use only when the user provides an emoji name or the request makes one obvious; a normal text follow-up is fine if the later tool call uses the same durable artifact_id. The caller must have Discord's Create Guild Expressions permission. The tool resizes without cropping to a 128x128 transparent PNG, sanitizes the supplied name to Discord's emoji name format, and uploads it to the current guild.",
+        "Create a static Discord guild emoji from an image artifact. Use the listed artifactId. Use only when the user provides an emoji name or the request makes one obvious; a normal text follow-up is fine if the later tool call uses the same durable artifactId. The caller must have Discord's Create Guild Expressions permission. The tool resizes without cropping to a 128x128 transparent PNG, sanitizes the supplied name to Discord's emoji name format, and uploads it to the current guild.",
       inputSchema: z.object({
-        artifact_id: z
+        artifactId: z
           .string()
           .min(1)
-          .describe("artifact_id for an image artifact."),
+          .describe("artifactId for an image artifact."),
         name: z
           .string()
           .min(EMOJI_NAME_MIN_CHARS)
@@ -62,7 +62,7 @@ export function createEmojiTools(env: EmojiEnv, context: EmojiRequestContext) {
       outputSchema: createEmojiResponseSchema,
       execute: async (input) =>
         createGuildEmojiFromArtifact(env, context, {
-          artifactId: input.artifact_id,
+          artifactId: input.artifactId,
           name: input.name
         }),
       toModelOutput: ({ output }) => ({

@@ -172,7 +172,7 @@ export function createUserPromptTools(
     }),
     askUserToSelect: tool<SelectPromptInput, UserPromptToolResponse>({
       description:
-        "Ask the current Discord user to choose one option before Sturm continues. Use for disambiguation, choosing one of several proposed paths, or collecting a missing bounded value. The prompt is shown publicly, but only the current requester can answer; other users' clicks are rejected before reaching the model. Each option's pendingAction is durable task state for the later turn, so include explicit durable IDs needed to continue, such as artifact_id and the chosen sticker/emoji name when prompting for an expression name.",
+        "Ask the current Discord user to choose one option before Sturm continues. Use for disambiguation, choosing one of several proposed paths, or collecting a missing bounded value. The prompt is shown publicly, but only the current requester can answer; other users' clicks are rejected before reaching the model. Each option's pendingAction is durable task state for the later turn, so include explicit durable IDs needed to continue, such as artifactId and the chosen sticker/emoji name when prompting for an expression name.",
       inputSchema: selectPromptInputSchema,
       outputSchema: userPromptResponseSchema,
       execute: async ({ question, options }) => {
