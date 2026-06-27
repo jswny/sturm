@@ -1,11 +1,12 @@
 import { type APISticker } from "discord-api-types/v10";
 import { createGuildSticker, type DiscordApiEnv } from "./discord/api";
-import type { DiscordRequestAttachment } from "./discord/types";
 import {
-  prepareStaticExpressionAttachment,
+  prepareStaticExpressionArtifact,
   STATIC_EXPRESSION_MIME_TYPE,
+  type StaticExpressionSource,
+  type StaticExpressionImageEnv,
   type StaticExpressionRequestContext,
-  transformStaticAttachmentImage
+  transformStaticArtifactImage
 } from "./expression-images";
 import { getErrorMessage } from "./logging";
 
@@ -19,17 +20,18 @@ export const STICKER_DESCRIPTION_MIN_CHARS = 2;
 export const STICKER_DESCRIPTION_MAX_CHARS = 100;
 export const STICKER_TAGS_MAX_TOTAL_CHARS = 200;
 
-export type StickerEnv = DiscordApiEnv;
+export type StickerEnv = DiscordApiEnv & StaticExpressionImageEnv;
 
 export type StickerRequestContext = StaticExpressionRequestContext;
 
-export type CreateStickerFromAttachmentResponse = {
+export type CreateStickerFromArtifactResponse = {
   ok: boolean;
   action: "created_sticker";
   stickerId?: string;
   guildId?: string;
   callerUserId?: string;
-  sourceAttachmentId?: string;
+  sourceArtifactId?: string;
+  sourceArtifactSource?: string;
   sourceFilename?: string;
   name?: string;
   description?: string;
@@ -42,10 +44,10 @@ export type CreateStickerFromAttachmentResponse = {
 };
 
 type CreateStickerInput = {
-  attachmentId: string;
+  artifactId: string;
   name?: string;
   description?: string;
-  tags: string[];
+  tags?: string[];
 };
 
 type PreparedStickerMetadata = {
@@ -65,24 +67,20 @@ type PrepareStickerMetadataResult =
       tags?: string[];
     };
 
-export async function createGuildStickerFromAttachment(
+export async function createGuildStickerFromArtifact(
   env: StickerEnv,
   context: StickerRequestContext,
   input: CreateStickerInput
-): Promise<CreateStickerFromAttachmentResponse> {
-  const prepared = prepareStaticExpressionAttachment(
-    context,
-    input.attachmentId,
-    {
-      targetName: "sticker",
-      targetNamePlural: "stickers"
-    }
-  );
+): Promise<CreateStickerFromArtifactResponse> {
+  const prepared = prepareStaticExpressionArtifact(context, input.artifactId, {
+    targetName: "sticker",
+    targetNamePlural: "stickers"
+  });
   const baseResponse = {
     ok: false,
     action: "created_sticker",
     ...prepared.baseFields
-  } satisfies CreateStickerFromAttachmentResponse;
+  } satisfies CreateStickerFromArtifactResponse;
 
   if (!prepared.ok) {
     return {
@@ -91,7 +89,7 @@ export async function createGuildStickerFromAttachment(
     };
   }
 
-  const metadataResult = prepareStickerMetadata(input, prepared.attachment);
+  const metadataResult = prepareStickerMetadata(input, prepared.artifact);
   if (!metadataResult.ok) {
     return {
       ...baseResponse,
@@ -103,7 +101,7 @@ export async function createGuildStickerFromAttachment(
   }
   const { metadata } = metadataResult;
 
-  const processed = await transformStaticAttachmentImage(prepared.attachment, {
+  const processed = await transformStaticArtifactImage(env, prepared.artifact, {
     targetName: "sticker",
     sizePx: STICKER_SIZE_PX,
     maxBytes: MAX_STICKER_BYTES
@@ -135,8 +133,9 @@ export async function createGuildStickerFromAttachment(
       stickerId: sticker.id,
       guildId: prepared.guildId,
       callerUserId: context.userId,
-      sourceAttachmentId: prepared.attachment.id,
-      sourceFilename: prepared.attachment.filename,
+      sourceArtifactId: prepared.artifact.artifactId,
+      sourceArtifactSource: prepared.artifact.source,
+      sourceFilename: prepared.artifact.filename,
       name: metadata.name,
       description: metadata.description,
       tags: metadata.tags,
@@ -162,7 +161,7 @@ export async function createGuildStickerFromAttachment(
 
 function prepareStickerMetadata(
   input: CreateStickerInput,
-  attachment: DiscordRequestAttachment
+  artifact: StaticExpressionSource
 ): PrepareStickerMetadataResult {
   const name = sanitizeStickerName(input.name);
   if (!name) {
@@ -175,8 +174,10 @@ function prepareStickerMetadata(
 
   const description =
     sanitizeStickerDescription(input.description) ??
-    inferStickerDescription(name, attachment);
-  const tagsResult = sanitizeStickerTags(input.tags);
+    inferStickerDescription(name, artifact);
+  const tagsResult = sanitizeStickerTags(
+    input.tags?.length ? input.tags : inferStickerTags(name, artifact)
+  );
   if (!tagsResult.ok) {
     return {
       ok: false,
@@ -255,16 +256,23 @@ function sanitizeStickerDescription(value: string | undefined) {
 
 function inferStickerDescription(
   name: string,
-  attachment: DiscordRequestAttachment
+  artifact: StaticExpressionSource
 ) {
   const words = splitWords(name).join(" ");
   const fallback = words
     ? `${capitalize(words)} sticker`
     : FALLBACK_DESCRIPTION;
   return (
-    sanitizeStickerDescription(attachment.description) ??
+    sanitizeStickerDescription(artifact.description) ??
     fallback.slice(0, STICKER_DESCRIPTION_MAX_CHARS)
   );
+}
+
+function inferStickerTags(name: string, artifact: StaticExpressionSource) {
+  const nameTags = splitWords(name);
+  if (nameTags.length > 0) return nameTags;
+
+  return splitWords(artifact.description ?? artifact.filename);
 }
 
 function splitWords(value: string) {

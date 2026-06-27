@@ -28,6 +28,10 @@
     "binding": "BROWSER",
     "remote": true
   },
+  "images": {
+    "binding": "IMAGES",
+    "remote": true
+  },
   "r2_buckets": [
     {
       "binding": "ARTIFACTS_BUCKET",

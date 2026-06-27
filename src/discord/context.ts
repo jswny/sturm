@@ -12,6 +12,7 @@ import type {
   DiscordChannelContext,
   DiscordChatRequest
 } from "./types";
+import type { StoredResponseArtifact } from "../artifacts";
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -32,7 +33,8 @@ export function createDiscordRuntimeContext(
 export function formatDiscordRuntimeContext(request: DiscordChatRequest) {
   const sections = [
     formatDiscordChannelContext(request.channel),
-    formatDiscordAttachmentContext(request.attachments),
+    formatDiscordArtifactContext(request.artifacts),
+    formatUnstoredDiscordAttachmentContext(request.attachments),
     formatDiscordAppContext(request)
   ].filter(Boolean);
 
@@ -99,17 +101,43 @@ function formatDiscordAppContext(request: DiscordChatRequest) {
   return lines.length > 1 ? lines.join("\n") : "";
 }
 
-function formatDiscordAttachmentContext(
-  attachments: DiscordChatRequest["attachments"]
+function formatDiscordArtifactContext(
+  artifacts: StoredResponseArtifact[] | undefined
 ) {
-  if (!attachments?.length) return "";
+  if (!artifacts?.length) return "";
 
   const lines = [
-    "Current /c attachments:",
-    ...attachments.map((attachment) =>
+    "Available artifacts:",
+    "Use artifact_id for tools that operate on uploaded, generated, or exported files. The source field states where the artifact came from.",
+    ...artifacts.map((artifact) =>
       [
-        `- id: ${attachment.id}`,
-        `filename: ${attachment.filename}`,
+        `- artifact_id: ${artifact.id}`,
+        `source: ${artifact.source}`,
+        `filename: ${artifact.filename}`,
+        `mime_type: ${artifact.mimeType}`,
+        `sha256: ${artifact.sha256}`,
+        ...formatArtifactMetadata(artifact)
+      ]
+        .filter(hasValue)
+        .join("\n  ")
+    )
+  ];
+
+  return lines.join("\n");
+}
+
+function formatUnstoredDiscordAttachmentContext(
+  attachments: DiscordChatRequest["attachments"]
+) {
+  const unstored = attachments?.filter((attachment) => !attachment.artifactKey);
+  if (!unstored?.length) return "";
+
+  const lines = [
+    "Discord attachments not stored as artifacts:",
+    "These attachments are unavailable to artifact tools because Sturm could not freeze them into stored artifacts.",
+    ...unstored.map((attachment) =>
+      [
+        `- filename: ${attachment.filename}`,
         `mime_type: ${attachment.mimeType}`,
         `size_bytes: ${attachment.sizeBytes}`,
         `width: ${attachment.width}`,
@@ -122,6 +150,25 @@ function formatDiscordAttachmentContext(
   ];
 
   return lines.join("\n");
+}
+
+function formatArtifactMetadata(artifact: StoredResponseArtifact) {
+  switch (artifact.source) {
+    case "discord_attachment":
+      return [
+        artifact.metadata.width && artifact.metadata.height
+          ? `dimensions: ${artifact.metadata.width}x${artifact.metadata.height}`
+          : ""
+      ];
+    case "image_generation":
+      return [
+        `prompt: ${artifact.metadata.prompt}`,
+        `model: ${artifact.metadata.model}`,
+        `dimensions: ${artifact.metadata.width}x${artifact.metadata.height}`
+      ];
+    case "workspace_export":
+      return [`workspace_path: ${artifact.metadata.workspacePath}`];
+  }
 }
 
 function formatChannelType(type: number | undefined) {

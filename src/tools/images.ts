@@ -8,8 +8,7 @@ import {
 import type { ResponseArtifact } from "../artifacts";
 
 const generateImageResponseSchema = z.object({
-  id: z.string().optional().describe("Generated image artifact ID"),
-  artifactKey: z.string().optional().describe("Generated image artifact key"),
+  artifactId: z.string().optional().describe("Generated image artifact ID"),
   sha256: z.string().optional().describe("Generated image SHA-256 hash"),
   prompt: z.string().describe("The prompt used to generate the image"),
   model: z.string().describe("The image generation model"),
@@ -24,15 +23,13 @@ function formatGenerateImageOutput(output: GenerateImageResponse) {
   }
 
   const lines = [
-    `Generated image artifact: ${output.id}`,
+    `Generated image artifact_id: ${output.artifactId}`,
+    "Source: image_generation",
     `Prompt: ${output.prompt}`,
     `Model: ${output.model}`,
     `Size: ${output.width}x${output.height}`,
     "The image will be attached to the response. Do not include raw image data in the chat response."
   ];
-  if (output.artifactKey) {
-    lines.splice(1, 0, `Image artifact key: ${output.artifactKey}`);
-  }
   if (output.sha256) lines.splice(2, 0, `SHA-256: ${output.sha256}`);
   return lines.join("\n");
 }

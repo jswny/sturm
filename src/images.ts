@@ -12,8 +12,7 @@ export type ImageEnv = ArtifactEnv;
 export type GeneratedImage = ResponseArtifact<"image_generation">;
 
 export type GenerateImageResponse = {
-  id?: string;
-  artifactKey?: string;
+  artifactId?: string;
   sha256?: string;
   prompt: string;
   model: string;
@@ -141,8 +140,7 @@ export async function generateImage(
     return {
       artifact,
       response: {
-        id,
-        artifactKey: artifact.artifactKey,
+        artifactId: artifact.id,
         sha256: artifact.sha256,
         prompt,
         model: IMAGE_MODEL,

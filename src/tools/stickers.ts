@@ -6,15 +6,14 @@ import {
   STICKER_NAME_MAX_CHARS,
   STICKER_NAME_MIN_CHARS,
   STICKER_TAGS_MAX_TOTAL_CHARS,
-  createGuildStickerFromAttachment,
-  type CreateStickerFromAttachmentResponse,
+  createGuildStickerFromArtifact,
+  type CreateStickerFromArtifactResponse,
   type StickerEnv,
   type StickerRequestContext
 } from "../stickers";
 
 const STICKER_TAG_MIN_CHARS = 1;
 const STICKER_TAG_MAX_CHARS = 50;
-const STICKER_TAG_MIN_COUNT = 1;
 const STICKER_TAG_MAX_COUNT = 20;
 
 const createStickerResponseSchema = z.object({
@@ -23,8 +22,12 @@ const createStickerResponseSchema = z.object({
   stickerId: z.string().optional().describe("Created Discord sticker ID"),
   guildId: z.string().optional().describe("Discord guild ID"),
   callerUserId: z.string().optional().describe("Discord user ID of the caller"),
-  sourceAttachmentId: z.string().optional().describe("Source /c attachment ID"),
-  sourceFilename: z.string().optional().describe("Source attachment filename"),
+  sourceArtifactId: z.string().optional().describe("Source artifact ID"),
+  sourceArtifactSource: z
+    .string()
+    .optional()
+    .describe("Source artifact provenance"),
+  sourceFilename: z.string().optional().describe("Source artifact filename"),
   name: z.string().optional().describe("Created sticker name"),
   description: z.string().optional().describe("Created sticker description"),
   tags: z.array(z.string()).optional().describe("Created sticker tags"),
@@ -42,48 +45,50 @@ const createStickerResponseSchema = z.object({
   error: z.string().optional().describe("Error message when creation failed")
 });
 
+const createStickerInputSchema = z.object({
+  artifact_id: z.string().min(1).describe("artifact_id for an image artifact."),
+  name: z
+    .string()
+    .min(STICKER_NAME_MIN_CHARS)
+    .max(STICKER_NAME_MAX_CHARS)
+    .optional()
+    .describe(
+      `Discord sticker name, from ${STICKER_NAME_MIN_CHARS} to ${STICKER_NAME_MAX_CHARS} characters after sanitization`
+    ),
+  description: z
+    .string()
+    .min(STICKER_DESCRIPTION_MIN_CHARS)
+    .max(STICKER_DESCRIPTION_MAX_CHARS)
+    .optional()
+    .describe(
+      `Short sticker description inferred from the request, from ${STICKER_DESCRIPTION_MIN_CHARS} to ${STICKER_DESCRIPTION_MAX_CHARS} characters`
+    ),
+  tags: z
+    .array(z.string().min(STICKER_TAG_MIN_CHARS).max(STICKER_TAG_MAX_CHARS))
+    .max(STICKER_TAG_MAX_COUNT)
+    .optional()
+    .describe(
+      `Optional Discord search tags for this sticker; provide up to ${STICKER_TAG_MAX_COUNT} short tags totaling at most ${STICKER_TAGS_MAX_TOTAL_CHARS} characters when comma-separated. Sturm will infer tags from the sticker name when omitted.`
+    )
+});
+
 export function createStickerTools(
   env: StickerEnv,
   context: StickerRequestContext
 ) {
   return {
-    createGuildStickerFromAttachment: tool({
+    createGuildStickerFromArtifact: tool({
       description:
-        "Create a static Discord guild sticker from one image attachment on the current /c request. Use only when the user provides a sticker name or the request makes one obvious; otherwise ask for a name first. The caller must have Discord's Create Guild Expressions permission. The tool resizes without cropping to a 320x320 transparent PNG and uploads it to the current guild. Infer a description and one or more short Discord search tags when the user does not provide them; tags are required and must not be omitted.",
-      inputSchema: z.object({
-        attachmentId: z
-          .string()
-          .min(1)
-          .describe("ID of the current /c image attachment to use"),
-        name: z
-          .string()
-          .min(STICKER_NAME_MIN_CHARS)
-          .max(STICKER_NAME_MAX_CHARS)
-          .optional()
-          .describe(
-            `Discord sticker name, from ${STICKER_NAME_MIN_CHARS} to ${STICKER_NAME_MAX_CHARS} characters after sanitization`
-          ),
-        description: z
-          .string()
-          .min(STICKER_DESCRIPTION_MIN_CHARS)
-          .max(STICKER_DESCRIPTION_MAX_CHARS)
-          .optional()
-          .describe(
-            `Short sticker description inferred from the request, from ${STICKER_DESCRIPTION_MIN_CHARS} to ${STICKER_DESCRIPTION_MAX_CHARS} characters`
-          ),
-        tags: z
-          .array(
-            z.string().min(STICKER_TAG_MIN_CHARS).max(STICKER_TAG_MAX_CHARS)
-          )
-          .min(STICKER_TAG_MIN_COUNT)
-          .max(STICKER_TAG_MAX_COUNT)
-          .describe(
-            `One or more short Discord search tags for this sticker; provide ${STICKER_TAG_MIN_COUNT} to ${STICKER_TAG_MAX_COUNT} tags, each ${STICKER_TAG_MIN_CHARS} to ${STICKER_TAG_MAX_CHARS} characters, totaling at most ${STICKER_TAGS_MAX_TOTAL_CHARS} characters when comma-separated. Infer them from the user request and image when not explicitly provided.`
-          )
-      }),
+        "Create a static Discord guild sticker from an image artifact. Use the listed artifact_id. Use only when the user provides a sticker name or the request makes one obvious; a normal text follow-up is fine if the later tool call uses the same durable artifact_id. The caller must have Discord's Create Guild Expressions permission. The tool resizes without cropping to a 320x320 transparent PNG and uploads it to the current guild. Infer a description and tags when the user does not provide them.",
+      inputSchema: createStickerInputSchema,
       outputSchema: createStickerResponseSchema,
       execute: async (input) =>
-        createGuildStickerFromAttachment(env, context, input),
+        createGuildStickerFromArtifact(env, context, {
+          artifactId: input.artifact_id,
+          name: input.name,
+          description: input.description,
+          tags: input.tags
+        }),
       toModelOutput: ({ output }) => ({
         type: "text",
         value: formatCreateStickerOutput(output)
@@ -92,9 +97,7 @@ export function createStickerTools(
   };
 }
 
-function formatCreateStickerOutput(
-  output: CreateStickerFromAttachmentResponse
-) {
+function formatCreateStickerOutput(output: CreateStickerFromArtifactResponse) {
   if (!output.ok) {
     return `Sticker creation failed: ${output.error}`;
   }
@@ -105,7 +108,7 @@ function formatCreateStickerOutput(
     `Name: ${output.name}`,
     `Description: ${output.description}`,
     `Tags: ${output.tags?.join(", ")}`,
-    `Source attachment: ${output.sourceFilename} (${output.sourceAttachmentId})`,
+    `Source artifact: ${output.sourceFilename} (${output.sourceArtifactId}, ${output.sourceArtifactSource})`,
     `Processed size: ${output.processedSizeBytes} bytes`,
     "The sticker is now available in the current Discord server."
   ]

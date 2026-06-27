@@ -87,7 +87,7 @@ export class DiscordDeliveryRunner {
     if (historyText !== text) {
       try {
         await this.options.updateMessageInHistory(
-          withAssistantText(result.message, historyText)
+          withAssistantText(result.message, historyText, artifacts)
         );
       } catch (error) {
         logError("Discord assistant history update failed", error, {

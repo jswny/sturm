@@ -1,6 +1,6 @@
 import type { ModelMessage } from "ai";
 import type { DiscordChatRequest } from "./types";
-import type { ResponseArtifact } from "../artifacts";
+import type { ResponseArtifact, StoredResponseArtifact } from "../artifacts";
 
 /**
  * The AI SDK's downloadAssets step runs `new URL(data)` on every file
@@ -31,10 +31,12 @@ export function formatDiscordUserMessage(request: DiscordChatRequest) {
     lines.push(`display_name: ${request.user.displayName}`);
   }
 
-  return `${lines.join("\n")}
+  const artifacts = formatArtifactReferences(request.artifacts);
+  const attachments = formatUnstoredDiscordAttachments(request);
 
+  return `${lines.join("\n")}
 User message:
-${request.text}`;
+${request.text}${artifacts ? `\n\n${artifacts}` : ""}${attachments ? `\n\n${attachments}` : ""}`;
 }
 
 export function formatAssistantMessageText(
@@ -70,29 +72,36 @@ function formatArtifactMessage(artifacts: ResponseArtifact[]) {
     .map((artifact) => {
       const lines = [
         `${formatArtifactKind(artifact)} artifact:`,
+        `artifact_id: ${artifact.id}`,
+        `source: ${artifact.source}`,
         `filename: ${artifact.filename}`,
         `mime_type: ${artifact.mimeType}`
       ];
 
       lines.push(...formatArtifactMetadata(artifact));
       lines.push(`sha256: ${artifact.sha256}`);
-      lines.push(
-        `artifact_key: ${artifact.artifactKey}`,
-        "status: sent as attachment"
-      );
+      lines.push("status: sent as attachment");
       return lines.join("\n");
     })
     .join("\n\n");
 }
 
-function formatArtifactKind(artifact: ResponseArtifact) {
+function formatArtifactKind(artifact: StoredResponseArtifact) {
+  if (artifact.source === "discord_attachment") return "Discord input";
   if (artifact.source === "image_generation") return "Generated image";
   if (artifact.source === "workspace_export") return "Exported workspace file";
   return "Response";
 }
 
-function formatArtifactMetadata(artifact: ResponseArtifact) {
+function formatArtifactMetadata(artifact: StoredResponseArtifact) {
   switch (artifact.source) {
+    case "discord_attachment":
+      return [
+        `source_turn_correlation_id: ${artifact.metadata.correlationId}`,
+        artifact.metadata.width && artifact.metadata.height
+          ? `dimensions: ${artifact.metadata.width}x${artifact.metadata.height}`
+          : ""
+      ].filter(Boolean);
     case "image_generation":
       return [
         `prompt: ${artifact.metadata.prompt}`,
@@ -102,4 +111,51 @@ function formatArtifactMetadata(artifact: ResponseArtifact) {
     case "workspace_export":
       return [`workspace_path: ${artifact.metadata.workspacePath}`];
   }
+}
+
+function formatArtifactReferences(
+  artifacts: StoredResponseArtifact[] | undefined
+) {
+  if (!artifacts?.length) return "";
+
+  return [
+    "Artifact references:",
+    "Use artifact_id for tools that operate on uploaded, generated, or exported files. The source field states where the artifact came from.",
+    ...artifacts.map((artifact) =>
+      [
+        `- artifact_id: ${artifact.id}`,
+        `source: ${artifact.source}`,
+        `filename: ${artifact.filename}`,
+        `mime_type: ${artifact.mimeType}`,
+        `sha256: ${artifact.sha256}`,
+        ...formatArtifactMetadata(artifact)
+      ]
+        .filter(Boolean)
+        .join("\n  ")
+    )
+  ].join("\n");
+}
+
+function formatUnstoredDiscordAttachments(request: DiscordChatRequest) {
+  const attachments = request.attachments?.filter(
+    (attachment) => !attachment.artifactKey
+  );
+  if (!attachments?.length) return "";
+
+  return [
+    "Discord attachments not stored as artifacts:",
+    "These attachments are unavailable to artifact tools because Sturm could not freeze them into stored artifacts.",
+    ...attachments.map((attachment) =>
+      [
+        `- filename: ${attachment.filename}`,
+        `mime_type: ${attachment.mimeType}`,
+        `size_bytes: ${attachment.sizeBytes}`,
+        `width: ${attachment.width}`,
+        `height: ${attachment.height}`,
+        `description: ${attachment.description}`
+      ]
+        .filter(Boolean)
+        .join("\n  ")
+    )
+  ].join("\n");
 }

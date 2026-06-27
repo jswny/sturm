@@ -2,6 +2,7 @@ import type {
   APIMessageTopLevelComponent,
   MessageFlags
 } from "discord-api-types/v10";
+import type { StoredResponseArtifact } from "../artifacts";
 
 export type DiscordChatRequest = {
   correlationId: string;
@@ -14,12 +15,25 @@ export type DiscordChatRequest = {
   channelId?: string;
   channel?: DiscordChannelContext;
   attachments?: DiscordRequestAttachment[];
+  artifacts?: StoredResponseArtifact[];
   app?: DiscordAppContext;
   appPermissions?: DiscordPermissionContext;
   userId?: string;
   user?: DiscordUserContext;
   userPermissions?: string;
 };
+
+export type DiscordSourceTurnContext = Pick<
+  DiscordChatRequest,
+  | "guildId"
+  | "channelId"
+  | "channel"
+  | "app"
+  | "appPermissions"
+  | "userId"
+  | "user"
+  | "userPermissions"
+>;
 
 export type DiscordChatResponse = {
   content: string;
@@ -96,11 +110,14 @@ export type DiscordAppContext = {
 
 export type DiscordRequestAttachment = {
   id: string;
+  artifactId?: string;
+  artifactKey?: string;
+  sha256?: string;
+  storedAt?: string;
   filename: string;
   mimeType?: string;
   sizeBytes: number;
   url: string;
-  proxyUrl?: string;
   width?: number;
   height?: number;
   description?: string;

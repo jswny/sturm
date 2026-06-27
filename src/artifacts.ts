@@ -15,7 +15,19 @@ export type WorkspaceExportArtifactMetadata = {
   workspacePath: string;
 };
 
+export type DiscordAttachmentArtifactMetadata = {
+  guildId?: string;
+  channelId?: string;
+  correlationId: string;
+  discordInteractionId?: string;
+  discordAttachmentId: string;
+  sourceUrl: string;
+  width?: number;
+  height?: number;
+};
+
 export type ResponseArtifactMetadataBySource = {
+  discord_attachment: DiscordAttachmentArtifactMetadata;
   image_generation: ImageGenerationArtifactMetadata;
   workspace_export: WorkspaceExportArtifactMetadata;
 };

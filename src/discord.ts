@@ -456,7 +456,6 @@ function createRequestAttachment(
     mimeType: attachment.content_type,
     sizeBytes: attachment.size,
     url: attachment.url,
-    proxyUrl: attachment.proxy_url,
     width: attachment.width ?? undefined,
     height: attachment.height ?? undefined,
     description: attachment.description

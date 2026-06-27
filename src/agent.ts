@@ -23,6 +23,7 @@ import {
 import { Session } from "agents/experimental/memory/session";
 import { createCompactFunction } from "agents/experimental/memory/utils";
 import { generateText, type ToolSet } from "ai";
+import type { StoredResponseArtifact } from "./artifacts";
 import { createChannelScheduledTaskController } from "./channel-scheduler";
 import {
   createCodeModeInspection,
@@ -30,6 +31,7 @@ import {
   type CodeModeInspectionRequest
 } from "./codemode-inspection";
 import { createRecentDiscordChannelContext } from "./discord/channel-context";
+import { freezeDiscordRequestAttachments } from "./discord/attachment-artifacts";
 import {
   DiscordComponentPromptStore,
   formatComponentPromptContinuationText,
@@ -56,8 +58,13 @@ import {
 } from "./discord/progress";
 import type { DiscordProgressReporter } from "./discord/progress";
 import {
+  applyDiscordSourceTurnContext,
+  createDiscordSourceTurnContext
+} from "./discord/source-context";
+import {
   clearDiscordSession,
   createDiscordUserMessage,
+  getDiscordArtifactsFromAssistantMessage,
   getDiscordTurnFromUserMessage,
   getDiscordMessageText
 } from "./discord/turn";
@@ -250,7 +257,9 @@ export class ChatAgent extends Think<Env> {
       system: createDiscordThinkSystemPrompt(sessionContext, runtimeContext),
       messages: inlineDataUrls(
         turn
-          ? await addCurrentTurnImagesToModelMessages(ctx.messages, turn)
+          ? await addCurrentTurnImagesToModelMessages(ctx.messages, turn, {
+              artifactBucket: this.env.ARTIFACTS_BUCKET
+            })
           : ctx.messages
       ),
       tools: await this.createDiscordThinkTools(turn, progress),
@@ -480,7 +489,14 @@ export class ChatAgent extends Think<Env> {
   }
 
   async enqueueDiscordChat(input: DiscordDeliveryChatInput) {
-    const result = await this.discordDeliveries.create(input);
+    const frozenRequest = await freezeDiscordRequestAttachments(
+      this.env,
+      input.request
+    );
+    const result = await this.discordDeliveries.create({
+      ...input,
+      request: frozenRequest
+    });
     if (!result.record || result.record.type !== "chat") return;
 
     const record = result.record;
@@ -801,10 +817,13 @@ export class ChatAgent extends Think<Env> {
     turn: DiscordChatRequest | undefined,
     progress: DiscordProgressReporter | undefined
   ): Promise<DiscordCodeModeRuntime> {
+    const toolTurn = turn
+      ? this.createDiscordToolRequestContext(turn)
+      : undefined;
     const directTools = withProgressTools(
       {
         ...createDiscordTools(this.env, {
-          discordRequest: turn,
+          discordRequest: toolTurn,
           workspace: this.workspace,
           scheduledTasks: turn
             ? this.createScheduledTaskController(turn)
@@ -830,6 +849,34 @@ export class ChatAgent extends Think<Env> {
     );
     this.codeModeRuntime = codeMode.runtime;
     return codeMode;
+  }
+
+  private createDiscordToolRequestContext(
+    turn: DiscordChatRequest
+  ): DiscordChatRequest {
+    return {
+      ...turn,
+      artifacts: mergeStoredArtifacts([
+        ...(turn.artifacts ?? []),
+        ...this.getConversationDiscordArtifacts()
+      ])
+    };
+  }
+
+  private getConversationDiscordArtifacts() {
+    const artifacts: StoredResponseArtifact[] = [];
+    for (const message of this.messages) {
+      const turn = getDiscordTurnFromUserMessage(message);
+      if (turn) {
+        artifacts.push(...(turn.artifacts ?? []));
+        continue;
+      }
+
+      artifacts.push(
+        ...(getDiscordArtifactsFromAssistantMessage(message) ?? [])
+      );
+    }
+    return artifacts;
   }
 
   private createScheduledTaskController(turn: DiscordChatRequest) {
@@ -870,7 +917,8 @@ export class ChatAgent extends Think<Env> {
           guildId: turn.guildId,
           channelId: turn.channelId,
           sourceInteractionId: turn.discordInteractionId,
-          sourceCorrelationId: turn.correlationId
+          sourceCorrelationId: turn.correlationId,
+          sourceContext: createDiscordSourceTurnContext(turn)
         });
         await this.discordDeliveries.setComponentPrompt(
           turn.correlationId,
@@ -899,22 +947,25 @@ export class ChatAgent extends Think<Env> {
         type: "channel_message",
         channelId
       },
-      request: {
-        correlationId: input.interactionId,
-        discordInteractionId: input.interactionId,
-        sourceCorrelationId: prompt.sourceCorrelationId,
-        sourceInteractionId: prompt.sourceInteractionId,
-        text,
-        emptyResponseBehavior: "suppress",
-        guildId: prompt.guildId ?? input.guildId,
-        channelId: prompt.channelId ?? input.channelId,
-        channel: input.channel,
-        app: input.app,
-        appPermissions: input.appPermissions,
-        userId: input.userId,
-        user: input.user,
-        userPermissions: input.userPermissions
-      }
+      request: applyDiscordSourceTurnContext(
+        {
+          correlationId: input.interactionId,
+          discordInteractionId: input.interactionId,
+          sourceCorrelationId: prompt.sourceCorrelationId,
+          sourceInteractionId: prompt.sourceInteractionId,
+          text,
+          emptyResponseBehavior: "suppress",
+          guildId: prompt.guildId ?? input.guildId,
+          channelId: prompt.channelId ?? input.channelId,
+          channel: input.channel,
+          app: input.app,
+          appPermissions: input.appPermissions,
+          userId: input.userId,
+          user: input.user,
+          userPermissions: input.userPermissions
+        },
+        prompt.sourceContext
+      )
     });
 
     return result;
@@ -1188,6 +1239,15 @@ export class ChatAgent extends Think<Env> {
 
     return undefined;
   }
+}
+
+function mergeStoredArtifacts(artifacts: StoredResponseArtifact[]) {
+  const seen = new Set<string>();
+  return artifacts.filter((artifact) => {
+    if (seen.has(artifact.id)) return false;
+    seen.add(artifact.id);
+    return true;
+  });
 }
 
 function createDebugDeliveryStatus(record: DiscordDeliveryRecord) {

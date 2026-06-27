@@ -11,6 +11,7 @@ import type {
   DiscordAppContext,
   DiscordChannelContext,
   DiscordPermissionContext,
+  DiscordSourceTurnContext,
   DiscordUserContext
 } from "./types";
 import { pruneDurableStorageRecords } from "../storage-prune";
@@ -45,6 +46,7 @@ export type StoredComponentPrompt = {
   channelId?: string;
   sourceCorrelationId: string;
   sourceInteractionId?: string;
+  sourceContext?: DiscordSourceTurnContext;
   messageId?: string;
   options: ComponentPromptOption[];
   status: ComponentPromptStatus;
@@ -65,6 +67,7 @@ export type CreateComponentPromptInput = {
   channelId?: string;
   sourceCorrelationId: string;
   sourceInteractionId?: string;
+  sourceContext?: DiscordSourceTurnContext;
   options: Array<Omit<ComponentPromptOption, "id">>;
   ttlMs?: number;
 };
@@ -136,6 +139,7 @@ export class DiscordComponentPromptStore {
       channelId: input.channelId,
       sourceCorrelationId: input.sourceCorrelationId,
       sourceInteractionId: input.sourceInteractionId,
+      sourceContext: input.sourceContext,
       options: input.options
         .slice(0, MAX_PROMPT_OPTIONS)
         .map((option, index) => ({
@@ -333,11 +337,13 @@ export function formatComponentPromptHistoryText(
   prompt: StoredComponentPrompt
 ) {
   const lines = [
-    `${prompt.kind === "confirm" ? "Confirmation" : "Selection"} prompt sent:`,
-    `prompt_id: ${prompt.id}`,
+    "Discord component prompt delivery record:",
+    "This is historical delivery metadata, not response text to copy.",
+    `component_prompt_type: ${prompt.kind}`,
+    `component_prompt_id: ${prompt.id}`,
     `allowed_user_id: ${prompt.allowedUserId}`,
     `question: ${prompt.question}`,
-    "options:",
+    "rendered_options:",
     ...prompt.options.map((option) => `- ${option.id}: ${option.label}`)
   ];
 

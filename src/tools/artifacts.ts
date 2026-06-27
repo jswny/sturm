@@ -21,22 +21,20 @@ export type WorkspaceArtifactOptions = {
 };
 
 export type ExportWorkspaceFileResponse = {
-  id?: string;
+  artifactId?: string;
   path: string;
   filename?: string;
   mimeType?: string;
   sha256?: string;
-  artifactKey?: string;
   error?: string;
 };
 
 const exportWorkspaceFileResponseSchema = z.object({
-  id: z.string().optional().describe("Exported artifact ID"),
+  artifactId: z.string().optional().describe("Exported artifact ID"),
   path: z.string().describe("Workspace path that was exported"),
   filename: z.string().optional().describe("Attachment filename"),
   mimeType: z.string().optional().describe("Attachment MIME type"),
   sha256: z.string().optional().describe("Exported file SHA-256 hash"),
-  artifactKey: z.string().optional().describe("Exported artifact key"),
   error: z.string().optional().describe("Error message when export failed")
 });
 
@@ -158,12 +156,11 @@ async function exportWorkspaceFile(
     await options.onArtifactCreated?.(artifact);
 
     return {
-      id: artifact.id,
+      artifactId: artifact.id,
       path,
       filename: artifact.filename,
       mimeType: artifact.mimeType,
-      sha256: artifact.sha256,
-      artifactKey: artifact.artifactKey
+      sha256: artifact.sha256
     };
   } catch (error) {
     logError("Workspace artifact export failed", error, {
@@ -187,16 +184,14 @@ function formatExportWorkspaceFileOutput(output: ExportWorkspaceFileResponse) {
   }
 
   const lines = [
-    `Exported workspace file artifact: ${output.id}`,
+    `Exported workspace file artifact_id: ${output.artifactId}`,
+    "Source: workspace_export",
     `Path: ${output.path}`,
     `Filename: ${output.filename}`,
     `MIME type: ${output.mimeType}`,
     `SHA-256: ${output.sha256}`,
     "The current workspace file was exported as a Discord attachment snapshot. Do not include raw file data in the chat response."
   ];
-  if (output.artifactKey) {
-    lines.splice(1, 0, `Artifact key: ${output.artifactKey}`);
-  }
   return lines.join("\n");
 }
 

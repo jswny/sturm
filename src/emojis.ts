@@ -2,10 +2,11 @@ import { type APIEmoji } from "discord-api-types/v10";
 import { createGuildEmoji, type DiscordApiEnv } from "./discord/api";
 import {
   createDataUri,
-  prepareStaticExpressionAttachment,
+  prepareStaticExpressionArtifact,
   STATIC_EXPRESSION_MIME_TYPE,
+  type StaticExpressionImageEnv,
   type StaticExpressionRequestContext,
-  transformStaticAttachmentImage
+  transformStaticArtifactImage
 } from "./expression-images";
 import { getErrorMessage } from "./logging";
 
@@ -14,17 +15,18 @@ const MAX_EMOJI_BYTES = 256 * 1024;
 export const EMOJI_NAME_MIN_CHARS = 2;
 export const EMOJI_NAME_MAX_CHARS = 32;
 
-export type EmojiEnv = DiscordApiEnv;
+export type EmojiEnv = DiscordApiEnv & StaticExpressionImageEnv;
 
 export type EmojiRequestContext = StaticExpressionRequestContext;
 
-export type CreateEmojiFromAttachmentResponse = {
+export type CreateEmojiFromArtifactResponse = {
   ok: boolean;
   action: "created_emoji";
   emojiId?: string;
   guildId?: string;
   callerUserId?: string;
-  sourceAttachmentId?: string;
+  sourceArtifactId?: string;
+  sourceArtifactSource?: string;
   sourceFilename?: string;
   name?: string;
   shortcode?: string;
@@ -37,28 +39,24 @@ export type CreateEmojiFromAttachmentResponse = {
 };
 
 type CreateEmojiInput = {
-  attachmentId: string;
+  artifactId: string;
   name?: string;
 };
 
-export async function createGuildEmojiFromAttachment(
+export async function createGuildEmojiFromArtifact(
   env: EmojiEnv,
   context: EmojiRequestContext,
   input: CreateEmojiInput
-): Promise<CreateEmojiFromAttachmentResponse> {
-  const prepared = prepareStaticExpressionAttachment(
-    context,
-    input.attachmentId,
-    {
-      targetName: "emoji",
-      targetNamePlural: "emojis"
-    }
-  );
+): Promise<CreateEmojiFromArtifactResponse> {
+  const prepared = prepareStaticExpressionArtifact(context, input.artifactId, {
+    targetName: "emoji",
+    targetNamePlural: "emojis"
+  });
   const baseResponse = {
     ok: false,
     action: "created_emoji",
     ...prepared.baseFields
-  } satisfies CreateEmojiFromAttachmentResponse;
+  } satisfies CreateEmojiFromArtifactResponse;
 
   if (!prepared.ok) {
     return {
@@ -76,7 +74,7 @@ export async function createGuildEmojiFromAttachment(
     };
   }
 
-  const processed = await transformStaticAttachmentImage(prepared.attachment, {
+  const processed = await transformStaticArtifactImage(env, prepared.artifact, {
     targetName: "emoji",
     sizePx: EMOJI_SIZE_PX,
     maxBytes: MAX_EMOJI_BYTES
@@ -103,8 +101,9 @@ export async function createGuildEmojiFromAttachment(
       emojiId: emoji.id ?? undefined,
       guildId: prepared.guildId,
       callerUserId: context.userId,
-      sourceAttachmentId: prepared.attachment.id,
-      sourceFilename: prepared.attachment.filename,
+      sourceArtifactId: prepared.artifact.artifactId,
+      sourceArtifactSource: prepared.artifact.source,
+      sourceFilename: prepared.artifact.filename,
       name: createdName,
       shortcode: `:${createdName}:`,
       mention: emoji.id ? `<:${createdName}:${emoji.id}>` : undefined,

@@ -1,6 +1,7 @@
 import type { UIMessage } from "ai";
 import {
   hydrateStoredArtifacts,
+  toStoredResponseArtifact,
   type ResponseArtifact,
   type StoredResponseArtifact
 } from "../artifacts";
@@ -22,11 +23,17 @@ type DiscordUserMessageMetadata = {
   channelId?: unknown;
   channel?: unknown;
   attachments?: unknown;
+  artifacts?: unknown;
   app?: unknown;
   appPermissions?: unknown;
   userId?: unknown;
   user?: unknown;
   userPermissions?: unknown;
+};
+
+type DiscordAssistantMessageMetadata = {
+  source?: unknown;
+  artifacts?: unknown;
 };
 
 export type DiscordSessionMemory = {
@@ -52,6 +59,7 @@ export function createDiscordUserMessage(
       channelId: request.channelId,
       channel: request.channel,
       attachments: request.attachments,
+      artifacts: request.artifacts,
       app: request.app,
       appPermissions: request.appPermissions,
       userId: request.userId,
@@ -94,6 +102,7 @@ export function getDiscordTurnFromUserMessage(
       typeof metadata.channelId === "string" ? metadata.channelId : undefined,
     channel: getDiscordChannelMetadata(metadata.channel),
     attachments: getDiscordAttachmentMetadata(metadata.attachments),
+    artifacts: getStoredArtifactMetadata(metadata.artifacts),
     app: getDiscordAppMetadata(metadata.app),
     appPermissions: getDiscordPermissionMetadata(metadata.appPermissions),
     userId: typeof metadata.userId === "string" ? metadata.userId : undefined,
@@ -185,9 +194,28 @@ export function getDiscordMessageText(message: UIMessage) {
     .trim();
 }
 
-export function withAssistantText(message: UIMessage, text: string): UIMessage {
+export function getDiscordArtifactsFromAssistantMessage(
+  message: UIMessage
+): StoredResponseArtifact[] | undefined {
+  if (message.role !== "assistant") return undefined;
+
+  const metadata = message.metadata as DiscordAssistantMessageMetadata;
+  if (metadata?.source !== "discord") return undefined;
+  return getStoredArtifactMetadata(metadata.artifacts);
+}
+
+export function withAssistantText(
+  message: UIMessage,
+  text: string,
+  artifacts: ResponseArtifact[] = []
+): UIMessage {
   return {
     ...message,
+    metadata: {
+      ...(message.metadata ?? {}),
+      source: "discord",
+      artifacts: artifacts.map(toStoredResponseArtifact)
+    },
     parts: [{ type: "text", text }]
   };
 }
@@ -254,11 +282,14 @@ function getDiscordAttachmentMetadata(value: unknown) {
       if (!item || typeof item !== "object") return undefined;
       const attachment = item as {
         id?: unknown;
+        artifactId?: unknown;
+        artifactKey?: unknown;
+        sha256?: unknown;
+        storedAt?: unknown;
         filename?: unknown;
         mimeType?: unknown;
         sizeBytes?: unknown;
         url?: unknown;
-        proxyUrl?: unknown;
         width?: unknown;
         height?: unknown;
         description?: unknown;
@@ -274,6 +305,20 @@ function getDiscordAttachmentMetadata(value: unknown) {
 
       return {
         id: attachment.id,
+        artifactId:
+          typeof attachment.artifactId === "string"
+            ? attachment.artifactId
+            : undefined,
+        artifactKey:
+          typeof attachment.artifactKey === "string"
+            ? attachment.artifactKey
+            : undefined,
+        sha256:
+          typeof attachment.sha256 === "string" ? attachment.sha256 : undefined,
+        storedAt:
+          typeof attachment.storedAt === "string"
+            ? attachment.storedAt
+            : undefined,
         filename: attachment.filename,
         mimeType:
           typeof attachment.mimeType === "string"
@@ -281,10 +326,6 @@ function getDiscordAttachmentMetadata(value: unknown) {
             : undefined,
         sizeBytes: attachment.sizeBytes,
         url: attachment.url,
-        proxyUrl:
-          typeof attachment.proxyUrl === "string"
-            ? attachment.proxyUrl
-            : undefined,
         width:
           typeof attachment.width === "number" ? attachment.width : undefined,
         height:
@@ -296,6 +337,62 @@ function getDiscordAttachmentMetadata(value: unknown) {
       };
     })
     .filter((attachment) => attachment !== undefined);
+}
+
+function getStoredArtifactMetadata(value: unknown) {
+  if (!Array.isArray(value)) return undefined;
+
+  return value
+    .map((item) => {
+      if (!item || typeof item !== "object") return undefined;
+      const artifact = item as {
+        id?: unknown;
+        source?: unknown;
+        filename?: unknown;
+        mimeType?: unknown;
+        artifactKey?: unknown;
+        sha256?: unknown;
+        description?: unknown;
+        metadata?: unknown;
+      };
+      if (
+        typeof artifact.id !== "string" ||
+        !isStoredArtifactSource(artifact.source) ||
+        typeof artifact.filename !== "string" ||
+        typeof artifact.mimeType !== "string" ||
+        typeof artifact.artifactKey !== "string" ||
+        typeof artifact.sha256 !== "string" ||
+        !artifact.metadata ||
+        typeof artifact.metadata !== "object"
+      ) {
+        return undefined;
+      }
+
+      return {
+        id: artifact.id,
+        source: artifact.source,
+        filename: artifact.filename,
+        mimeType: artifact.mimeType,
+        artifactKey: artifact.artifactKey,
+        sha256: artifact.sha256,
+        description:
+          typeof artifact.description === "string"
+            ? artifact.description
+            : undefined,
+        metadata: artifact.metadata
+      } as StoredResponseArtifact;
+    })
+    .filter((artifact) => artifact !== undefined);
+}
+
+function isStoredArtifactSource(
+  value: unknown
+): value is StoredResponseArtifact["source"] {
+  return (
+    value === "discord_attachment" ||
+    value === "image_generation" ||
+    value === "workspace_export"
+  );
 }
 
 function getDiscordPermissionMetadata(value: unknown) {

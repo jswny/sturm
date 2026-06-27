@@ -3,8 +3,8 @@ import { z } from "zod";
 import {
   EMOJI_NAME_MAX_CHARS,
   EMOJI_NAME_MIN_CHARS,
-  createGuildEmojiFromAttachment,
-  type CreateEmojiFromAttachmentResponse,
+  createGuildEmojiFromArtifact,
+  type CreateEmojiFromArtifactResponse,
   type EmojiEnv,
   type EmojiRequestContext
 } from "../emojis";
@@ -17,8 +17,12 @@ const createEmojiResponseSchema = z.object({
   emojiId: z.string().optional().describe("Created Discord emoji ID"),
   guildId: z.string().optional().describe("Discord guild ID"),
   callerUserId: z.string().optional().describe("Discord user ID of the caller"),
-  sourceAttachmentId: z.string().optional().describe("Source /c attachment ID"),
-  sourceFilename: z.string().optional().describe("Source attachment filename"),
+  sourceArtifactId: z.string().optional().describe("Source artifact ID"),
+  sourceArtifactSource: z
+    .string()
+    .optional()
+    .describe("Source artifact provenance"),
+  sourceFilename: z.string().optional().describe("Source artifact filename"),
   name: z.string().optional().describe("Created emoji name"),
   shortcode: z.string().optional().describe("Created emoji shortcode"),
   mention: z.string().optional().describe("Created custom emoji mention text"),
@@ -38,14 +42,14 @@ const createEmojiResponseSchema = z.object({
 
 export function createEmojiTools(env: EmojiEnv, context: EmojiRequestContext) {
   return {
-    createGuildEmojiFromAttachment: tool({
+    createGuildEmojiFromArtifact: tool({
       description:
-        "Create a static Discord guild emoji from one image attachment on the current /c request. Use only when the user provides an emoji name or the request makes one obvious; otherwise ask for a name first. The caller must have Discord's Create Guild Expressions permission. The tool resizes without cropping to a 128x128 transparent PNG, sanitizes the supplied name to Discord's emoji name format, and uploads it to the current guild.",
+        "Create a static Discord guild emoji from an image artifact. Use the listed artifact_id. Use only when the user provides an emoji name or the request makes one obvious; a normal text follow-up is fine if the later tool call uses the same durable artifact_id. The caller must have Discord's Create Guild Expressions permission. The tool resizes without cropping to a 128x128 transparent PNG, sanitizes the supplied name to Discord's emoji name format, and uploads it to the current guild.",
       inputSchema: z.object({
-        attachmentId: z
+        artifact_id: z
           .string()
           .min(1)
-          .describe("ID of the current /c image attachment to use"),
+          .describe("artifact_id for an image artifact."),
         name: z
           .string()
           .min(EMOJI_NAME_MIN_CHARS)
@@ -57,7 +61,10 @@ export function createEmojiTools(env: EmojiEnv, context: EmojiRequestContext) {
       }),
       outputSchema: createEmojiResponseSchema,
       execute: async (input) =>
-        createGuildEmojiFromAttachment(env, context, input),
+        createGuildEmojiFromArtifact(env, context, {
+          artifactId: input.artifact_id,
+          name: input.name
+        }),
       toModelOutput: ({ output }) => ({
         type: "text",
         value: formatCreateEmojiOutput(output)
@@ -66,7 +73,7 @@ export function createEmojiTools(env: EmojiEnv, context: EmojiRequestContext) {
   };
 }
 
-function formatCreateEmojiOutput(output: CreateEmojiFromAttachmentResponse) {
+function formatCreateEmojiOutput(output: CreateEmojiFromArtifactResponse) {
   if (!output.ok) {
     return `Emoji creation failed: ${output.error}`;
   }
@@ -77,7 +84,7 @@ function formatCreateEmojiOutput(output: CreateEmojiFromAttachmentResponse) {
     `Name: ${output.name}`,
     `Shortcode: ${output.shortcode}`,
     output.mention ? `Mention: ${output.mention}` : "",
-    `Source attachment: ${output.sourceFilename} (${output.sourceAttachmentId})`,
+    `Source artifact: ${output.sourceFilename} (${output.sourceArtifactId}, ${output.sourceArtifactSource})`,
     `Processed size: ${output.processedSizeBytes} bytes`,
     "The emoji is now available in the current Discord server."
   ]

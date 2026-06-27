@@ -6,10 +6,11 @@ import {
   createWorkspaceStateBackend,
   type WorkspaceFsLike
 } from "@cloudflare/shell";
+import type { BrowserBinding } from "agents/browser";
 import type { ToolSet } from "ai";
 
 export type CodeModeEnv = {
-  BROWSER: Fetcher;
+  BROWSER: BrowserBinding;
   LOADER: WorkerLoader;
 };
 

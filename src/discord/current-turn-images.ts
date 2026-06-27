@@ -1,10 +1,9 @@
 import type { FilePart, ModelMessage, TextPart } from "ai";
 import { getErrorMessage, logWarn } from "../logging";
-import type { DiscordChatRequest, DiscordRequestAttachment } from "./types";
+import type { StoredResponseArtifact } from "../artifacts";
+import type { DiscordChatRequest } from "./types";
 
 export const CURRENT_TURN_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
-const CURRENT_TURN_IMAGE_FETCH_TIMEOUT_MS = 5_000;
-
 const SUPPORTED_CURRENT_TURN_IMAGE_MIME_TYPES = new Set([
   "image/png",
   "image/jpeg",
@@ -15,9 +14,8 @@ const SUPPORTED_CURRENT_TURN_IMAGE_MIME_TYPES = new Set([
 type CurrentTurnImagePart = TextPart | FilePart;
 
 type CurrentTurnImageOptions = {
-  fetchAttachment?: typeof fetch;
+  artifactBucket?: R2Bucket;
   maxBytes?: number;
-  timeoutMs?: number;
 };
 
 export async function addCurrentTurnImagesToModelMessages(
@@ -25,12 +23,13 @@ export async function addCurrentTurnImagesToModelMessages(
   request: DiscordChatRequest,
   options: CurrentTurnImageOptions = {}
 ): Promise<ModelMessage[]> {
-  if (!request.attachments?.length) return messages;
+  const artifacts = request.artifacts?.filter(isCurrentTurnImageArtifact);
+  if (!artifacts?.length) return messages;
 
   const parts = (
     await Promise.all(
-      request.attachments.map((attachment) =>
-        createCurrentTurnImagePart(attachment, request, options)
+      artifacts.map((artifact) =>
+        createCurrentTurnImagePart(artifact, request, options)
       )
     )
   ).filter((part) => part !== undefined);
@@ -40,101 +39,88 @@ export async function addCurrentTurnImagesToModelMessages(
 }
 
 async function createCurrentTurnImagePart(
-  attachment: DiscordRequestAttachment,
+  artifact: StoredResponseArtifact<"discord_attachment">,
   request: DiscordChatRequest,
   options: CurrentTurnImageOptions
 ): Promise<CurrentTurnImagePart | undefined> {
   const maxBytes = options.maxBytes ?? CURRENT_TURN_IMAGE_MAX_BYTES;
-  const declaredMimeType = normalizeMimeType(attachment.mimeType);
+  const declaredMimeType = normalizeMimeType(artifact.mimeType);
   if (!isSupportedCurrentTurnImageMimeType(declaredMimeType)) {
-    return createAttachmentStatusPart(
-      attachment,
+    return createArtifactStatusPart(
+      artifact,
       "not provided as visual input because its MIME type is unsupported"
     );
   }
 
-  if (attachment.sizeBytes > maxBytes) {
-    return createAttachmentStatusPart(
-      attachment,
-      `not provided as visual input because it is larger than ${maxBytes} bytes`
-    );
-  }
-
-  const sourceUrl = attachment.proxyUrl ?? attachment.url;
   try {
-    const response = await (options.fetchAttachment ?? fetch)(sourceUrl, {
-      headers: { accept: declaredMimeType ?? "image/*" },
-      signal: createTimeoutSignal(options.timeoutMs)
-    });
+    if (!options.artifactBucket) {
+      return createArtifactStatusPart(
+        artifact,
+        "not provided as visual input because artifact storage is unavailable"
+      );
+    }
 
-    if (!response.ok) {
-      const body = await response.text().catch(() => "");
-      logWarn("Discord current-turn image fetch failed", {
+    const object = await options.artifactBucket.get(artifact.artifactKey);
+    if (!object?.body) {
+      logWarn("Discord current-turn image artifact was missing", {
         correlationId: request.correlationId,
         discordInteractionId: request.discordInteractionId,
-        attachmentId: attachment.id,
-        filename: attachment.filename,
-        status: response.status,
-        body: body.slice(0, 200)
+        artifactId: artifact.id,
+        artifactKey: artifact.artifactKey,
+        filename: artifact.filename
       });
-      return createAttachmentStatusPart(
-        attachment,
-        `could not be fetched for visual input (${response.status})`
+      return createArtifactStatusPart(
+        artifact,
+        "not provided as visual input because the stored artifact is unavailable"
       );
     }
 
-    const responseMimeType = normalizeMimeType(
-      response.headers.get("content-type")
-    );
-    const mediaType = isSupportedCurrentTurnImageMimeType(responseMimeType)
-      ? responseMimeType
+    if (object.size > maxBytes) {
+      return createArtifactStatusPart(
+        artifact,
+        `not provided as visual input because it is larger than ${maxBytes} bytes`
+      );
+    }
+
+    const headers = new Headers();
+    object.writeHttpMetadata(headers);
+    const storedMimeType = normalizeMimeType(headers.get("content-type"));
+    const mediaType = isSupportedCurrentTurnImageMimeType(storedMimeType)
+      ? storedMimeType
       : declaredMimeType;
-    if (!isSupportedCurrentTurnImageMimeType(mediaType)) {
-      return createAttachmentStatusPart(
-        attachment,
-        "not provided as visual input because Discord returned an unsupported image type"
-      );
-    }
 
-    const contentLength = getContentLength(response.headers);
-    if (contentLength !== undefined && contentLength > maxBytes) {
-      return createAttachmentStatusPart(
-        attachment,
-        `not provided as visual input because Discord returned more than ${maxBytes} bytes`
-      );
-    }
-
-    const bytes = new Uint8Array(await response.arrayBuffer());
+    const bytes = new Uint8Array(await object.arrayBuffer());
     if (bytes.byteLength === 0) {
-      return createAttachmentStatusPart(
-        attachment,
-        "not provided as visual input because Discord returned an empty image"
+      return createArtifactStatusPart(
+        artifact,
+        "not provided as visual input because the stored artifact is empty"
       );
     }
     if (bytes.byteLength > maxBytes) {
-      return createAttachmentStatusPart(
-        attachment,
-        `not provided as visual input because Discord returned more than ${maxBytes} bytes`
+      return createArtifactStatusPart(
+        artifact,
+        `not provided as visual input because it is larger than ${maxBytes} bytes`
       );
     }
 
     return {
       type: "file",
       data: bytes,
-      filename: attachment.filename,
+      filename: artifact.filename,
       mediaType
     };
   } catch (error) {
-    logWarn("Discord current-turn image fetch threw", {
+    logWarn("Discord current-turn image artifact read failed", {
       correlationId: request.correlationId,
       discordInteractionId: request.discordInteractionId,
-      attachmentId: attachment.id,
-      filename: attachment.filename,
+      artifactId: artifact.id,
+      artifactKey: artifact.artifactKey,
+      filename: artifact.filename,
       error: getErrorMessage(error)
     });
-    return createAttachmentStatusPart(
-      attachment,
-      "could not be fetched for visual input"
+    return createArtifactStatusPart(
+      artifact,
+      "not provided as visual input because the stored artifact could not be read"
     );
   }
 }
@@ -165,19 +151,28 @@ function findLatestUserMessageIndex(messages: ModelMessage[]) {
   return -1;
 }
 
-function createAttachmentStatusPart(
-  attachment: DiscordRequestAttachment,
+function createArtifactStatusPart(
+  artifact: StoredResponseArtifact<"discord_attachment">,
   status: string
 ): TextPart {
   return {
     type: "text",
     text: [
       "Current /c image attachment status:",
-      `id: ${attachment.id}`,
-      `filename: ${attachment.filename}`,
+      `artifact_id: ${artifact.id}`,
+      `filename: ${artifact.filename}`,
       `status: ${status}.`
     ].join("\n")
   };
+}
+
+function isCurrentTurnImageArtifact(
+  artifact: StoredResponseArtifact
+): artifact is StoredResponseArtifact<"discord_attachment"> {
+  return (
+    artifact.source === "discord_attachment" &&
+    isSupportedCurrentTurnImageMimeType(normalizeMimeType(artifact.mimeType))
+  );
 }
 
 function normalizeMimeType(value: string | null | undefined) {
@@ -190,17 +185,4 @@ function isSupportedCurrentTurnImageMimeType(
   return Boolean(
     mimeType && SUPPORTED_CURRENT_TURN_IMAGE_MIME_TYPES.has(mimeType)
   );
-}
-
-function getContentLength(headers: Headers) {
-  const value = headers.get("content-length");
-  if (!value) return undefined;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : undefined;
-}
-
-function createTimeoutSignal(timeoutMs: number | undefined) {
-  const ms = timeoutMs ?? CURRENT_TURN_IMAGE_FETCH_TIMEOUT_MS;
-  if (ms <= 0) return undefined;
-  return AbortSignal.timeout(ms);
 }
