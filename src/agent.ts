@@ -37,6 +37,7 @@ import {
   formatComponentPromptContinuationText,
   type DiscordComponentPromptInteractionInput
 } from "./discord/component-prompts";
+import { summarizeDiscordImageArtifacts } from "./discord/artifact-summaries";
 import { formatDiscordRuntimeContext } from "./discord/context";
 import { getGuildIdFromDiscordConversationName } from "./discord/conversation";
 import { addCurrentTurnImagesToModelMessages } from "./discord/current-turn-images";
@@ -72,6 +73,7 @@ import type { DiscordChatRequest, DiscordChatResponse } from "./discord/types";
 import { GuildMemoryReflectionRunner } from "./guild-memory-reflection-runner";
 import { getErrorMessage, logError, logInfo, logWarn } from "./logging";
 import { GuildMemoryProvider } from "./memory";
+import { stripModelThinkingTraces } from "./model-output";
 import {
   createGuildMemoryReflectionSnapshot,
   getGuildMemoryReflectionCorrelationId,
@@ -93,6 +95,7 @@ import {
   MEMORY_REFLECTION_CHAT_MODEL,
   MEMORY_REFLECTION_PROVIDER_OPTIONS,
   REPLY_CHAT_MODEL,
+  REPLY_CHAT_TIMEOUT_MS,
   REPLY_PROVIDER_OPTIONS
 } from "./model";
 import { createBaseSystemPrompt } from "./prompts";
@@ -122,7 +125,7 @@ const CODEMODE_INSPECTION_MAX_EXECUTIONS = 50;
 const DISCORD_ACTIVE_TOOLS = ["codemode"];
 const CHAT_RECOVERY_MAX_ATTEMPTS = 6;
 const CHAT_RECOVERY_STABLE_TIMEOUT_MS = 10_000;
-const CHAT_STREAM_STALL_TIMEOUT_MS = 120_000;
+const CHAT_STREAM_STALL_TIMEOUT_MS = REPLY_CHAT_TIMEOUT_MS;
 const CHAT_RECOVERY_TERMINAL_MESSAGE =
   "Sorry, this request was interrupted and could not be recovered. Please try again.";
 const DISCORD_BOT_USER_ID_STORAGE_KEY = "discord:bot-user-id";
@@ -160,6 +163,10 @@ export class ChatAgent extends Think<Env> {
   private componentPrompts = new DiscordComponentPromptStore(this.ctx.storage);
   private memoryReflections = new GuildMemoryReflectionStore(this.ctx.storage);
   private progressReporters = new Map<string, DiscordProgressReporter>();
+  private artifactSummaryPromises = new Map<
+    string,
+    Promise<DiscordChatRequest | undefined>
+  >();
   private guildMemoryProvider?: GuildMemoryProvider;
   private codeModeRuntime?: DiscordCodeModeRuntime["runtime"];
   private botUserId?: string;
@@ -214,7 +221,7 @@ export class ChatAgent extends Think<Env> {
                 "Summarize Discord conversation history for future assistant context. Preserve factual details, user preferences, decisions, current state, and open items.",
               prompt
             });
-            return result.text;
+            return stripModelThinkingTraces(result.text);
           },
           protectHead: 2,
           tailTokenBudget: COMPACTION_TAIL_TOKEN_BUDGET,
@@ -252,6 +259,7 @@ export class ChatAgent extends Think<Env> {
     const runtimeContext = turn
       ? await this.createDiscordTurnRuntimeContext(turn)
       : undefined;
+    if (turn) this.startArtifactSummaries(turn);
 
     return {
       system: createDiscordThinkSystemPrompt(sessionContext, runtimeContext),
@@ -357,10 +365,11 @@ export class ChatAgent extends Think<Env> {
   }
 
   override async onChatResponse(result: ChatResponseResult) {
-    const record = await this.discordDeliveries.getDelivery(result.requestId);
+    let record = await this.discordDeliveries.getDelivery(result.requestId);
     if (!record || isTerminalDelivery(record)) return;
 
     if (result.status !== "completed") {
+      this.artifactSummaryPromises.delete(getDeliveryCorrelationId(record));
       await this.createDiscordDeliveryRunner().failDelivery(
         record,
         result.error ?? `Think turn ended with status ${result.status}.`
@@ -369,6 +378,10 @@ export class ChatAgent extends Think<Env> {
     }
 
     try {
+      if (record.type === "chat") {
+        record = await this.applyArtifactSummaries(record);
+      }
+
       try {
         await this.createDiscordDeliveryRunner().deliverChatResponse(
           record,
@@ -393,6 +406,7 @@ export class ChatAgent extends Think<Env> {
       }
     } finally {
       this.progressReporters.delete(getDeliveryCorrelationId(record));
+      this.artifactSummaryPromises.delete(getDeliveryCorrelationId(record));
       await this.housekeeping();
     }
   }
@@ -411,8 +425,12 @@ export class ChatAgent extends Think<Env> {
     }
 
     if (submission.status === "completed") {
+      const deliveryRecord =
+        record.type === "chat"
+          ? await this.applyArtifactSummaries(record)
+          : record;
       await this.createDiscordDeliveryRunner().deliverCompletedSubmissionWithoutResponse(
-        record
+        deliveryRecord
       );
       return;
     }
@@ -861,6 +879,54 @@ export class ChatAgent extends Think<Env> {
         ...this.getConversationDiscordArtifacts()
       ])
     };
+  }
+
+  private startArtifactSummaries(turn: DiscordChatRequest) {
+    if (this.artifactSummaryPromises.has(turn.correlationId)) return;
+
+    const summaryPromise = (async () => {
+      const record = await this.discordDeliveries.getDelivery(
+        turn.correlationId
+      );
+      if (record?.type !== "chat") return undefined;
+      const request = record.request;
+      const summarizedRequest = await summarizeDiscordImageArtifacts(
+        this.env,
+        request,
+        this.sessionAffinity
+      );
+      return summarizedRequest === request ? undefined : summarizedRequest;
+    })().catch((error) => {
+      logWarn("Discord image artifact summaries failed", {
+        agentName: this.name,
+        correlationId: turn.correlationId,
+        discordInteractionId: turn.discordInteractionId,
+        error: getErrorMessage(error)
+      });
+      return undefined;
+    });
+    this.artifactSummaryPromises.set(turn.correlationId, summaryPromise);
+  }
+
+  private async applyArtifactSummaries(
+    record: Extract<DiscordDeliveryRecord, { type: "chat" }>
+  ) {
+    const summaryPromise = this.artifactSummaryPromises.get(
+      record.correlationId
+    );
+    if (!summaryPromise) return record;
+
+    this.artifactSummaryPromises.delete(record.correlationId);
+    const request = await summaryPromise;
+    if (!request) return record;
+
+    const nextRecord = { ...record, request };
+    await this.updateMessageInHistory(createDiscordUserMessage(request));
+    await this.discordDeliveries.updateChatRequest(
+      record.correlationId,
+      request
+    );
+    return nextRecord;
   }
 
   private getConversationDiscordArtifacts() {

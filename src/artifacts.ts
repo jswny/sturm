@@ -39,6 +39,7 @@ type StoredResponseArtifactBase = {
   artifactKey: string;
   sha256: string;
   description?: string;
+  visualSummary?: string;
 };
 
 export type StoredResponseArtifact<
@@ -96,6 +97,7 @@ export async function storeResponseArtifact<
     artifactKey,
     sha256,
     description: input.description,
+    visualSummary: input.visualSummary,
     metadata: input.metadata,
     base64: input.base64 ?? bytesToBase64(input.bytes)
   } as ResponseArtifact<Source>;

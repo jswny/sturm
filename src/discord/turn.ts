@@ -5,6 +5,7 @@ import {
   type ResponseArtifact,
   type StoredResponseArtifact
 } from "../artifacts";
+import { stripModelThinkingTraces } from "../model-output";
 import {
   formatAssistantMessageText,
   formatDiscordResponseText,
@@ -118,8 +119,9 @@ export function createDiscordResponseFromAssistantMessage(
   text: string,
   artifacts: ResponseArtifact[]
 ): DiscordChatResponse {
+  const cleanText = stripModelThinkingTraces(text);
   return {
-    content: formatDiscordResponseText(text, artifacts),
+    content: formatDiscordResponseText(cleanText, artifacts),
     attachments: artifacts.map((artifact) => ({
       filename: artifact.filename,
       mimeType: artifact.mimeType,
@@ -135,7 +137,7 @@ export function createAssistantHistoryText(
   text: string,
   artifacts: ResponseArtifact[]
 ) {
-  return formatAssistantMessageText(text, artifacts);
+  return formatAssistantMessageText(stripModelThinkingTraces(text), artifacts);
 }
 
 export async function hydrateStoredResponseArtifacts(
@@ -187,11 +189,15 @@ function formatAttachmentDescription(artifact: ResponseArtifact) {
   return description.slice(0, 1024);
 }
 
-export function getDiscordMessageText(message: UIMessage) {
+export function getRawDiscordMessageText(message: UIMessage) {
   return message.parts
     .map((part) => (part.type === "text" ? part.text : ""))
     .join("")
     .trim();
+}
+
+export function getDiscordMessageText(message: UIMessage) {
+  return stripModelThinkingTraces(getRawDiscordMessageText(message));
 }
 
 export function getDiscordArtifactsFromAssistantMessage(
@@ -353,6 +359,7 @@ function getStoredArtifactMetadata(value: unknown) {
         artifactKey?: unknown;
         sha256?: unknown;
         description?: unknown;
+        visualSummary?: unknown;
         metadata?: unknown;
       };
       if (
@@ -378,6 +385,10 @@ function getStoredArtifactMetadata(value: unknown) {
         description:
           typeof artifact.description === "string"
             ? artifact.description
+            : undefined,
+        visualSummary:
+          typeof artifact.visualSummary === "string"
+            ? artifact.visualSummary
             : undefined,
         metadata: artifact.metadata
       } as StoredResponseArtifact;

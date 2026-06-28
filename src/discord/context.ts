@@ -116,6 +116,9 @@ function formatDiscordArtifactContext(
         `filename: ${artifact.filename}`,
         `mimeType: ${artifact.mimeType}`,
         `sha256: ${artifact.sha256}`,
+        artifact.visualSummary
+          ? `visualSummary: ${artifact.visualSummary}`
+          : "",
         ...formatArtifactMetadata(artifact)
       ]
         .filter(hasValue)

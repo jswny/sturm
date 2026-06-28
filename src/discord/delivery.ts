@@ -222,6 +222,20 @@ export class DiscordDeliveryStore {
     });
   }
 
+  async updateChatRequest(correlationId: string, request: DiscordChatRequest) {
+    await this.updateDelivery(correlationId, (record) => {
+      if (record.type !== "chat" || isTerminalDeliveryStatus(record.status)) {
+        return record;
+      }
+
+      return {
+        ...record,
+        request,
+        updatedAt: new Date().toISOString()
+      };
+    });
+  }
+
   async setComponentPrompt(correlationId: string, promptId: string) {
     await this.updateDelivery(correlationId, (record) => {
       if (record.type !== "chat" || isTerminalDeliveryStatus(record.status)) {

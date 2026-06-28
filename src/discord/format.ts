@@ -75,7 +75,8 @@ function formatArtifactMessage(artifacts: ResponseArtifact[]) {
         `artifactId: ${artifact.id}`,
         `source: ${artifact.source}`,
         `filename: ${artifact.filename}`,
-        `mimeType: ${artifact.mimeType}`
+        `mimeType: ${artifact.mimeType}`,
+        artifact.visualSummary ? `visualSummary: ${artifact.visualSummary}` : ""
       ];
 
       lines.push(...formatArtifactMetadata(artifact));
@@ -128,6 +129,9 @@ function formatArtifactReferences(
         `filename: ${artifact.filename}`,
         `mimeType: ${artifact.mimeType}`,
         `sha256: ${artifact.sha256}`,
+        artifact.visualSummary
+          ? `visualSummary: ${artifact.visualSummary}`
+          : "",
         ...formatArtifactMetadata(artifact)
       ]
         .filter(Boolean)

@@ -16,6 +16,7 @@ import {
   createAssistantHistoryText,
   createDiscordResponseFromAssistantMessage,
   getDiscordMessageText,
+  getRawDiscordMessageText,
   hydrateStoredResponseArtifacts,
   withAssistantText
 } from "./turn";
@@ -60,6 +61,7 @@ export class DiscordDeliveryRunner {
       (await this.options.deliveries.getDelivery(correlationId)) ?? record;
     if (freshRecord.type !== "chat") return;
 
+    const rawText = getRawDiscordMessageText(result.message);
     const text = getDiscordMessageText(result.message);
     const artifacts = await hydrateStoredResponseArtifacts(
       this.options.env,
@@ -84,7 +86,7 @@ export class DiscordDeliveryRunner {
     ]
       .filter(Boolean)
       .join("\n\n");
-    if (historyText !== text) {
+    if (historyText !== rawText) {
       try {
         await this.options.updateMessageInHistory(
           withAssistantText(result.message, historyText, artifacts)
