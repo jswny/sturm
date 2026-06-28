@@ -37,7 +37,7 @@ import {
   formatComponentPromptContinuationText,
   type DiscordComponentPromptInteractionInput
 } from "./discord/component-prompts";
-import { summarizeDiscordImageArtifacts } from "./discord/artifact-summaries";
+import { summarizeDiscordArtifacts } from "./discord/artifact-summaries";
 import { formatDiscordRuntimeContext } from "./discord/context";
 import { getGuildIdFromDiscordConversationName } from "./discord/conversation";
 import { addCurrentTurnImagesToModelMessages } from "./discord/current-turn-images";
@@ -890,14 +890,14 @@ export class ChatAgent extends Think<Env> {
       );
       if (record?.type !== "chat") return undefined;
       const request = record.request;
-      const summarizedRequest = await summarizeDiscordImageArtifacts(
+      const summarizedRequest = await summarizeDiscordArtifacts(
         this.env,
         request,
         this.sessionAffinity
       );
       return summarizedRequest === request ? undefined : summarizedRequest;
     })().catch((error) => {
-      logWarn("Discord image artifact summaries failed", {
+      logWarn("Discord artifact summaries failed", {
         agentName: this.name,
         correlationId: turn.correlationId,
         discordInteractionId: turn.discordInteractionId,

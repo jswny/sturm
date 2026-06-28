@@ -2,7 +2,7 @@ import { createWorkersAI } from "workers-ai-provider";
 
 export const CHAT_MODEL = "@cf/moonshotai/kimi-k2.7-code";
 export const REPLY_CHAT_MODEL = "dynamic/sturm-reply";
-export const IMAGE_SUMMARY_CHAT_MODEL = REPLY_CHAT_MODEL;
+export const ARTIFACT_SUMMARY_CHAT_MODEL = REPLY_CHAT_MODEL;
 export const COMPACTION_CHAT_MODEL = "dynamic/sturm-compaction";
 export const MEMORY_REFLECTION_CHAT_MODEL = "dynamic/sturm-memory-reflection";
 export const CHAT_AI_GATEWAY_ID = "default";
@@ -11,7 +11,7 @@ export const CHAT_AI_GATEWAY_METADATA = {
 };
 export const CHAT_AI_GATEWAY_FLOWS = {
   reply: "reply",
-  imageSummary: "image-summary",
+  artifactSummary: "artifact-summary",
   compaction: "compaction",
   memoryReflection: "memory-reflection"
 } as const;
@@ -56,7 +56,7 @@ export const COMPACTION_PROVIDER_OPTIONS = {
   }
 } as const satisfies WorkersAIProviderOptions;
 
-export const IMAGE_SUMMARY_PROVIDER_OPTIONS = {
+export const ARTIFACT_SUMMARY_PROVIDER_OPTIONS = {
   "workers-ai": {
     reasoning_effort: null,
     chat_template_kwargs: {
@@ -76,7 +76,7 @@ export const MEMORY_REFLECTION_PROVIDER_OPTIONS = {
 
 export type ModelProviderOptions =
   | typeof REPLY_PROVIDER_OPTIONS
-  | typeof IMAGE_SUMMARY_PROVIDER_OPTIONS
+  | typeof ARTIFACT_SUMMARY_PROVIDER_OPTIONS
   | typeof COMPACTION_PROVIDER_OPTIONS
   | typeof MEMORY_REFLECTION_PROVIDER_OPTIONS;
 

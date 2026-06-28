@@ -4,10 +4,10 @@ import type { StoredResponseArtifact } from "../artifacts";
 import { getErrorMessage, logWarn } from "../logging";
 import { stripModelThinkingTraces } from "../model-output";
 import {
+  ARTIFACT_SUMMARY_CHAT_MODEL,
+  ARTIFACT_SUMMARY_PROVIDER_OPTIONS,
   CHAT_AI_GATEWAY_FLOWS,
   createChatWorkersAI,
-  IMAGE_SUMMARY_CHAT_MODEL,
-  IMAGE_SUMMARY_PROVIDER_OPTIONS,
   REPLY_CHAT_TIMEOUT_MS
 } from "../model";
 import type { DiscordChatRequest } from "./types";
@@ -33,16 +33,18 @@ const imageSummarySchema = z.object({
 
 export type DiscordArtifactSummaryEnv = Pick<Env, "AI" | "ARTIFACTS_BUCKET">;
 
-export async function summarizeDiscordImageArtifacts(
+export async function summarizeDiscordArtifacts(
   env: DiscordArtifactSummaryEnv,
   request: DiscordChatRequest,
   sessionAffinity: string | undefined
 ): Promise<DiscordChatRequest> {
-  const artifacts = request.artifacts?.filter(shouldSummarizeArtifact);
-  if (!artifacts?.length) return request;
+  const imageArtifacts = request.artifacts?.filter(
+    shouldSummarizeImageArtifact
+  );
+  if (!imageArtifacts?.length) return request;
 
   const summaries = await Promise.all(
-    artifacts.map((artifact) =>
+    imageArtifacts.map((artifact) =>
       summarizeDiscordImageArtifact(env, request, artifact, sessionAffinity)
     )
   );
@@ -62,7 +64,7 @@ export async function summarizeDiscordImageArtifacts(
   };
 }
 
-function shouldSummarizeArtifact(
+function shouldSummarizeImageArtifact(
   artifact: StoredResponseArtifact
 ): artifact is StoredResponseArtifact<"discord_attachment"> {
   return (
@@ -119,7 +121,7 @@ async function summarizeDiscordImageArtifact(
 
     const workersai = createChatWorkersAI(
       env,
-      CHAT_AI_GATEWAY_FLOWS.imageSummary,
+      CHAT_AI_GATEWAY_FLOWS.artifactSummary,
       {
         correlationId: request.correlationId,
         guildId: request.guildId,
@@ -127,8 +129,8 @@ async function summarizeDiscordImageArtifact(
       }
     );
     const result = await generateObject({
-      model: workersai(IMAGE_SUMMARY_CHAT_MODEL, { sessionAffinity }),
-      providerOptions: IMAGE_SUMMARY_PROVIDER_OPTIONS,
+      model: workersai(ARTIFACT_SUMMARY_CHAT_MODEL, { sessionAffinity }),
+      providerOptions: ARTIFACT_SUMMARY_PROVIDER_OPTIONS,
       system:
         "You summarize images for future conversation context. Respond only with the image summary.",
       schema: imageSummarySchema,
