@@ -51,7 +51,7 @@ function formatGenerateImageOutput(output: GenerateImageResponse) {
     `Model: ${output.model}`,
     `Aspect ratio: ${output.aspectRatio}`,
     `Resolution: ${output.resolution}`,
-    "The image will be attached to the response. Do not include raw image data in the chat response."
+    "The image will be attached to the response by Sturm. In your final message, do not include Markdown image syntax, file links, or attachment:// URLs for this artifact; just write any caption or brief text."
   ];
   if (output.sha256) lines.splice(2, 0, `SHA-256: ${output.sha256}`);
   return lines.join("\n");
