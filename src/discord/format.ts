@@ -107,8 +107,19 @@ function formatArtifactMetadata(artifact: StoredResponseArtifact) {
       return [
         `prompt: ${artifact.metadata.prompt}`,
         `model: ${artifact.metadata.model}`,
-        `dimensions: ${artifact.metadata.width}x${artifact.metadata.height}`
-      ];
+        artifact.metadata.width && artifact.metadata.height
+          ? `dimensions: ${artifact.metadata.width}x${artifact.metadata.height}`
+          : "",
+        artifact.metadata.aspectRatio
+          ? `aspectRatio: ${artifact.metadata.aspectRatio}`
+          : "",
+        artifact.metadata.resolution
+          ? `resolution: ${artifact.metadata.resolution}`
+          : "",
+        artifact.metadata.outputFormat
+          ? `outputFormat: ${artifact.metadata.outputFormat}`
+          : ""
+      ].filter(Boolean);
     case "workspace_export":
       return [`workspacePath: ${artifact.metadata.workspacePath}`];
   }

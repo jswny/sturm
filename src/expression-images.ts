@@ -275,10 +275,9 @@ function getArtifactDimensions(artifact: StoredResponseArtifact) {
         ? { width: artifact.metadata.width, height: artifact.metadata.height }
         : undefined;
     case "image_generation":
-      return {
-        width: artifact.metadata.width,
-        height: artifact.metadata.height
-      };
+      return artifact.metadata.width && artifact.metadata.height
+        ? { width: artifact.metadata.width, height: artifact.metadata.height }
+        : undefined;
     case "workspace_export":
       return undefined;
   }

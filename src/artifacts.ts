@@ -7,8 +7,11 @@ export type ResponseArtifactSource = keyof ResponseArtifactMetadataBySource;
 export type ImageGenerationArtifactMetadata = {
   prompt: string;
   model: string;
-  width: number;
-  height: number;
+  width?: number;
+  height?: number;
+  aspectRatio?: string;
+  outputFormat?: string;
+  resolution?: string;
 };
 
 export type WorkspaceExportArtifactMetadata = {

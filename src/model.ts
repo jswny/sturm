@@ -5,6 +5,13 @@ export const REPLY_CHAT_MODEL = "dynamic/sturm-reply";
 export const ARTIFACT_SUMMARY_CHAT_MODEL = REPLY_CHAT_MODEL;
 export const COMPACTION_CHAT_MODEL = "dynamic/sturm-compaction";
 export const MEMORY_REFLECTION_CHAT_MODEL = "dynamic/sturm-memory-reflection";
+export const IMAGE_GENERATION_MODEL = "google/nano-banana-2";
+export const IMAGE_GENERATION_TIMEOUT_MS = 180_000;
+export const DEFAULT_IMAGE_ASPECT_RATIO = "1:1";
+export const IMAGE_GENERATION_OUTPUT_FORMAT = "jpg";
+export const DEFAULT_IMAGE_RESOLUTION = "1K";
+export const IMAGE_GENERATION_GOOGLE_SEARCH = true;
+export const IMAGE_GENERATION_IMAGE_SEARCH = true;
 export const CHAT_AI_GATEWAY_ID = "default";
 export const CHAT_AI_GATEWAY_METADATA = {
   app: "sturm"
@@ -13,7 +20,8 @@ export const CHAT_AI_GATEWAY_FLOWS = {
   reply: "reply",
   artifactSummary: "artifact-summary",
   compaction: "compaction",
-  memoryReflection: "memory-reflection"
+  memoryReflection: "memory-reflection",
+  imageGeneration: "image-generation"
 } as const;
 
 export type ChatAiGatewayFlow =
@@ -94,7 +102,7 @@ export function createChatWorkersAI(
   });
 }
 
-function createChatAiGatewayMetadata(
+export function createChatAiGatewayMetadata(
   flow: ChatAiGatewayFlow,
   correlation: ChatAiGatewayCorrelation
 ): ChatAiGatewayMetadata {
