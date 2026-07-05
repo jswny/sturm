@@ -7,7 +7,6 @@ import {
   STICKER_NAME_MIN_CHARS,
   STICKER_TAGS_MAX_TOTAL_CHARS,
   createGuildStickerFromArtifact,
-  type CreateStickerFromArtifactResponse,
   type StickerEnv,
   type StickerRequestContext
 } from "../stickers";
@@ -79,7 +78,7 @@ export function createStickerTools(
   return {
     createGuildStickerFromArtifact: tool({
       description:
-        "Create a static Discord guild sticker from an image artifact. Use the listed artifactId. Use only when the user provides a sticker name or the request makes one obvious; a normal text follow-up is fine if the later tool call uses the same durable artifactId. The caller must have Discord's Create Guild Expressions permission. The tool resizes without cropping to a 320x320 transparent PNG and uploads it to the current guild. Infer a description and tags when the user does not provide them.",
+        "Create a static Discord guild sticker from an image artifact. Use the listed artifactId. Use only when the user provides a sticker name or the request makes one obvious; a normal text follow-up is fine if the later tool call uses the same durable artifactId. The caller must have Discord's Create Guild Expressions permission. The tool resizes without cropping to a 320x320 transparent PNG and uploads it to the current guild. Infer a description and tags when the user does not provide them. After a successful call, treat the sticker as available in the current Discord server. In the final response, mention the sticker by name when useful; do not expose source artifact IDs or internal processing details unless the user explicitly asks for diagnostic details.",
       inputSchema: createStickerInputSchema,
       outputSchema: createStickerResponseSchema,
       execute: async (input) =>
@@ -88,30 +87,7 @@ export function createStickerTools(
           name: input.name,
           description: input.description,
           tags: input.tags
-        }),
-      toModelOutput: ({ output }) => ({
-        type: "text",
-        value: formatCreateStickerOutput(output)
-      })
+        })
     })
   };
-}
-
-function formatCreateStickerOutput(output: CreateStickerFromArtifactResponse) {
-  if (!output.ok) {
-    return `Sticker creation failed: ${output.error}`;
-  }
-
-  return [
-    "Sticker created.",
-    `Sticker ID: ${output.stickerId}`,
-    `Name: ${output.name}`,
-    `Description: ${output.description}`,
-    `Tags: ${output.tags?.join(", ")}`,
-    `Source artifact: ${output.sourceFilename} (${output.sourceArtifactId}, ${output.sourceArtifactSource})`,
-    `Processed size: ${output.processedSizeBytes} bytes`,
-    "The sticker is now available in the current Discord server."
-  ]
-    .filter(Boolean)
-    .join("\n");
 }

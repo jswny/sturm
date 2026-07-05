@@ -1,6 +1,6 @@
 import { tool } from "ai";
 import { z } from "zod";
-import { archiveUrl, type ArchiveUrlResponse } from "../archive";
+import { archiveUrl } from "../archive";
 
 const archiveUrlResponseSchema = z.object({
   originalUrl: z.string().describe("The URL requested for archiving"),
@@ -18,20 +18,6 @@ const archiveUrlResponseSchema = z.object({
   error: z.string().optional().describe("Error message when archiving failed")
 });
 
-function formatArchiveUrlOutput(output: ArchiveUrlResponse) {
-  if (output.error) {
-    return `Archive URL creation failed: ${output.error}`;
-  }
-
-  return [
-    `Archive URL for: ${output.originalUrl}`,
-    "",
-    `Prepared URL: ${output.preparedUrl}`,
-    `Query parameters preserved: ${output.queryParamsPreserved ? "yes" : "no"}`,
-    `Archive URL: ${output.archiveUrl}`
-  ].join("\n");
-}
-
 export function createArchiveTools() {
   return {
     archiveUrl: tool({
@@ -48,11 +34,7 @@ export function createArchiveTools() {
       }),
       outputSchema: archiveUrlResponseSchema,
       execute: async ({ url, preserveQueryParams }) =>
-        archiveUrl(url, preserveQueryParams),
-      toModelOutput: ({ output }) => ({
-        type: "text",
-        value: formatArchiveUrlOutput(output)
-      })
+        archiveUrl(url, preserveQueryParams)
     })
   };
 }

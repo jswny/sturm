@@ -1,11 +1,6 @@
 import { tool } from "ai";
 import { z } from "zod";
-import {
-  generateImage,
-  type GenerateImageResponse,
-  type ImageAspectRatio,
-  type ImageEnv
-} from "../images";
+import { generateImage, type ImageAspectRatio, type ImageEnv } from "../images";
 import type { ResponseArtifact } from "../artifacts";
 import { DEFAULT_IMAGE_ASPECT_RATIO, DEFAULT_IMAGE_RESOLUTION } from "../model";
 
@@ -39,24 +34,6 @@ type ImageRequestContext = {
   channelId?: string;
 };
 
-function formatGenerateImageOutput(output: GenerateImageResponse) {
-  if (output.error) {
-    return `Image generation failed: ${output.error}`;
-  }
-
-  const lines = [
-    `Generated image artifactId: ${output.artifactId}`,
-    "Source: image_generation",
-    `Prompt: ${output.prompt}`,
-    `Model: ${output.model}`,
-    `Aspect ratio: ${output.aspectRatio}`,
-    `Resolution: ${output.resolution}`,
-    "The image will be attached to the response by Sturm. In your final message, do not include Markdown image syntax, file links, or attachment:// URLs for this artifact; just write any caption or brief text."
-  ];
-  if (output.sha256) lines.splice(2, 0, `SHA-256: ${output.sha256}`);
-  return lines.join("\n");
-}
-
 export function createImageTools(
   env: ImageEnv,
   options: {
@@ -67,7 +44,7 @@ export function createImageTools(
   return {
     generateImage: tool({
       description:
-        "Generate an image from a text prompt and attach it to the response. Use when the user asks you to create, draw, render, or generate an image.",
+        "Generate an image from a text prompt and attach it to the response. Use when the user asks you to create, draw, render, or generate an image. Sturm automatically attaches successful generated images to the final Discord/debug response, so do not include Markdown image syntax, attachment:// URLs, file links, raw artifact IDs, hashes, or other internal references in the final chat response unless the user explicitly asks for diagnostic details. If later code needs the generated artifact details, keep or return the structured tool result instead of rerunning generation.",
       inputSchema: z.object({
         prompt: z
           .string()
@@ -99,11 +76,7 @@ export function createImageTools(
         );
         if (artifact) await options.onArtifactCreated?.(artifact);
         return response;
-      },
-      toModelOutput: ({ output }) => ({
-        type: "text",
-        value: formatGenerateImageOutput(output)
-      })
+      }
     })
   };
 }

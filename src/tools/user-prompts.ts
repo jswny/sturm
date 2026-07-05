@@ -128,7 +128,7 @@ export function createUserPromptTools(
   return {
     askUserToConfirm: tool<ConfirmPromptInput, UserPromptToolResponse>({
       description:
-        "Ask the current Discord user to confirm or cancel before Sturm continues. Use this instead of guessing when a user must explicitly approve a pending action. The prompt is shown publicly, but only the current requester can answer; other users' clicks are rejected before reaching the model. After calling this tool, end the turn with a short note and do not perform the pending action until the confirmation result comes back in a later turn.",
+        "Ask the current Discord user to confirm or cancel before Sturm continues. Use this instead of guessing when a user must explicitly approve a pending action. The prompt is shown publicly, but only the current requester can answer; other users' clicks are rejected before reaching the model. The Discord component prompt is rendered automatically, so do not expose promptId or other internal identifiers in the final response unless the user explicitly asks for diagnostic details. After calling this tool, end the turn with a short note and do not perform the pending action until the confirmation result comes back in a later turn. If later code needs prompt details, keep or return the structured tool result.",
       inputSchema: confirmPromptInputSchema,
       outputSchema: userPromptResponseSchema,
       execute: async ({
@@ -164,15 +164,11 @@ export function createUserPromptTools(
         });
 
         return createPromptResponse(prompt);
-      },
-      toModelOutput: (options) => ({
-        type: "text",
-        value: formatPromptToolOutput(options.output as UserPromptToolResponse)
-      })
+      }
     }),
     askUserToSelect: tool<SelectPromptInput, UserPromptToolResponse>({
       description:
-        "Ask the current Discord user to choose one option before Sturm continues. Use for disambiguation, choosing one of several proposed paths, or collecting a missing bounded value. The prompt is shown publicly, but only the current requester can answer; other users' clicks are rejected before reaching the model. Each option's pendingAction is durable task state for the later turn, so include explicit durable IDs needed to continue, such as artifactId and the chosen sticker/emoji name when prompting for an expression name.",
+        "Ask the current Discord user to choose one option before Sturm continues. Use for disambiguation, choosing one of several proposed paths, or collecting a missing bounded value. The prompt is shown publicly, but only the current requester can answer; other users' clicks are rejected before reaching the model. The Discord component prompt is rendered automatically, so do not expose promptId or other internal identifiers in the final response unless the user explicitly asks for diagnostic details. Each option's pendingAction is durable task state for the later turn, so include explicit durable IDs needed to continue, such as artifactId and the chosen sticker/emoji name when prompting for an expression name. After calling this tool, end the turn with a short note and do not perform the pending action until the selection result comes back in a later turn. If later code needs prompt details, keep or return the structured tool result.",
       inputSchema: selectPromptInputSchema,
       outputSchema: userPromptResponseSchema,
       execute: async ({ question, options }) => {
@@ -195,11 +191,7 @@ export function createUserPromptTools(
         });
 
         return createPromptResponse(prompt);
-      },
-      toModelOutput: (options) => ({
-        type: "text",
-        value: formatPromptToolOutput(options.output as UserPromptToolResponse)
-      })
+      }
     })
   };
 }
@@ -211,14 +203,4 @@ function createPromptResponse(prompt: StoredComponentPrompt) {
     promptId: prompt.id,
     optionCount: prompt.options.length
   } satisfies UserPromptToolResponse;
-}
-
-function formatPromptToolOutput(output: UserPromptToolResponse) {
-  if (!output.ok) return `User prompt failed: ${output.error}`;
-
-  return [
-    `User ${output.kind} prompt created: ${output.promptId}`,
-    `Options: ${output.optionCount}`,
-    "The prompt will be rendered in Discord. Do not continue the pending action until the user's component selection arrives in a later turn."
-  ].join("\n");
 }

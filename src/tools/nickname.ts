@@ -7,10 +7,8 @@ import {
   clearNicknamePostfix,
   setNicknamePostfix,
   searchGuildMembers,
-  type GuildMemberSearchResult,
   type NicknameEnv,
-  type NicknameRequestContext,
-  type NicknameResponse
+  type NicknameRequestContext
 } from "../nickname";
 
 const nicknameResponseSchema = z.object({
@@ -72,11 +70,7 @@ export function createNicknameTools(
       }),
       outputSchema: guildMemberSearchResponseSchema,
       execute: async ({ query, limit }) =>
-        searchGuildMembers(env, context, query, limit),
-      toModelOutput: ({ output }) => ({
-        type: "text",
-        value: formatGuildMemberSearchOutput(output)
-      })
+        searchGuildMembers(env, context, query, limit)
     }),
     setNicknamePostfix: tool({
       description:
@@ -92,11 +86,7 @@ export function createNicknameTools(
       }),
       outputSchema: nicknameResponseSchema,
       execute: async ({ targetUserId, postfix }) =>
-        setNicknamePostfix(env, context, targetUserId, postfix),
-      toModelOutput: ({ output }) => ({
-        type: "text",
-        value: formatNicknameOutput(output)
-      })
+        setNicknamePostfix(env, context, targetUserId, postfix)
     }),
     clearNicknamePostfix: tool({
       description:
@@ -106,61 +96,7 @@ export function createNicknameTools(
       }),
       outputSchema: nicknameResponseSchema,
       execute: async ({ targetUserId }) =>
-        clearNicknamePostfix(env, context, targetUserId),
-      toModelOutput: ({ output }) => ({
-        type: "text",
-        value: formatNicknameOutput(output)
-      })
+        clearNicknamePostfix(env, context, targetUserId)
     })
   };
-}
-
-function formatGuildMemberSearchOutput(output: GuildMemberSearchResult) {
-  if (!output.ok) {
-    return `Guild member search failed: ${output.error}`;
-  }
-
-  const results = output.results ?? [];
-  if (results.length === 0) {
-    return `No guild members found for query: ${output.query}`;
-  }
-
-  return [
-    `Guild member search results for query: ${output.query}`,
-    ...results.map((member, index) =>
-      [
-        `${index + 1}. ${member.displayName}`,
-        `   id: ${member.id}`,
-        `   username: ${member.username}`,
-        member.globalName ? `   global_name: ${member.globalName}` : "",
-        member.nickname ? `   nickname: ${member.nickname}` : "",
-        `   bot: ${member.bot ? "yes" : "no"}`
-      ]
-        .filter(Boolean)
-        .join("\n")
-    )
-  ].join("\n");
-}
-
-function formatNicknameOutput(output: NicknameResponse) {
-  if (!output.ok) {
-    return `Nickname ${output.action} failed: ${output.error}`;
-  }
-
-  if (output.action === "cleared" && !output.changed) {
-    return "No nickname postfix was set, so nothing changed.";
-  }
-
-  if (output.action === "cleared") {
-    return `Nickname postfix cleared. New nickname: ${output.newNickname}`;
-  }
-
-  return [
-    "Nickname postfix set.",
-    `Target user ID: ${output.targetUserId}`,
-    `Base nickname: ${output.baseNickname}`,
-    `Postfix: ${output.postfix}`,
-    `Converted postfix: ${output.convertedPostfix}`,
-    `New nickname: ${output.newNickname}`
-  ].join("\n");
 }

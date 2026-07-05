@@ -45,7 +45,7 @@ export function createArtifactTools(
 ) {
   return {
     exportWorkspaceFile: tool({
-      description: `Attach a file from the persistent channel workspace to the Discord response. Use after creating or updating a workspace file when the user should receive it as a downloadable attachment. Files larger than ${MAX_WORKSPACE_EXPORT_MIB} MiB cannot be attached.`,
+      description: `Attach a file from the persistent channel workspace to the Discord response. Use after creating or updating a workspace file when the user should receive it as a downloadable attachment. Sturm automatically attaches successful exports to the final Discord/debug response, so the final chat response should mention the attachment briefly without pasting raw file data, artifact IDs, storage keys, hashes, or workspace internals unless the user explicitly asks for diagnostic details. If later code needs the exported artifact details, keep or return the structured tool result. Files larger than ${MAX_WORKSPACE_EXPORT_MIB} MiB cannot be attached.`,
       inputSchema: z.object({
         path: z
           .string()
@@ -68,11 +68,7 @@ export function createArtifactTools(
           path,
           filename,
           description
-        }),
-      toModelOutput: ({ output }) => ({
-        type: "text",
-        value: formatExportWorkspaceFileOutput(output)
-      })
+        })
     })
   };
 }
@@ -176,23 +172,6 @@ async function exportWorkspaceFile(
       error: "Workspace file could not be stored as a response artifact."
     };
   }
-}
-
-function formatExportWorkspaceFileOutput(output: ExportWorkspaceFileResponse) {
-  if (output.error) {
-    return `Workspace file export failed: ${output.error}\nPath: ${output.path}`;
-  }
-
-  const lines = [
-    `Exported workspace file artifactId: ${output.artifactId}`,
-    "Source: workspace_export",
-    `Path: ${output.path}`,
-    `Filename: ${output.filename}`,
-    `MIME type: ${output.mimeType}`,
-    `SHA-256: ${output.sha256}`,
-    "The current workspace file was exported as a Discord attachment snapshot. Do not include raw file data in the chat response."
-  ];
-  return lines.join("\n");
 }
 
 function normalizeWorkspacePath(path: string) {

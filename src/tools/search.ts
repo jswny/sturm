@@ -1,12 +1,6 @@
 import { tool } from "ai";
 import { z } from "zod";
-import {
-  searchWeb,
-  summarizeUrl,
-  type SearchEnv,
-  type SearchResponse,
-  type UrlSummaryResponse
-} from "../search";
+import { searchWeb, summarizeUrl, type SearchEnv } from "../search";
 
 const searchResultSchema = z.object({
   title: z.string().describe("Reference title"),
@@ -32,41 +26,6 @@ const urlSummaryResponseSchema = z.object({
     .describe("Error message when summarization failed")
 });
 
-function formatWebSearchOutput(output: SearchResponse) {
-  if (output.error) {
-    return `Web search failed: ${output.error}`;
-  }
-
-  const references = output.results
-    .map((result, index) => {
-      const snippet = result.snippet ? `\nSnippet: ${result.snippet}` : "";
-      return `[${index + 1}] ${result.title}\nURL: ${result.url}${snippet}`;
-    })
-    .join("\n\n");
-
-  return [
-    `Web search answer for: ${output.query}`,
-    "",
-    output.answer ? `Answer:\n${output.answer}` : "Answer: No answer returned.",
-    "",
-    references ? `References:\n${references}` : "References: none returned."
-  ].join("\n");
-}
-
-function formatUrlSummaryOutput(output: UrlSummaryResponse) {
-  if (output.error) {
-    return `URL summarization failed: ${output.error}`;
-  }
-
-  return [
-    `URL summary for: ${output.url}`,
-    "",
-    output.summary
-      ? `Summary:\n${output.summary}`
-      : "Summary: No summary returned."
-  ].join("\n");
-}
-
 export function createSearchTools(env: SearchEnv) {
   return {
     webSearch: tool({
@@ -79,11 +38,7 @@ export function createSearchTools(env: SearchEnv) {
           .describe("The complete web search question to ask")
       }),
       outputSchema: searchResponseSchema,
-      execute: async ({ query }) => searchWeb(env, query),
-      toModelOutput: ({ output }) => ({
-        type: "text",
-        value: formatWebSearchOutput(output)
-      })
+      execute: async ({ query }) => searchWeb(env, query)
     }),
 
     summarizeUrl: tool({
@@ -93,11 +48,7 @@ export function createSearchTools(env: SearchEnv) {
         url: z.string().url().describe("The complete URL to summarize")
       }),
       outputSchema: urlSummaryResponseSchema,
-      execute: async ({ url }) => summarizeUrl(env, url),
-      toModelOutput: ({ output }) => ({
-        type: "text",
-        value: formatUrlSummaryOutput(output)
-      })
+      execute: async ({ url }) => summarizeUrl(env, url)
     })
   };
 }

@@ -7,10 +7,8 @@ import {
   DISCORD_MESSAGE_SEARCH_MIN_LIMIT,
   searchDiscordMessages,
   type DiscordMessageSearchEnv,
-  type DiscordMessageSearchContext,
-  type DiscordMessageSearchResponse
+  type DiscordMessageSearchContext
 } from "../discord-message-search";
-import { formatUtcTimestampField } from "../discord/timestamps";
 
 const DISCORD_MESSAGE_SEARCH_MAX_HAS_FILTERS = 3;
 
@@ -121,73 +119,7 @@ export function createDiscordMessageSearchTools(
           )
       }),
       outputSchema: discordMessageSearchResponseSchema,
-      execute: async (input) => searchDiscordMessages(env, context, input),
-      toModelOutput: ({ output }) => ({
-        type: "text",
-        value: formatDiscordMessageSearchOutput(output)
-      })
+      execute: async (input) => searchDiscordMessages(env, context, input)
     })
   };
-}
-
-function formatDiscordMessageSearchOutput(
-  output: DiscordMessageSearchResponse
-) {
-  if (!output.ok) {
-    return `Discord message search failed: ${output.error}`;
-  }
-
-  if (output.indexNotReady) {
-    return [
-      "Discord message search index is not ready for this query.",
-      `Retry after: ${output.retryAfterSeconds ?? 0} seconds`,
-      `Documents indexed: ${output.documentsIndexed ?? 0}`
-    ]
-      .filter(Boolean)
-      .join("\n");
-  }
-
-  const results = output.results ?? [];
-  if (results.length === 0) {
-    return "No Discord messages matched that current-channel search.";
-  }
-
-  return [
-    `Discord current-channel message search returned ${results.length} result(s).`,
-    "all timestamps are ISO 8601 UTC",
-    output.totalResults !== undefined
-      ? `Total matching results reported by Discord: ${output.totalResults}`
-      : "",
-    ...results.map((message, index) =>
-      [
-        `${index + 1}. ${message.authorDisplayName} (${message.authorId}) ${formatMessageTimestamps(message)}`,
-        message.content ? `   content: ${message.content}` : "",
-        message.attachments?.length
-          ? `   attachments: ${message.attachments.join(", ")}`
-          : "",
-        message.embeds ? `   embeds: ${message.embeds}` : "",
-        message.stickers?.length
-          ? `   stickers: ${message.stickers.join(", ")}`
-          : "",
-        `   url: ${message.url}`
-      ]
-        .filter(Boolean)
-        .join("\n")
-    )
-  ]
-    .filter(Boolean)
-    .join("\n");
-}
-
-function formatMessageTimestamps(
-  message: NonNullable<DiscordMessageSearchResponse["results"]>[number]
-) {
-  return [
-    formatUtcTimestampField("sent_at_utc", message.sent_at_utc),
-    message.edited_at_utc
-      ? formatUtcTimestampField("edited_at_utc", message.edited_at_utc)
-      : ""
-  ]
-    .filter(Boolean)
-    .join(" ");
 }

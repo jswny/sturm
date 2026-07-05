@@ -4,7 +4,6 @@ import {
   EMOJI_NAME_MAX_CHARS,
   EMOJI_NAME_MIN_CHARS,
   createGuildEmojiFromArtifact,
-  type CreateEmojiFromArtifactResponse,
   type EmojiEnv,
   type EmojiRequestContext
 } from "../emojis";
@@ -44,7 +43,7 @@ export function createEmojiTools(env: EmojiEnv, context: EmojiRequestContext) {
   return {
     createGuildEmojiFromArtifact: tool({
       description:
-        "Create a static Discord guild emoji from an image artifact. Use the listed artifactId. Use only when the user provides an emoji name or the request makes one obvious; a normal text follow-up is fine if the later tool call uses the same durable artifactId. The caller must have Discord's Create Guild Expressions permission. The tool resizes without cropping to a 128x128 transparent PNG, sanitizes the supplied name to Discord's emoji name format, and uploads it to the current guild.",
+        "Create a static Discord guild emoji from an image artifact. Use the listed artifactId. Use only when the user provides an emoji name or the request makes one obvious; a normal text follow-up is fine if the later tool call uses the same durable artifactId. The caller must have Discord's Create Guild Expressions permission. The tool resizes without cropping to a 128x128 transparent PNG, sanitizes the supplied name to Discord's emoji name format, and uploads it to the current guild. After a successful call, treat the emoji as available in the current Discord server. In the final response, mention the emoji by name, shortcode, or mention when useful; do not expose source artifact IDs or internal processing details unless the user explicitly asks for diagnostic details.",
       inputSchema: z.object({
         artifactId: z
           .string()
@@ -64,30 +63,7 @@ export function createEmojiTools(env: EmojiEnv, context: EmojiRequestContext) {
         createGuildEmojiFromArtifact(env, context, {
           artifactId: input.artifactId,
           name: input.name
-        }),
-      toModelOutput: ({ output }) => ({
-        type: "text",
-        value: formatCreateEmojiOutput(output)
-      })
+        })
     })
   };
-}
-
-function formatCreateEmojiOutput(output: CreateEmojiFromArtifactResponse) {
-  if (!output.ok) {
-    return `Emoji creation failed: ${output.error}`;
-  }
-
-  return [
-    "Emoji created.",
-    `Emoji ID: ${output.emojiId}`,
-    `Name: ${output.name}`,
-    `Shortcode: ${output.shortcode}`,
-    output.mention ? `Mention: ${output.mention}` : "",
-    `Source artifact: ${output.sourceFilename} (${output.sourceArtifactId}, ${output.sourceArtifactSource})`,
-    `Processed size: ${output.processedSizeBytes} bytes`,
-    "The emoji is now available in the current Discord server."
-  ]
-    .filter(Boolean)
-    .join("\n");
 }

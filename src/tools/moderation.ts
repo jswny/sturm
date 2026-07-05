@@ -6,12 +6,8 @@ import {
   muteGuildMember,
   unmuteGuildMember,
   type ModerationEnv,
-  type ModerationRequestContext,
-  type MuteResponse,
-  type UnmuteResponse
+  type ModerationRequestContext
 } from "../moderation";
-
-type ModerationToolResponse = MuteResponse | UnmuteResponse;
 
 const MIN_TEMPORARY_MUTE_SECONDS = 60;
 const MAX_TEMPORARY_MUTE_DAYS = 28;
@@ -68,20 +64,7 @@ export function createModerationTools(
       }),
       outputSchema: muteResponseSchema,
       execute: async ({ targetUserId, durationSeconds, reason }) =>
-        muteGuildMember(env, context, targetUserId, durationSeconds, reason),
-      toModelOutput: ({ output }) => ({
-        type: "text",
-        value: formatModerationOutput(output, {
-          failurePrefix: "Temporary mute failed",
-          successHeader: "Temporary mute applied.",
-          extraLines: [
-            `duration_seconds: ${output.durationSeconds}`,
-            output.communicationDisabledUntil
-              ? `muted_until_utc: ${output.communicationDisabledUntil}`
-              : ""
-          ]
-        })
-      })
+        muteGuildMember(env, context, targetUserId, durationSeconds, reason)
     }),
     unmuteGuildMember: tool({
       description:
@@ -96,39 +79,7 @@ export function createModerationTools(
       }),
       outputSchema: unmuteResponseSchema,
       execute: async ({ targetUserId, reason }) =>
-        unmuteGuildMember(env, context, targetUserId, reason),
-      toModelOutput: ({ output }) => ({
-        type: "text",
-        value: formatModerationOutput(output, {
-          failurePrefix: "Unmute failed",
-          successHeader: "Unmute applied."
-        })
-      })
+        unmuteGuildMember(env, context, targetUserId, reason)
     })
   };
-}
-
-function formatModerationOutput(
-  output: ModerationToolResponse,
-  options: {
-    failurePrefix: string;
-    successHeader: string;
-    extraLines?: string[];
-  }
-) {
-  if (!output.ok) {
-    return `${options.failurePrefix}: ${output.error}`;
-  }
-
-  return [
-    options.successHeader,
-    `Target user ID: ${output.targetUserId}`,
-    output.targetDisplayName
-      ? `Target display name: ${output.targetDisplayName}`
-      : "",
-    ...(options.extraLines ?? []),
-    `Reason: ${output.reason}`
-  ]
-    .filter(Boolean)
-    .join("\n");
 }

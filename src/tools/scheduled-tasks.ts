@@ -75,7 +75,7 @@ export function createScheduledTaskTools(
   return {
     scheduleChannelTask: tool({
       description:
-        "Schedule an instruction to run later in the current Discord channel or thread. Creating a schedule is the acceptance step: call this tool only after deciding Sturm can complete the instruction as a normal immediate channel response. If Sturm would refuse the instruction now, refuse now instead of scheduling it. A scheduled task is treated as accepted when it later runs; execution should complete it unless current external state, permissions, or tool/API failures make completion impossible. The scheduled task will re-enter this same persistent channel session and post its result as a normal bot message. Use exact ISO 8601 timestamps with timezone for mode 'at'; ask a follow-up if the user's intended time or timezone is ambiguous.",
+        "Schedule an instruction to run later in the current Discord channel or thread. Creating a schedule is the acceptance step: call this tool only after deciding Sturm can complete the instruction as a normal immediate channel response. If Sturm would refuse the instruction now, refuse now instead of scheduling it. A scheduled task is treated as accepted when it later runs; execution should complete it unless current external state, permissions, or tool/API failures make completion impossible. The scheduled task will re-enter this same persistent channel session and post its result as a normal bot message. Use exact ISO 8601 timestamps with timezone for mode 'at'; ask a follow-up if the user's intended time or timezone is ambiguous. In the final response, use scheduleId as the user-facing handle when a handle is needed; taskId is internal and should be omitted unless the user explicitly asks for diagnostic details.",
       inputSchema: z.object({
         instruction: z
           .string()
@@ -119,11 +119,7 @@ export function createScheduledTaskTools(
         ({
           ok: false,
           error: "Scheduling is unavailable outside a Discord channel turn."
-        } satisfies ScheduleChannelTaskResult),
-      toModelOutput: ({ output }) => ({
-        type: "text",
-        value: formatScheduleResult(output)
-      })
+        } satisfies ScheduleChannelTaskResult)
     }),
     listScheduledChannelTasks: tool({
       description:
@@ -135,15 +131,11 @@ export function createScheduledTaskTools(
         ({
           ok: false,
           error: "Scheduling is unavailable outside a Discord channel turn."
-        } satisfies ListScheduledChannelTasksResult),
-      toModelOutput: ({ output }) => ({
-        type: "text",
-        value: formatListResult(output)
-      })
+        } satisfies ListScheduledChannelTasksResult)
     }),
     replaceScheduledChannelTask: tool({
       description:
-        "Replace an existing scheduled task in the current Discord channel or thread by schedule ID. Use this when a user asks to edit, update, reschedule, or change a scheduled task. This creates a replacement schedule, then cancels the old schedule; Cloudflare schedules are not edited in place. The caller can replace tasks they created; callers with Manage Messages can replace any channel task. Omit instruction to keep the existing instruction. Omit mode and timing fields to keep the existing time or recurrence. Provide mode whenever changing timing.",
+        "Replace an existing scheduled task in the current Discord channel or thread by schedule ID. Use this when a user asks to edit, update, reschedule, or change a scheduled task. This creates a replacement schedule, then cancels the old schedule; Cloudflare schedules are not edited in place. The caller can replace tasks they created; callers with Manage Messages can replace any channel task. Omit instruction to keep the existing instruction. Omit mode and timing fields to keep the existing time or recurrence. Provide mode whenever changing timing. In the final response, use scheduleId as the user-facing handle when a handle is needed; taskId is internal and should be omitted unless the user explicitly asks for diagnostic details.",
       inputSchema: z.object({
         scheduleId: z.string().min(1).describe("Schedule ID to replace"),
         instruction: z
@@ -190,11 +182,7 @@ export function createScheduledTaskTools(
           ok: false,
           scheduleId: input.scheduleId,
           error: "Scheduling is unavailable outside a Discord channel turn."
-        } satisfies ReplaceScheduledChannelTaskResult),
-      toModelOutput: ({ output }) => ({
-        type: "text",
-        value: formatReplaceResult(output)
-      })
+        } satisfies ReplaceScheduledChannelTaskResult)
     }),
     cancelScheduledChannelTask: tool({
       description:
@@ -209,108 +197,7 @@ export function createScheduledTaskTools(
           ok: false,
           scheduleId,
           error: "Scheduling is unavailable outside a Discord channel turn."
-        } satisfies CancelScheduledChannelTaskResult),
-      toModelOutput: ({ output }) => ({
-        type: "text",
-        value: formatCancelResult(output)
-      })
+        } satisfies CancelScheduledChannelTaskResult)
     })
   };
-}
-
-function formatScheduleResult(output: ScheduleChannelTaskResult) {
-  if (!output.ok) return `Scheduled task creation failed: ${output.error}`;
-
-  return [
-    "Scheduled channel task created.",
-    `schedule_id: ${output.scheduleId}`,
-    `task_id: ${output.taskId}`,
-    `type: ${output.type}`,
-    `next_run_at: ${output.nextRunAt}`,
-    `recurring: ${output.recurring ? "yes" : "no"}`,
-    `instruction: ${output.instruction}`
-  ].join("\n");
-}
-
-function formatListResult(output: ListScheduledChannelTasksResult) {
-  if (!output.ok) return `Scheduled task listing failed: ${output.error}`;
-
-  const schedules = output.schedules ?? [];
-  if (schedules.length === 0) {
-    return "No scheduled channel tasks found.";
-  }
-
-  return [
-    `Scheduled channel tasks: ${schedules.length}`,
-    ...schedules.map((schedule, index) =>
-      [
-        `${index + 1}. ${schedule.scheduleId}`,
-        `   task_id: ${schedule.taskId}`,
-        schedule.guildId ? `   guild_id: ${schedule.guildId}` : "",
-        schedule.channelId ? `   channel_id: ${schedule.channelId}` : "",
-        `   type: ${schedule.type}`,
-        `   next_run_at: ${schedule.nextRunAt}`,
-        `   recurring: ${schedule.recurring ? "yes" : "no"}`,
-        schedule.createdByUserId
-          ? `   created_by_user_id: ${schedule.createdByUserId}`
-          : "",
-        schedule.createdAt ? `   created_at: ${schedule.createdAt}` : "",
-        schedule.instruction ? `   instruction: ${schedule.instruction}` : ""
-      ]
-        .filter(Boolean)
-        .join("\n")
-    )
-  ].join("\n");
-}
-
-function formatCancelResult(output: CancelScheduledChannelTaskResult) {
-  if (!output.ok) {
-    return `Scheduled task cancellation failed for ${output.scheduleId}: ${output.error}`;
-  }
-
-  return output.cancelled
-    ? `Scheduled channel task cancelled: ${output.scheduleId}`
-    : `Scheduled channel task not found: ${output.scheduleId}`;
-}
-
-function formatReplaceResult(output: ReplaceScheduledChannelTaskResult) {
-  if (!output.ok) {
-    return [
-      `Scheduled task replacement failed for ${output.scheduleId}: ${output.error}`,
-      output.oldScheduleId ? `old_schedule_id: ${output.oldScheduleId}` : "",
-      output.oldTaskId ? `old_task_id: ${output.oldTaskId}` : "",
-      output.oldScheduleCancelled === undefined
-        ? ""
-        : `old_schedule_cancelled: ${output.oldScheduleCancelled ? "yes" : "no"}`,
-      output.newScheduleId ? `new_schedule_id: ${output.newScheduleId}` : "",
-      output.newTaskId ? `new_task_id: ${output.newTaskId}` : "",
-      output.replacementCancelled === undefined
-        ? ""
-        : `replacement_cancelled: ${output.replacementCancelled ? "yes" : "no"}`
-    ]
-      .filter(Boolean)
-      .join("\n");
-  }
-
-  if (!output.replaced) {
-    return `Scheduled channel task not found: ${output.scheduleId}`;
-  }
-
-  return [
-    "Scheduled channel task replaced.",
-    `old_schedule_id: ${output.oldScheduleId ?? output.scheduleId}`,
-    output.oldTaskId ? `old_task_id: ${output.oldTaskId}` : "",
-    output.oldScheduleCancelled === undefined
-      ? ""
-      : `old_schedule_cancelled: ${output.oldScheduleCancelled ? "yes" : "no"}`,
-    `new_schedule_id: ${output.newScheduleId}`,
-    `new_task_id: ${output.newTaskId}`,
-    `type: ${output.type}`,
-    `next_run_at: ${output.nextRunAt}`,
-    `recurring: ${output.recurring ? "yes" : "no"}`,
-    `instruction: ${output.instruction}`,
-    output.warning ? `warning: ${output.warning}` : ""
-  ]
-    .filter(Boolean)
-    .join("\n");
 }
