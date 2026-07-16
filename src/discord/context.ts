@@ -7,12 +7,12 @@ import {
   createDiscordPermissionContext,
   formatDiscordPermissions
 } from "./permissions";
+import { formatModelArtifactReferences } from "./artifact-references";
 import type {
   DiscordAppContext,
   DiscordChannelContext,
   DiscordChatRequest
 } from "./types";
-import type { StoredResponseArtifact } from "../artifacts";
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -102,31 +102,11 @@ function formatDiscordAppContext(request: DiscordChatRequest) {
 }
 
 function formatDiscordArtifactContext(
-  artifacts: StoredResponseArtifact[] | undefined
+  artifacts: DiscordChatRequest["artifacts"]
 ) {
-  if (!artifacts?.length) return "";
-
-  const lines = [
-    "Available artifacts:",
-    "Use artifactId for tools that operate on uploaded, generated, or exported files. The source field states where the artifact came from.",
-    ...artifacts.map((artifact) =>
-      [
-        `- artifactId: ${artifact.id}`,
-        `source: ${artifact.source}`,
-        `filename: ${artifact.filename}`,
-        `mimeType: ${artifact.mimeType}`,
-        `sha256: ${artifact.sha256}`,
-        artifact.visualSummary
-          ? `visualSummary: ${artifact.visualSummary}`
-          : "",
-        ...formatArtifactMetadata(artifact)
-      ]
-        .filter(hasValue)
-        .join("\n  ")
-    )
-  ];
-
-  return lines.join("\n");
+  return formatModelArtifactReferences(artifacts, {
+    heading: "Available artifacts:"
+  });
 }
 
 function formatUnstoredDiscordAttachmentContext(
@@ -153,36 +133,6 @@ function formatUnstoredDiscordAttachmentContext(
   ];
 
   return lines.join("\n");
-}
-
-function formatArtifactMetadata(artifact: StoredResponseArtifact) {
-  switch (artifact.source) {
-    case "discord_attachment":
-      return [
-        artifact.metadata.width && artifact.metadata.height
-          ? `dimensions: ${artifact.metadata.width}x${artifact.metadata.height}`
-          : ""
-      ];
-    case "image_generation":
-      return [
-        `prompt: ${artifact.metadata.prompt}`,
-        `model: ${artifact.metadata.model}`,
-        artifact.metadata.width && artifact.metadata.height
-          ? `dimensions: ${artifact.metadata.width}x${artifact.metadata.height}`
-          : "",
-        artifact.metadata.aspectRatio
-          ? `aspectRatio: ${artifact.metadata.aspectRatio}`
-          : "",
-        artifact.metadata.resolution
-          ? `resolution: ${artifact.metadata.resolution}`
-          : "",
-        artifact.metadata.outputFormat
-          ? `outputFormat: ${artifact.metadata.outputFormat}`
-          : ""
-      ].filter(Boolean);
-    case "workspace_export":
-      return [`workspacePath: ${artifact.metadata.workspacePath}`];
-  }
 }
 
 function formatChannelType(type: number | undefined) {

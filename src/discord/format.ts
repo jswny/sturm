@@ -1,6 +1,7 @@
 import type { ModelMessage } from "ai";
+import { formatModelArtifactReferences } from "./artifact-references";
 import type { DiscordChatRequest } from "./types";
-import type { ResponseArtifact, StoredResponseArtifact } from "../artifacts";
+import type { ResponseArtifact } from "../artifacts";
 
 /**
  * The AI SDK's downloadAssets step runs `new URL(data)` on every file
@@ -31,7 +32,9 @@ export function formatDiscordUserMessage(request: DiscordChatRequest) {
     lines.push(`display_name: ${request.user.displayName}`);
   }
 
-  const artifacts = formatArtifactReferences(request.artifacts);
+  const artifacts = formatModelArtifactReferences(request.artifacts, {
+    heading: "Artifact references:"
+  });
   const attachments = formatUnstoredDiscordAttachments(request);
 
   return `${lines.join("\n")}
@@ -43,7 +46,10 @@ export function formatAssistantMessageText(
   text: string,
   artifacts: ResponseArtifact[]
 ) {
-  const artifactMessage = formatArtifactMessage(artifacts);
+  const artifactMessage = formatModelArtifactReferences(artifacts, {
+    heading: "Internal artifact references for future tool use:",
+    includeUsageGuidance: false
+  });
   const trimmed = text.trim();
 
   if (trimmed && artifactMessage) return `${trimmed}\n\n${artifactMessage}`;
@@ -63,92 +69,6 @@ export function formatDiscordResponseText(
   }
   if (artifacts.length > 1) return `Attached ${artifacts.length} files.`;
   return "I did not get a text response.";
-}
-
-function formatArtifactMessage(artifacts: ResponseArtifact[]) {
-  if (artifacts.length === 0) return "";
-
-  return artifacts
-    .map((artifact) => {
-      const lines = [
-        `${formatArtifactKind(artifact)} artifact:`,
-        `artifactId: ${artifact.id}`,
-        `source: ${artifact.source}`,
-        `filename: ${artifact.filename}`,
-        `mimeType: ${artifact.mimeType}`,
-        artifact.visualSummary ? `visualSummary: ${artifact.visualSummary}` : ""
-      ];
-
-      lines.push(...formatArtifactMetadata(artifact));
-      lines.push(`sha256: ${artifact.sha256}`);
-      lines.push("status: sent as attachment");
-      return lines.join("\n");
-    })
-    .join("\n\n");
-}
-
-function formatArtifactKind(artifact: StoredResponseArtifact) {
-  if (artifact.source === "discord_attachment") return "Discord input";
-  if (artifact.source === "image_generation") return "Generated image";
-  if (artifact.source === "workspace_export") return "Exported workspace file";
-  return "Response";
-}
-
-function formatArtifactMetadata(artifact: StoredResponseArtifact) {
-  switch (artifact.source) {
-    case "discord_attachment":
-      return [
-        `sourceTurnCorrelationId: ${artifact.metadata.correlationId}`,
-        artifact.metadata.width && artifact.metadata.height
-          ? `dimensions: ${artifact.metadata.width}x${artifact.metadata.height}`
-          : ""
-      ].filter(Boolean);
-    case "image_generation":
-      return [
-        `prompt: ${artifact.metadata.prompt}`,
-        `model: ${artifact.metadata.model}`,
-        artifact.metadata.width && artifact.metadata.height
-          ? `dimensions: ${artifact.metadata.width}x${artifact.metadata.height}`
-          : "",
-        artifact.metadata.aspectRatio
-          ? `aspectRatio: ${artifact.metadata.aspectRatio}`
-          : "",
-        artifact.metadata.resolution
-          ? `resolution: ${artifact.metadata.resolution}`
-          : "",
-        artifact.metadata.outputFormat
-          ? `outputFormat: ${artifact.metadata.outputFormat}`
-          : ""
-      ].filter(Boolean);
-    case "workspace_export":
-      return [`workspacePath: ${artifact.metadata.workspacePath}`];
-  }
-}
-
-function formatArtifactReferences(
-  artifacts: StoredResponseArtifact[] | undefined
-) {
-  if (!artifacts?.length) return "";
-
-  return [
-    "Artifact references:",
-    "Use artifactId for tools that operate on uploaded, generated, or exported files. The source field states where the artifact came from.",
-    ...artifacts.map((artifact) =>
-      [
-        `- artifactId: ${artifact.id}`,
-        `source: ${artifact.source}`,
-        `filename: ${artifact.filename}`,
-        `mimeType: ${artifact.mimeType}`,
-        `sha256: ${artifact.sha256}`,
-        artifact.visualSummary
-          ? `visualSummary: ${artifact.visualSummary}`
-          : "",
-        ...formatArtifactMetadata(artifact)
-      ]
-        .filter(Boolean)
-        .join("\n  ")
-    )
-  ].join("\n");
 }
 
 function formatUnstoredDiscordAttachments(request: DiscordChatRequest) {
