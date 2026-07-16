@@ -7,6 +7,14 @@ export const COMPACTION_CHAT_MODEL = "dynamic/sturm-compaction";
 export const MEMORY_REFLECTION_CHAT_MODEL = "dynamic/sturm-memory-reflection";
 export const IMAGE_GENERATION_MODEL = "google/nano-banana-2";
 export const IMAGE_GENERATION_TIMEOUT_MS = 180_000;
+export const CODEMODE_CALLABLE_TOOL_TIMEOUT_BUFFER_MS = 15_000;
+const CODEMODE_CALLABLE_TOOL_TIMEOUTS_MS = [
+  IMAGE_GENERATION_TIMEOUT_MS
+] as const;
+export const CODEMODE_TIMEOUT_MS = timeoutWithBuffer(
+  CODEMODE_CALLABLE_TOOL_TIMEOUTS_MS,
+  CODEMODE_CALLABLE_TOOL_TIMEOUT_BUFFER_MS
+);
 export const DEFAULT_IMAGE_ASPECT_RATIO = "1:1";
 export const IMAGE_GENERATION_OUTPUT_FORMAT = "jpg";
 export const DEFAULT_IMAGE_RESOLUTION = "1K";
@@ -121,4 +129,8 @@ function removeUndefined(
   return Object.fromEntries(
     Object.entries(value).filter(([, entry]) => entry !== undefined)
   ) as ChatAiGatewayMetadata;
+}
+
+function timeoutWithBuffer(timeoutsMs: readonly number[], bufferMs: number) {
+  return Math.max(0, ...timeoutsMs) + bufferMs;
 }

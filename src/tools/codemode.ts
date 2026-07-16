@@ -8,13 +8,12 @@ import {
 } from "@cloudflare/shell";
 import type { BrowserBinding } from "agents/browser";
 import type { ToolSet } from "ai";
+import { CODEMODE_TIMEOUT_MS } from "../model";
 
 export type CodeModeEnv = {
   BROWSER: BrowserBinding;
   LOADER: WorkerLoader;
 };
-
-const CODEMODE_TIMEOUT_MS = 30_000;
 
 export type DiscordCodeModeRuntime = {
   tool: ExecuteRuntime["tool"];
