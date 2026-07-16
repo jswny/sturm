@@ -83,6 +83,7 @@ import {
   type GuildMemoryReflectionRecord
 } from "./memory-reflection";
 import {
+  CHAT_STREAM_STALL_TIMEOUT_MS,
   COMPACTION_CHAT_MODEL,
   COMPACTION_PROVIDER_OPTIONS,
   COMPACTION_TAIL_TOKEN_BUDGET,
@@ -95,7 +96,6 @@ import {
   MEMORY_REFLECTION_CHAT_MODEL,
   MEMORY_REFLECTION_PROVIDER_OPTIONS,
   REPLY_CHAT_MODEL,
-  REPLY_CHAT_TIMEOUT_MS,
   REPLY_PROVIDER_OPTIONS
 } from "./model";
 import { createBaseSystemPrompt } from "./prompts";
@@ -125,7 +125,6 @@ const CODEMODE_INSPECTION_MAX_EXECUTIONS = 50;
 const DISCORD_ACTIVE_TOOLS = ["codemode"];
 const CHAT_RECOVERY_MAX_ATTEMPTS = 6;
 const CHAT_RECOVERY_STABLE_TIMEOUT_MS = 10_000;
-const CHAT_STREAM_STALL_TIMEOUT_MS = REPLY_CHAT_TIMEOUT_MS;
 const CHAT_RECOVERY_TERMINAL_MESSAGE =
   "Sorry, this request was interrupted and could not be recovered. Please try again.";
 const DISCORD_BOT_USER_ID_STORAGE_KEY = "discord:bot-user-id";
