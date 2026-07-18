@@ -47,12 +47,11 @@ export type GenerateImageOptions = {
 };
 
 export type GenerateImageResponse = {
+  success: boolean;
+  attached?: boolean;
   artifactId?: string;
-  sha256?: string;
-  prompt: string;
-  model: string;
-  aspectRatio: ImageAspectRatio;
-  resolution: ImageResolution;
+  aspectRatio?: ImageAspectRatio;
+  resolution?: ImageResolution;
   error?: string;
 };
 
@@ -110,8 +109,8 @@ export async function generateImage(
     });
     return {
       response: {
-        prompt,
-        model: IMAGE_MODEL,
+        success: false,
+        attached: false,
         aspectRatio,
         resolution,
         error: "AI Gateway image generation failed."
@@ -133,8 +132,8 @@ export async function generateImage(
     });
     return {
       response: {
-        prompt,
-        model: IMAGE_MODEL,
+        success: false,
+        attached: false,
         aspectRatio,
         resolution,
         error: "AI Gateway image generation returned no image."
@@ -157,8 +156,8 @@ export async function generateImage(
     });
     return {
       response: {
-        prompt,
-        model: IMAGE_MODEL,
+        success: false,
+        attached: false,
         aspectRatio,
         resolution,
         error: "Generated image could not be downloaded."
@@ -190,10 +189,9 @@ export async function generateImage(
     return {
       artifact,
       response: {
+        success: true,
+        attached: true,
         artifactId: artifact.id,
-        sha256: artifact.sha256,
-        prompt,
-        model: IMAGE_MODEL,
         aspectRatio,
         resolution
       }
@@ -211,8 +209,8 @@ export async function generateImage(
     });
     return {
       response: {
-        prompt,
-        model: IMAGE_MODEL,
+        success: false,
+        attached: false,
         aspectRatio,
         resolution,
         error: "Generated image could not be stored."

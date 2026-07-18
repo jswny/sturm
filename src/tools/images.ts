@@ -19,12 +19,25 @@ const imageAspectRatioSchema = z.enum([
 const imageResolutionSchema = z.enum(["1K", "2K", "4K"]);
 
 const generateImageResponseSchema = z.object({
-  artifactId: z.string().optional().describe("Generated image artifact ID"),
-  sha256: z.string().optional().describe("Generated image SHA-256 hash"),
-  prompt: z.string().describe("The prompt used to generate the image"),
-  model: z.string().describe("The image generation model"),
-  aspectRatio: imageAspectRatioSchema.describe("Generated image aspect ratio"),
-  resolution: imageResolutionSchema.describe("Generated image resolution tier"),
+  success: z.boolean().describe("Whether image generation completed"),
+  attached: z
+    .boolean()
+    .optional()
+    .describe(
+      "Whether the generated image was attached to the final Discord/debug response"
+    ),
+  artifactId: z
+    .string()
+    .optional()
+    .describe(
+      "Tool-only generated image artifact handle for same-turn follow-up artifact tools. Do not include in final chat text."
+    ),
+  aspectRatio: imageAspectRatioSchema
+    .optional()
+    .describe("Generated image aspect ratio"),
+  resolution: imageResolutionSchema
+    .optional()
+    .describe("Generated image resolution tier"),
   error: z.string().optional().describe("Error message when generation failed")
 });
 
@@ -44,7 +57,7 @@ export function createImageTools(
   return {
     generateImage: tool({
       description:
-        "Generate an image from a text prompt and attach it to the response. Use when the user asks you to create, draw, render, or generate an image. Sturm automatically attaches successful generated images to the final Discord/debug response, so do not include Markdown image syntax, attachment:// URLs, file links, raw artifact IDs, hashes, or other internal references in the final chat response unless the user explicitly asks for diagnostic details. If later code needs the generated artifact details, keep or return the structured tool result instead of rerunning generation.",
+        "Generate an image from a text prompt and attach it to the response. Use when the user asks you to create, draw, render, or generate an image. Sturm automatically attaches successful generated images to the final Discord/debug response. In the final chat response, briefly say the image is attached; do not include Markdown image syntax, attachment:// URLs, file links, filenames, raw artifact IDs, hashes, provider/model metadata, prompt dumps, or other internal references unless the user explicitly asks for diagnostic details. The returned artifactId is only a tool handle for same-turn follow-up artifact tools such as sticker or emoji creation.",
       inputSchema: z.object({
         prompt: z
           .string()

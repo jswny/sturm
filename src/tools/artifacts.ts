@@ -21,20 +21,32 @@ export type WorkspaceArtifactOptions = {
 };
 
 export type ExportWorkspaceFileResponse = {
+  success: boolean;
+  attached?: boolean;
   artifactId?: string;
   path: string;
   filename?: string;
   mimeType?: string;
-  sha256?: string;
   error?: string;
 };
 
 const exportWorkspaceFileResponseSchema = z.object({
-  artifactId: z.string().optional().describe("Exported artifact ID"),
+  success: z.boolean().describe("Whether the workspace file was exported"),
+  attached: z
+    .boolean()
+    .optional()
+    .describe(
+      "Whether the exported file was attached to the final Discord/debug response"
+    ),
+  artifactId: z
+    .string()
+    .optional()
+    .describe(
+      "Tool-only exported artifact handle for same-turn follow-up artifact tools. Do not include in final chat text."
+    ),
   path: z.string().describe("Workspace path that was exported"),
   filename: z.string().optional().describe("Attachment filename"),
   mimeType: z.string().optional().describe("Attachment MIME type"),
-  sha256: z.string().optional().describe("Exported file SHA-256 hash"),
   error: z.string().optional().describe("Error message when export failed")
 });
 
@@ -45,7 +57,7 @@ export function createArtifactTools(
 ) {
   return {
     exportWorkspaceFile: tool({
-      description: `Attach a file from the persistent channel workspace to the Discord response. Use after creating or updating a workspace file when the user should receive it as a downloadable attachment. Sturm automatically attaches successful exports to the final Discord/debug response, so the final chat response should mention the attachment briefly without pasting raw file data, artifact IDs, storage keys, hashes, or workspace internals unless the user explicitly asks for diagnostic details. If later code needs the exported artifact details, keep or return the structured tool result. Files larger than ${MAX_WORKSPACE_EXPORT_MIB} MiB cannot be attached.`,
+      description: `Attach a file from the persistent channel workspace to the Discord response. Use after creating or updating a workspace file when the user should receive it as a downloadable attachment. Sturm automatically attaches successful exports to the final Discord/debug response. In the final chat response, briefly say the file is attached; do not paste raw file data, artifact IDs, storage keys, hashes, workspace internals, or other tool result fields unless the user explicitly asks for diagnostic details. The returned artifactId is only a tool handle for same-turn follow-up artifact tools. Files larger than ${MAX_WORKSPACE_EXPORT_MIB} MiB cannot be attached.`,
       inputSchema: z.object({
         path: z
           .string()
@@ -86,6 +98,8 @@ async function exportWorkspaceFile(
   const path = normalizeWorkspacePath(input.path);
   if (!workspace) {
     return {
+      success: false,
+      attached: false,
       path,
       error: "Workspace export is not available in this turn."
     };
@@ -94,6 +108,8 @@ async function exportWorkspaceFile(
   const stat = await workspace.stat(path);
   if (!stat) {
     return {
+      success: false,
+      attached: false,
       path,
       error: "Workspace file was not found."
     };
@@ -101,6 +117,8 @@ async function exportWorkspaceFile(
 
   if (stat.type !== "file") {
     return {
+      success: false,
+      attached: false,
       path,
       error: "Workspace path is not a file."
     };
@@ -108,6 +126,8 @@ async function exportWorkspaceFile(
 
   if (stat.size > MAX_WORKSPACE_EXPORT_BYTES) {
     return {
+      success: false,
+      attached: false,
       path,
       filename: stat.name,
       mimeType: stat.mimeType,
@@ -122,6 +142,8 @@ async function exportWorkspaceFile(
       sizeBytes: stat.size
     });
     return {
+      success: false,
+      attached: false,
       path,
       error: "Workspace file could not be read."
     };
@@ -152,11 +174,12 @@ async function exportWorkspaceFile(
     await options.onArtifactCreated?.(artifact);
 
     return {
+      success: true,
+      attached: true,
       artifactId: artifact.id,
       path,
       filename: artifact.filename,
-      mimeType: artifact.mimeType,
-      sha256: artifact.sha256
+      mimeType: artifact.mimeType
     };
   } catch (error) {
     logError("Workspace artifact export failed", error, {
@@ -166,6 +189,8 @@ async function exportWorkspaceFile(
       sizeBytes: bytes.byteLength
     });
     return {
+      success: false,
+      attached: false,
       path,
       filename: attachmentFilename,
       mimeType,
