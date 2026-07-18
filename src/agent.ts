@@ -120,7 +120,6 @@ import type { UserPromptController } from "./tools/user-prompts";
 
 const HOUSEKEEPING_INTERVAL_SECONDS = 24 * 60 * 60;
 const TERMINAL_SUBMISSION_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
-const CODEMODE_STALE_EXECUTION_TTL_MS = 24 * 60 * 60 * 1000;
 const CODEMODE_INSPECTION_MAX_EXECUTIONS = 50;
 const DISCORD_ACTIVE_TOOLS = ["codemode"];
 const CHAT_RECOVERY_MAX_ATTEMPTS = 6;
@@ -757,8 +756,7 @@ export class ChatAgent extends Think<Env> {
         staleComponentPrompts,
         terminalSubmissions,
         memoryReflectionRecords,
-        managedFiberRecords,
-        staleCodeModeExecutions
+        managedFiberRecords
       ] = await Promise.all([
         this.discordDeliveries.pruneCompletedDeliveryRecords(),
         this.discordDeliveries.pruneStaleDebugResults(),
@@ -779,9 +777,13 @@ export class ChatAgent extends Think<Env> {
             Date.now() - TERMINAL_SUBMISSION_RETENTION_MS
           ),
           limit: 100
-        }),
-        this.expireStaleCodeModeExecutions()
+        })
       ]);
+      // Code Mode expirePaused() only cleans approval-paused executions. Sturm
+      // does not expose approval-gated Code Mode tools today, and this optional
+      // facet startup path has produced noisy StartupOptions errors in remote
+      // test failure cleanup. Keep it disabled until approvals are introduced.
+      const staleCodeModeExecutions = 0;
 
       if (
         completedDeliveryRecords > 0 ||
@@ -808,16 +810,6 @@ export class ChatAgent extends Think<Env> {
         agentName: this.name
       });
     }
-  }
-
-  private async expireStaleCodeModeExecutions() {
-    const runtime =
-      this.codeModeRuntime ??
-      (await this.createDiscordCodeModeRuntime(undefined, undefined)).runtime;
-    const expired = await runtime.expirePaused({
-      maxAgeMs: CODEMODE_STALE_EXECUTION_TTL_MS
-    });
-    return expired.length;
   }
 
   private async createDiscordThinkTools(
