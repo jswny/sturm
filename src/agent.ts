@@ -8,12 +8,9 @@ import {
   type PrepareStepContext,
   type StepContext,
   type ThinkSubmissionInspection,
-  type ToolCallContext,
-  type ToolCallResultContext,
   type TurnConfig,
   type TurnContext
 } from "@cloudflare/think";
-import type { ExecutionState } from "@cloudflare/codemode";
 import { Workspace } from "@cloudflare/shell";
 import {
   isPlatformTransientError,
@@ -25,11 +22,6 @@ import { createCompactFunction } from "agents/experimental/memory/utils";
 import { generateText, type ToolSet } from "ai";
 import type { StoredResponseArtifact } from "./artifacts";
 import { createChannelScheduledTaskController } from "./channel-scheduler";
-import {
-  createCodeModeInspection,
-  normalizeCodeModeInspectionRequest,
-  type CodeModeInspectionRequest
-} from "./codemode-inspection";
 import { createRecentDiscordChannelContext } from "./discord/channel-context";
 import { freezeDiscordRequestAttachments } from "./discord/attachment-artifacts";
 import {
@@ -45,7 +37,6 @@ import {
   DiscordDeliveryStore,
   getDeliveryCorrelationId,
   isTerminalDelivery,
-  type DiscordCodeModeExecutionReferenceInput,
   type DiscordDeliveryChatInput,
   type DiscordDeliveryRecord,
   type DiscordDeliveryResetInput
@@ -114,14 +105,11 @@ import {
   GUILD_MEMORY_CONTEXT_LABEL,
   GUILD_MEMORY_CONTEXT_MAX_TOKENS
 } from "./session-context";
-import { createDiscordCodeModeRuntime, createDiscordTools } from "./tools";
-import type { DiscordCodeModeRuntime } from "./tools/codemode";
+import { createBrowserAutomationTools, createDiscordTools } from "./tools";
 import type { UserPromptController } from "./tools/user-prompts";
 
 const HOUSEKEEPING_INTERVAL_SECONDS = 24 * 60 * 60;
 const TERMINAL_SUBMISSION_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
-const CODEMODE_INSPECTION_MAX_EXECUTIONS = 50;
-const DISCORD_ACTIVE_TOOLS = ["codemode"];
 const CHAT_RECOVERY_MAX_ATTEMPTS = 6;
 const CHAT_RECOVERY_STABLE_TIMEOUT_MS = 10_000;
 const CHAT_RECOVERY_TERMINAL_MESSAGE =
@@ -153,7 +141,7 @@ export class ChatAgent extends Think<Env> {
   override chatStreamStallTimeoutMs = CHAT_STREAM_STALL_TIMEOUT_MS;
   override workspace = new Workspace({
     sql: this.ctx.storage.sql,
-    namespace: "codemode",
+    namespace: "discord_workspace",
     name: () => this.name
   });
 
@@ -166,7 +154,6 @@ export class ChatAgent extends Think<Env> {
     Promise<DiscordChatRequest | undefined>
   >();
   private guildMemoryProvider?: GuildMemoryProvider;
-  private codeModeRuntime?: DiscordCodeModeRuntime["runtime"];
   private botUserId?: string;
   private botUserIdPromise?: Promise<string | undefined>;
 
@@ -258,6 +245,7 @@ export class ChatAgent extends Think<Env> {
       ? await this.createDiscordTurnRuntimeContext(turn)
       : undefined;
     if (turn) this.startArtifactSummaries(turn);
+    const tools = await this.createDiscordThinkTools(turn, progress);
 
     return {
       system: createDiscordThinkSystemPrompt(sessionContext, runtimeContext),
@@ -268,8 +256,8 @@ export class ChatAgent extends Think<Env> {
             })
           : ctx.messages
       ),
-      tools: await this.createDiscordThinkTools(turn, progress),
-      activeTools: DISCORD_ACTIVE_TOOLS,
+      tools,
+      activeTools: Object.keys(tools),
       maxSteps: this.maxSteps,
       sendReasoning: false,
       providerOptions: REPLY_PROVIDER_OPTIONS as Record<string, unknown>
@@ -284,36 +272,6 @@ export class ChatAgent extends Think<Env> {
         ctx.stepNumber === 0
           ? "Thinking through the request"
           : "Reviewing tool results"
-    });
-  }
-
-  override async beforeToolCall(ctx: ToolCallContext) {
-    if (ctx.toolName !== "codemode") return;
-    await this.getActiveProgressReporter()?.report({
-      type: "tool",
-      label: "code mode",
-      status: "started"
-    });
-  }
-
-  override async afterToolCall(ctx: ToolCallResultContext) {
-    if (ctx.toolName !== "codemode") return;
-    if (ctx.success) {
-      await this.recordCodeModeExecution(ctx);
-    }
-    if (!ctx.success) {
-      logWarn("Code mode tool call failed", {
-        agentName: this.name,
-        toolName: ctx.toolName,
-        stepNumber: ctx.stepNumber,
-        durationMs: ctx.durationMs,
-        error: getErrorMessage(ctx.error)
-      });
-    }
-    await this.getActiveProgressReporter()?.report({
-      type: "tool",
-      label: "code mode",
-      status: ctx.success ? "finished" : "failed"
     });
   }
 
@@ -633,60 +591,6 @@ export class ChatAgent extends Think<Env> {
     };
   }
 
-  async inspectCodeModeRuntime(request: CodeModeInspectionRequest = {}) {
-    const normalized = normalizeCodeModeInspectionRequest(request);
-    const runtime =
-      this.codeModeRuntime ??
-      (await this.createDiscordCodeModeRuntime(undefined, undefined)).runtime;
-    const delivery = normalized.correlationId
-      ? await this.discordDeliveries.getDelivery(normalized.correlationId)
-      : undefined;
-    const codeModeExecutions =
-      delivery?.type === "chat" ? (delivery.codeModeExecutions ?? []) : [];
-    const correlatedExecutionIds = codeModeExecutions.map(
-      (execution) => execution.executionId
-    );
-    const requestedExecutionIds = normalized.executionId
-      ? [normalized.executionId]
-      : normalized.correlationId
-        ? correlatedExecutionIds
-        : undefined;
-    const executionLimit =
-      requestedExecutionIds !== undefined
-        ? CODEMODE_INSPECTION_MAX_EXECUTIONS
-        : normalized.limit;
-    const executions = await runtime.executions(executionLimit);
-    const pendingActions =
-      requestedExecutionIds !== undefined
-        ? requestedExecutionIds.length > 0
-          ? (
-              await Promise.all(
-                requestedExecutionIds.map((executionId) =>
-                  runtime.pending(executionId)
-                )
-              )
-            ).flat()
-          : []
-        : await runtime.pending(normalized.executionId);
-
-    return createCodeModeInspection({
-      executions: executions as ExecutionState[],
-      pendingActions,
-      request: normalized,
-      inspectedAt: new Date().toISOString(),
-      requestedExecutionIds,
-      correlation: normalized.correlationId
-        ? {
-            correlationId: normalized.correlationId,
-            discordInteractionId: delivery?.discordInteractionId,
-            deliveryFound: Boolean(delivery),
-            deliveryType: delivery?.type,
-            codeModeExecutions
-          }
-        : undefined
-    });
-  }
-
   async runScheduledChannelTask(
     payload: ScheduledChannelTaskPayload,
     schedule?: ScheduledChannelTaskExecution
@@ -779,20 +683,13 @@ export class ChatAgent extends Think<Env> {
           limit: 100
         })
       ]);
-      // Code Mode expirePaused() only cleans approval-paused executions. Sturm
-      // does not expose approval-gated Code Mode tools today, and this optional
-      // facet startup path has produced noisy StartupOptions errors in remote
-      // test failure cleanup. Keep it disabled until approvals are introduced.
-      const staleCodeModeExecutions = 0;
-
       if (
         completedDeliveryRecords > 0 ||
         staleDebugResults > 0 ||
         staleComponentPrompts > 0 ||
         terminalSubmissions > 0 ||
         memoryReflectionRecords > 0 ||
-        managedFiberRecords > 0 ||
-        staleCodeModeExecutions > 0
+        managedFiberRecords > 0
       ) {
         logInfo("Discord housekeeping pruned stale records", {
           agentName: this.name,
@@ -801,8 +698,7 @@ export class ChatAgent extends Think<Env> {
           staleComponentPrompts,
           terminalSubmissions,
           memoryReflectionRecords,
-          managedFiberRecords,
-          staleCodeModeExecutions
+          managedFiberRecords
         });
       }
     } catch (error) {
@@ -816,48 +712,29 @@ export class ChatAgent extends Think<Env> {
     turn: DiscordChatRequest | undefined,
     progress: DiscordProgressReporter | undefined
   ): Promise<ToolSet> {
-    const codeMode = await this.createDiscordCodeModeRuntime(turn, progress);
-    return {
-      codemode: codeMode.tool
-    };
-  }
-
-  private async createDiscordCodeModeRuntime(
-    turn: DiscordChatRequest | undefined,
-    progress: DiscordProgressReporter | undefined
-  ): Promise<DiscordCodeModeRuntime> {
     const toolTurn = turn
       ? this.createDiscordToolRequestContext(turn)
       : undefined;
-    const directTools = withProgressTools(
-      {
-        ...createDiscordTools(this.env, {
-          discordRequest: toolTurn,
-          workspace: this.workspace,
-          scheduledTasks: turn
-            ? this.createScheduledTaskController(turn)
-            : undefined,
-          userPrompts: turn ? this.createUserPromptController(turn) : undefined,
-          onArtifactCreated: async (artifact) => {
-            if (!turn?.correlationId) return;
-            await this.discordDeliveries.addArtifact(
-              turn.correlationId,
-              artifact
-            );
-          }
-        })
-      },
-      progress
-    );
+    const tools = {
+      ...createDiscordTools(this.env, {
+        discordRequest: toolTurn,
+        workspace: this.workspace,
+        scheduledTasks: turn
+          ? this.createScheduledTaskController(turn)
+          : undefined,
+        userPrompts: turn ? this.createUserPromptController(turn) : undefined,
+        onArtifactCreated: async (artifact) => {
+          if (!turn?.correlationId) return;
+          await this.discordDeliveries.addArtifact(
+            turn.correlationId,
+            artifact
+          );
+        }
+      }),
+      ...createBrowserAutomationTools(this.env, this.ctx)
+    };
 
-    const codeMode = createDiscordCodeModeRuntime(
-      this.env,
-      directTools,
-      this.workspace,
-      this.ctx
-    );
-    this.codeModeRuntime = codeMode.runtime;
-    return codeMode;
+    return withProgressTools(tools, progress);
   }
 
   private createDiscordToolRequestContext(
@@ -1241,29 +1118,6 @@ export class ChatAgent extends Think<Env> {
     return turn ? this.progressReporters.get(turn.correlationId) : undefined;
   }
 
-  private async recordCodeModeExecution(ctx: ToolCallResultContext) {
-    const reference = createCodeModeExecutionReference(ctx);
-    if (!reference) return;
-
-    const turn = this.getLatestDiscordTurn();
-    if (!turn) return;
-
-    try {
-      await this.discordDeliveries.addCodeModeExecution(
-        turn.correlationId,
-        reference
-      );
-    } catch (error) {
-      logWarn("Code mode execution correlation failed", {
-        agentName: this.name,
-        correlationId: turn.correlationId,
-        discordInteractionId: turn.discordInteractionId,
-        executionId: reference.executionId,
-        error: getErrorMessage(error)
-      });
-    }
-  }
-
   private async reportDiscordRecoveryProgress(
     correlationId: string,
     event: Parameters<DiscordProgressReporter["report"]>[0]
@@ -1347,9 +1201,7 @@ function createDebugDeliveryStatus(record: DiscordDeliveryRecord) {
             source: artifact.source,
             description: artifact.description
           }))
-        : undefined,
-    codeModeExecutions:
-      record.type === "chat" ? record.codeModeExecutions : undefined
+        : undefined
   };
 }
 
@@ -1368,37 +1220,6 @@ function createChatAiGatewayCorrelation(
     guildId: turn?.guildId,
     channelId: turn?.channelId
   };
-}
-
-function createCodeModeExecutionReference(
-  ctx: ToolCallResultContext
-): DiscordCodeModeExecutionReferenceInput | undefined {
-  if (!ctx.success) return undefined;
-  const output = ctx.output;
-  if (!isObjectRecord(output)) return undefined;
-
-  const executionId = output.executionId;
-  if (typeof executionId !== "string" || !executionId.trim()) return undefined;
-
-  return {
-    executionId,
-    status: getCodeModeExecutionStatus(output.status),
-    toolCallId: typeof ctx.toolCallId === "string" ? ctx.toolCallId : undefined,
-    stepNumber: ctx.stepNumber,
-    durationMs: ctx.durationMs
-  };
-}
-
-function getCodeModeExecutionStatus(
-  status: unknown
-): DiscordCodeModeExecutionReferenceInput["status"] {
-  return status === "completed" || status === "paused" || status === "error"
-    ? status
-    : undefined;
-}
-
-function isObjectRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object";
 }
 
 function createScheduledChannelTaskCorrelationId(

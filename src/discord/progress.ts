@@ -146,7 +146,7 @@ function renderProgressEvent(event: DiscordProgressEvent) {
 }
 
 function getToolProgressLabel(toolName: string) {
-  if (toolName === "codemode") return "code mode";
+  if (toolName === "browser_execute") return "browser";
 
   return toolName
     .replace(/([a-z0-9])([A-Z])/g, "$1 $2")

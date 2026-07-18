@@ -69,6 +69,11 @@ const replaceResultSchema = z.object({
   error: z.string().optional()
 });
 
+type ScheduleTaskToolResult = z.infer<typeof scheduleResultSchema>;
+type ListScheduledTasksToolResult = z.infer<typeof listResultSchema>;
+type CancelScheduledTaskToolResult = z.infer<typeof cancelResultSchema>;
+type ReplaceScheduledTaskToolResult = z.infer<typeof replaceResultSchema>;
+
 export function createScheduledTaskTools(
   controller: ScheduledTaskController | undefined
 ) {
@@ -119,7 +124,11 @@ export function createScheduledTaskTools(
         ({
           ok: false,
           error: "Scheduling is unavailable outside a Discord channel turn."
-        } satisfies ScheduleChannelTaskResult)
+        } satisfies ScheduleChannelTaskResult),
+      toModelOutput: ({ output }) => ({
+        type: "text",
+        value: formatScheduleTaskOutput(output)
+      })
     }),
     listScheduledChannelTasks: tool({
       description:
@@ -131,7 +140,11 @@ export function createScheduledTaskTools(
         ({
           ok: false,
           error: "Scheduling is unavailable outside a Discord channel turn."
-        } satisfies ListScheduledChannelTasksResult)
+        } satisfies ListScheduledChannelTasksResult),
+      toModelOutput: ({ output }) => ({
+        type: "text",
+        value: formatListScheduledTasksOutput(output)
+      })
     }),
     replaceScheduledChannelTask: tool({
       description:
@@ -182,7 +195,11 @@ export function createScheduledTaskTools(
           ok: false,
           scheduleId: input.scheduleId,
           error: "Scheduling is unavailable outside a Discord channel turn."
-        } satisfies ReplaceScheduledChannelTaskResult)
+        } satisfies ReplaceScheduledChannelTaskResult),
+      toModelOutput: ({ output }) => ({
+        type: "text",
+        value: formatReplaceScheduledTaskOutput(output)
+      })
     }),
     cancelScheduledChannelTask: tool({
       description:
@@ -197,7 +214,123 @@ export function createScheduledTaskTools(
           ok: false,
           scheduleId,
           error: "Scheduling is unavailable outside a Discord channel turn."
-        } satisfies CancelScheduledChannelTaskResult)
+        } satisfies CancelScheduledChannelTaskResult),
+      toModelOutput: ({ output }) => ({
+        type: "text",
+        value: formatCancelScheduledTaskOutput(output)
+      })
     })
   };
+}
+
+function formatScheduleTaskOutput(output: ScheduleTaskToolResult) {
+  if (!output.ok) {
+    return `Scheduled task creation failed: ${output.error ?? "Unknown error."}`;
+  }
+
+  const lines = ["Scheduled task created."];
+  if (output.scheduleId) lines.push(`scheduleId: ${output.scheduleId}`);
+  if (output.type) lines.push(`type: ${output.type}`);
+  if (output.nextRunAt) lines.push(`nextRunAt: ${output.nextRunAt}`);
+  if (output.recurring !== undefined) {
+    lines.push(`recurring: ${output.recurring ? "yes" : "no"}`);
+  }
+  if (output.instruction) lines.push(`instruction: ${output.instruction}`);
+  lines.push(
+    "Final response guidance: confirm the schedule and use scheduleId as the user-facing handle when a handle is needed. Do not expose taskId unless the user explicitly asks for diagnostics."
+  );
+  return lines.join("\n");
+}
+
+function formatListScheduledTasksOutput(output: ListScheduledTasksToolResult) {
+  if (!output.ok) {
+    return `Scheduled task list failed: ${output.error ?? "Unknown error."}`;
+  }
+
+  const schedules = output.schedules ?? [];
+  if (schedules.length === 0) {
+    return "No scheduled tasks are active for this channel.";
+  }
+
+  return [
+    `Scheduled tasks: ${schedules.length}`,
+    ...schedules.map((schedule) =>
+      [
+        `- scheduleId: ${schedule.scheduleId}`,
+        `type: ${schedule.type}`,
+        `nextRunAt: ${schedule.nextRunAt}`,
+        `recurring: ${schedule.recurring ? "yes" : "no"}`,
+        schedule.instruction
+          ? `instruction: ${schedule.instruction}`
+          : undefined
+      ]
+        .filter(Boolean)
+        .join("; ")
+    ),
+    "Final response guidance: summarize the active schedules. Use scheduleId as the user-facing handle; omit taskId and channel/guild internals unless requested."
+  ].join("\n");
+}
+
+function formatReplaceScheduledTaskOutput(
+  output: ReplaceScheduledTaskToolResult
+) {
+  if (!output.ok) {
+    return [
+      "Scheduled task replacement failed.",
+      `scheduleId: ${output.scheduleId}`,
+      `error: ${output.error ?? "Unknown error."}`
+    ].join("\n");
+  }
+
+  if (output.replaced === false) {
+    return [
+      "Scheduled task was not replaced because no matching active schedule was found.",
+      `scheduleId: ${output.scheduleId}`,
+      "Final response guidance: tell the user no active scheduled task matched that scheduleId."
+    ].join("\n");
+  }
+
+  const lines = ["Scheduled task replaced."];
+  if (output.oldScheduleId)
+    lines.push(`oldScheduleId: ${output.oldScheduleId}`);
+  if (output.newScheduleId) lines.push(`scheduleId: ${output.newScheduleId}`);
+  if (!output.newScheduleId) lines.push(`scheduleId: ${output.scheduleId}`);
+  if (output.type) lines.push(`type: ${output.type}`);
+  if (output.nextRunAt) lines.push(`nextRunAt: ${output.nextRunAt}`);
+  if (output.recurring !== undefined) {
+    lines.push(`recurring: ${output.recurring ? "yes" : "no"}`);
+  }
+  if (output.instruction) lines.push(`instruction: ${output.instruction}`);
+  if (output.warning) lines.push(`warning: ${output.warning}`);
+  lines.push(
+    "Final response guidance: confirm the replacement and use the new scheduleId as the user-facing handle. Do not expose task IDs unless the user explicitly asks for diagnostics."
+  );
+  return lines.join("\n");
+}
+
+function formatCancelScheduledTaskOutput(
+  output: CancelScheduledTaskToolResult
+) {
+  if (!output.ok) {
+    return [
+      "Scheduled task cancellation failed.",
+      `scheduleId: ${output.scheduleId}`,
+      `error: ${output.error ?? "Unknown error."}`
+    ].join("\n");
+  }
+
+  if (output.cancelled === false) {
+    return [
+      "Scheduled task was not cancelled because no matching active schedule was found.",
+      `scheduleId: ${output.scheduleId}`,
+      "Final response guidance: tell the user no active scheduled task matched that scheduleId."
+    ].join("\n");
+  }
+
+  return [
+    "Scheduled task cancelled.",
+    `scheduleId: ${output.scheduleId}`,
+    `cancelled: ${output.cancelled ? "yes" : "no"}`,
+    "Final response guidance: briefly confirm cancellation. Do not expose task IDs unless the user explicitly asks for diagnostics."
+  ].join("\n");
 }

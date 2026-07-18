@@ -41,6 +41,9 @@ const unmuteResponseSchema = z.object({
   action: z.literal("unmuted")
 });
 
+type MuteToolResponse = z.infer<typeof muteResponseSchema>;
+type UnmuteToolResponse = z.infer<typeof unmuteResponseSchema>;
+
 export function createModerationTools(
   env: ModerationEnv,
   context: ModerationRequestContext
@@ -64,7 +67,11 @@ export function createModerationTools(
       }),
       outputSchema: muteResponseSchema,
       execute: async ({ targetUserId, durationSeconds, reason }) =>
-        muteGuildMember(env, context, targetUserId, durationSeconds, reason)
+        muteGuildMember(env, context, targetUserId, durationSeconds, reason),
+      toModelOutput: ({ output }) => ({
+        type: "text",
+        value: formatMuteOutput(output)
+      })
     }),
     unmuteGuildMember: tool({
       description:
@@ -79,7 +86,53 @@ export function createModerationTools(
       }),
       outputSchema: unmuteResponseSchema,
       execute: async ({ targetUserId, reason }) =>
-        unmuteGuildMember(env, context, targetUserId, reason)
+        unmuteGuildMember(env, context, targetUserId, reason),
+      toModelOutput: ({ output }) => ({
+        type: "text",
+        value: formatUnmuteOutput(output)
+      })
     })
   };
+}
+
+function formatMuteOutput(output: MuteToolResponse) {
+  if (!output.ok) {
+    return `Temporary mute failed: ${output.error ?? "Unknown error."}`;
+  }
+
+  const lines = ["Temporary mute applied."];
+  if (output.targetDisplayName) {
+    lines.push(`targetDisplayName: ${output.targetDisplayName}`);
+  }
+  if (output.targetUserId) lines.push(`targetUserId: ${output.targetUserId}`);
+  if (output.durationSeconds) {
+    lines.push(`durationSeconds: ${output.durationSeconds}`);
+  }
+  if (output.communicationDisabledUntil) {
+    lines.push(
+      `communicationDisabledUntil: ${output.communicationDisabledUntil}`
+    );
+  }
+  if (output.reason) lines.push(`reason: ${output.reason}`);
+  lines.push(
+    "Final response guidance: briefly confirm the moderation result. Do not expose caller/guild internals unless the user explicitly asks for diagnostics."
+  );
+  return lines.join("\n");
+}
+
+function formatUnmuteOutput(output: UnmuteToolResponse) {
+  if (!output.ok) {
+    return `Unmute failed: ${output.error ?? "Unknown error."}`;
+  }
+
+  const lines = ["Temporary mute removed."];
+  if (output.targetDisplayName) {
+    lines.push(`targetDisplayName: ${output.targetDisplayName}`);
+  }
+  if (output.targetUserId) lines.push(`targetUserId: ${output.targetUserId}`);
+  if (output.reason) lines.push(`reason: ${output.reason}`);
+  lines.push(
+    "Final response guidance: briefly confirm the moderation result. Do not expose caller/guild internals unless the user explicitly asks for diagnostics."
+  );
+  return lines.join("\n");
 }

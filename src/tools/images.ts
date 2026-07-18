@@ -41,6 +41,8 @@ const generateImageResponseSchema = z.object({
   error: z.string().optional().describe("Error message when generation failed")
 });
 
+type GenerateImageToolResponse = z.infer<typeof generateImageResponseSchema>;
+
 type ImageRequestContext = {
   correlationId?: string;
   guildId?: string;
@@ -89,9 +91,35 @@ export function createImageTools(
         );
         if (artifact) await options.onArtifactCreated?.(artifact);
         return response;
-      }
+      },
+      toModelOutput: ({ output }) => ({
+        type: "text",
+        value: formatGenerateImageOutput(output)
+      })
     })
   };
+}
+
+function formatGenerateImageOutput(output: GenerateImageToolResponse) {
+  if (!output.success) {
+    return `Image generation failed: ${output.error ?? "Unknown error."}`;
+  }
+
+  const lines = [
+    "Image generation succeeded.",
+    `attached: ${output.attached ? "yes" : "no"}`
+  ];
+  if (output.artifactId) {
+    lines.push(
+      `artifactId: ${output.artifactId} (same-turn tool handle only; do not include in final response text)`
+    );
+  }
+  if (output.aspectRatio) lines.push(`aspectRatio: ${output.aspectRatio}`);
+  if (output.resolution) lines.push(`resolution: ${output.resolution}`);
+  lines.push(
+    "Final response guidance: briefly say the image is attached. Do not write Markdown image syntax, attachment URLs, filenames, artifact IDs, hashes, provider metadata, or prompt dumps unless the user explicitly asks for diagnostics."
+  );
+  return lines.join("\n");
 }
 
 function getImageGenerationCorrelation(request: ImageRequestContext = {}) {

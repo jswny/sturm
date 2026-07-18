@@ -164,7 +164,11 @@ export function createUserPromptTools(
         });
 
         return createPromptResponse(prompt);
-      }
+      },
+      toModelOutput: ({ output }) => ({
+        type: "text",
+        value: formatUserPromptOutput(output)
+      })
     }),
     askUserToSelect: tool<SelectPromptInput, UserPromptToolResponse>({
       description:
@@ -191,7 +195,11 @@ export function createUserPromptTools(
         });
 
         return createPromptResponse(prompt);
-      }
+      },
+      toModelOutput: ({ output }) => ({
+        type: "text",
+        value: formatUserPromptOutput(output)
+      })
     })
   };
 }
@@ -203,4 +211,21 @@ function createPromptResponse(prompt: StoredComponentPrompt) {
     promptId: prompt.id,
     optionCount: prompt.options.length
   } satisfies UserPromptToolResponse;
+}
+
+function formatUserPromptOutput(output: UserPromptToolResponse) {
+  if (!output.ok) {
+    return `User prompt creation failed: ${output.error ?? "Unknown error."}`;
+  }
+
+  const label =
+    output.kind === "select" ? "Selection prompt" : "Confirmation prompt";
+  const lines = [`${label} created.`];
+  if (output.optionCount !== undefined) {
+    lines.push(`optionCount: ${output.optionCount}`);
+  }
+  lines.push(
+    "Final response guidance: tell the user to use the Discord prompt and wait for their response. Do not expose promptId or perform the pending action until a later continuation turn."
+  );
+  return lines.join("\n");
 }

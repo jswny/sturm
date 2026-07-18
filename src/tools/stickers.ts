@@ -44,6 +44,8 @@ const createStickerResponseSchema = z.object({
   error: z.string().optional().describe("Error message when creation failed")
 });
 
+type CreateStickerToolResponse = z.infer<typeof createStickerResponseSchema>;
+
 const createStickerInputSchema = z.object({
   artifactId: z.string().min(1).describe("artifactId for an image artifact."),
   name: z
@@ -87,7 +89,26 @@ export function createStickerTools(
           name: input.name,
           description: input.description,
           tags: input.tags
-        })
+        }),
+      toModelOutput: ({ output }) => ({
+        type: "text",
+        value: formatCreateStickerOutput(output)
+      })
     })
   };
+}
+
+function formatCreateStickerOutput(output: CreateStickerToolResponse) {
+  if (!output.ok) {
+    return `Sticker creation failed: ${output.error ?? "Unknown error."}`;
+  }
+
+  const lines = ["Discord sticker created."];
+  if (output.name) lines.push(`name: ${output.name}`);
+  if (output.description) lines.push(`description: ${output.description}`);
+  if (output.tags?.length) lines.push(`tags: ${output.tags.join(", ")}`);
+  lines.push(
+    "Final response guidance: mention the sticker by name when useful. Do not expose source artifact IDs, internal IDs, processed sizes, or diagnostics unless the user explicitly asks."
+  );
+  return lines.join("\n");
 }

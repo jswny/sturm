@@ -45,6 +45,11 @@ const guildMemberSearchResponseSchema = z.object({
   error: z.string().optional()
 });
 
+type NicknameToolResponse = z.infer<typeof nicknameResponseSchema>;
+type GuildMemberSearchToolResponse = z.infer<
+  typeof guildMemberSearchResponseSchema
+>;
+
 export function createNicknameTools(
   env: NicknameEnv,
   context: NicknameRequestContext
@@ -70,7 +75,11 @@ export function createNicknameTools(
       }),
       outputSchema: guildMemberSearchResponseSchema,
       execute: async ({ query, limit }) =>
-        searchGuildMembers(env, context, query, limit)
+        searchGuildMembers(env, context, query, limit),
+      toModelOutput: ({ output }) => ({
+        type: "text",
+        value: formatGuildMemberSearchOutput(output)
+      })
     }),
     setNicknamePostfix: tool({
       description:
@@ -86,7 +95,11 @@ export function createNicknameTools(
       }),
       outputSchema: nicknameResponseSchema,
       execute: async ({ targetUserId, postfix }) =>
-        setNicknamePostfix(env, context, targetUserId, postfix)
+        setNicknamePostfix(env, context, targetUserId, postfix),
+      toModelOutput: ({ output }) => ({
+        type: "text",
+        value: formatNicknameOutput(output)
+      })
     }),
     clearNicknamePostfix: tool({
       description:
@@ -96,7 +109,62 @@ export function createNicknameTools(
       }),
       outputSchema: nicknameResponseSchema,
       execute: async ({ targetUserId }) =>
-        clearNicknamePostfix(env, context, targetUserId)
+        clearNicknamePostfix(env, context, targetUserId),
+      toModelOutput: ({ output }) => ({
+        type: "text",
+        value: formatNicknameOutput(output)
+      })
     })
   };
+}
+
+function formatGuildMemberSearchOutput(output: GuildMemberSearchToolResponse) {
+  if (!output.ok) {
+    return `Guild member search failed: ${output.error ?? "Unknown error."}`;
+  }
+
+  const results = output.results ?? [];
+  if (results.length === 0) {
+    return `No guild members matched "${output.query}".`;
+  }
+
+  return [
+    `Guild member search results for "${output.query}": ${results.length}`,
+    ...results.map((member) =>
+      [
+        `- displayName: ${member.displayName}`,
+        `userId: ${member.id}`,
+        `username: ${member.username}`,
+        member.nickname ? `nickname: ${member.nickname}` : undefined,
+        member.globalName ? `globalName: ${member.globalName}` : undefined,
+        member.bot ? "bot: yes" : undefined
+      ]
+        .filter(Boolean)
+        .join("; ")
+    ),
+    "Final response guidance: if exactly one result is clearly the intended person, use userId for follow-up Discord tools. If multiple matches are plausible, ask the user to choose."
+  ].join("\n");
+}
+
+function formatNicknameOutput(output: NicknameToolResponse) {
+  if (!output.ok) {
+    return `Nickname ${output.action} failed: ${output.error ?? "Unknown error."}`;
+  }
+
+  const lines = [`Nickname postfix ${output.action}.`];
+  if (output.targetUserId) lines.push(`targetUserId: ${output.targetUserId}`);
+  if (output.oldNickname) lines.push(`oldNickname: ${output.oldNickname}`);
+  if (output.baseNickname) lines.push(`baseNickname: ${output.baseNickname}`);
+  if (output.postfix) lines.push(`postfix: ${output.postfix}`);
+  if (output.convertedPostfix) {
+    lines.push(`convertedPostfix: ${output.convertedPostfix}`);
+  }
+  if (output.newNickname) lines.push(`newNickname: ${output.newNickname}`);
+  if (output.changed !== undefined) {
+    lines.push(`changed: ${output.changed ? "yes" : "no"}`);
+  }
+  lines.push(
+    "Final response guidance: briefly confirm the nickname result. Do not expose caller/guild internals unless the user explicitly asks for diagnostics."
+  );
+  return lines.join("\n");
 }

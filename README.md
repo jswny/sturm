@@ -74,14 +74,6 @@ curl -X POST http://localhost:8787/api/admin/register-commands
 The admin endpoint is intended to be protected by Cloudflare Access. Sturm only
 registers guild-scoped commands.
 
-Inspect recent Code Mode executions for a guild channel:
-
-```bash
-curl -X POST https://<worker-host>/api/admin/codemode/inspect \
-  -H "Content-Type: application/json" \
-  --data '{"surface":{"type":"guild_channel","guildId":"<guild-id>","channelId":"<channel-id>"},"correlationId":"<correlation-id>"}'
-```
-
 ## Commands
 
 - `/c text:<message>` chats with Sturm.

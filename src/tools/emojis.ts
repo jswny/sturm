@@ -39,6 +39,8 @@ const createEmojiResponseSchema = z.object({
   error: z.string().optional().describe("Error message when creation failed")
 });
 
+type CreateEmojiToolResponse = z.infer<typeof createEmojiResponseSchema>;
+
 export function createEmojiTools(env: EmojiEnv, context: EmojiRequestContext) {
   return {
     createGuildEmojiFromArtifact: tool({
@@ -63,7 +65,26 @@ export function createEmojiTools(env: EmojiEnv, context: EmojiRequestContext) {
         createGuildEmojiFromArtifact(env, context, {
           artifactId: input.artifactId,
           name: input.name
-        })
+        }),
+      toModelOutput: ({ output }) => ({
+        type: "text",
+        value: formatCreateEmojiOutput(output)
+      })
     })
   };
+}
+
+function formatCreateEmojiOutput(output: CreateEmojiToolResponse) {
+  if (!output.ok) {
+    return `Emoji creation failed: ${output.error ?? "Unknown error."}`;
+  }
+
+  const lines = ["Discord emoji created."];
+  if (output.name) lines.push(`name: ${output.name}`);
+  if (output.shortcode) lines.push(`shortcode: ${output.shortcode}`);
+  if (output.mention) lines.push(`mention: ${output.mention}`);
+  lines.push(
+    "Final response guidance: mention the emoji by name, shortcode, or mention when useful. Do not expose source artifact IDs, internal IDs, processed sizes, or diagnostics unless the user explicitly asks."
+  );
+  return lines.join("\n");
 }

@@ -18,6 +18,8 @@ const archiveUrlResponseSchema = z.object({
   error: z.string().optional().describe("Error message when archiving failed")
 });
 
+type ArchiveUrlToolResponse = z.infer<typeof archiveUrlResponseSchema>;
+
 export function createArchiveTools() {
   return {
     archiveUrl: tool({
@@ -34,7 +36,32 @@ export function createArchiveTools() {
       }),
       outputSchema: archiveUrlResponseSchema,
       execute: async ({ url, preserveQueryParams }) =>
-        archiveUrl(url, preserveQueryParams)
+        archiveUrl(url, preserveQueryParams),
+      toModelOutput: ({ output }) => ({
+        type: "text",
+        value: formatArchiveUrlOutput(output)
+      })
     })
   };
+}
+
+function formatArchiveUrlOutput(output: ArchiveUrlToolResponse) {
+  if (output.error) {
+    return [
+      "Archive link creation failed.",
+      `originalUrl: ${output.originalUrl}`,
+      `error: ${output.error}`
+    ].join("\n");
+  }
+
+  return [
+    "Archive link created.",
+    `originalUrl: ${output.originalUrl}`,
+    output.preparedUrl ? `preparedUrl: ${output.preparedUrl}` : undefined,
+    output.archiveUrl ? `archiveUrl: ${output.archiveUrl}` : undefined,
+    `queryParamsPreserved: ${output.queryParamsPreserved ? "yes" : "no"}`,
+    "Final response guidance: give the archiveUrl to the user. Mention query stripping only if relevant."
+  ]
+    .filter(Boolean)
+    .join("\n");
 }

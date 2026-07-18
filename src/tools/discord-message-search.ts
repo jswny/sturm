@@ -54,6 +54,10 @@ const discordMessageSearchResponseSchema = z.object({
   error: z.string().optional()
 });
 
+type DiscordMessageSearchToolResponse = z.infer<
+  typeof discordMessageSearchResponseSchema
+>;
+
 export function createDiscordMessageSearchTools(
   env: DiscordMessageSearchEnv,
   context: DiscordMessageSearchContext
@@ -119,7 +123,65 @@ export function createDiscordMessageSearchTools(
           )
       }),
       outputSchema: discordMessageSearchResponseSchema,
-      execute: async (input) => searchDiscordMessages(env, context, input)
+      execute: async (input) => searchDiscordMessages(env, context, input),
+      toModelOutput: ({ output }) => ({
+        type: "text",
+        value: formatDiscordMessageSearchOutput(output)
+      })
     })
   };
+}
+
+function formatDiscordMessageSearchOutput(
+  output: DiscordMessageSearchToolResponse
+) {
+  if (!output.ok) {
+    return `Discord message search failed: ${output.error ?? "Unknown error."}`;
+  }
+
+  if (output.indexNotReady) {
+    return [
+      "Discord message search index is not ready.",
+      output.retryAfterSeconds !== undefined
+        ? `retryAfterSeconds: ${output.retryAfterSeconds}`
+        : undefined,
+      output.documentsIndexed !== undefined
+        ? `documentsIndexed: ${output.documentsIndexed}`
+        : undefined
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
+
+  const results = output.results ?? [];
+  if (results.length === 0) {
+    return "Discord message search returned no matching messages.";
+  }
+
+  return [
+    `Discord message search results: ${results.length}`,
+    output.totalResults !== undefined
+      ? `totalResults: ${output.totalResults}`
+      : undefined,
+    ...results.map((message) =>
+      [
+        `- ${message.sent_at_utc}`,
+        `author: ${message.authorDisplayName}`,
+        message.content ? `content: ${message.content}` : undefined,
+        message.attachments?.length
+          ? `attachments: ${message.attachments.join(", ")}`
+          : undefined,
+        message.stickers?.length
+          ? `stickers: ${message.stickers.join(", ")}`
+          : undefined,
+        message.embeds ? `embeds: ${message.embeds}` : undefined,
+        `url: ${message.url}`
+      ]
+        .filter(Boolean)
+        .join("; ")
+    ),
+    "Final response guidance: answer using the relevant messages and include message links when useful."
+  ]
+    .filter(Boolean)
+    .join("\n");
 }

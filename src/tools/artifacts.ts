@@ -80,7 +80,11 @@ export function createArtifactTools(
           path,
           filename,
           description
-        })
+        }),
+      toModelOutput: ({ output }) => ({
+        type: "text",
+        value: formatExportWorkspaceFileOutput(output)
+      })
     })
   };
 }
@@ -237,4 +241,31 @@ function inferMimeType(filename: string) {
     default:
       return undefined;
   }
+}
+
+function formatExportWorkspaceFileOutput(output: ExportWorkspaceFileResponse) {
+  if (!output.success) {
+    return [
+      "Workspace file export failed.",
+      `path: ${output.path}`,
+      `error: ${output.error ?? "Unknown error."}`
+    ].join("\n");
+  }
+
+  const lines = [
+    "Workspace file exported.",
+    `attached: ${output.attached ? "yes" : "no"}`,
+    `path: ${output.path}`
+  ];
+  if (output.filename) lines.push(`filename: ${output.filename}`);
+  if (output.mimeType) lines.push(`mimeType: ${output.mimeType}`);
+  if (output.artifactId) {
+    lines.push(
+      `artifactId: ${output.artifactId} (same-turn tool handle only; do not include in final response text)`
+    );
+  }
+  lines.push(
+    "Final response guidance: briefly say the file is attached. Do not paste raw file data, workspace internals, artifact IDs, storage keys, hashes, or other diagnostics unless the user explicitly asks."
+  );
+  return lines.join("\n");
 }

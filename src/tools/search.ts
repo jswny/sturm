@@ -26,6 +26,9 @@ const urlSummaryResponseSchema = z.object({
     .describe("Error message when summarization failed")
 });
 
+type SearchToolResponse = z.infer<typeof searchResponseSchema>;
+type UrlSummaryToolResponse = z.infer<typeof urlSummaryResponseSchema>;
+
 export function createSearchTools(env: SearchEnv) {
   return {
     webSearch: tool({
@@ -38,7 +41,11 @@ export function createSearchTools(env: SearchEnv) {
           .describe("The complete web search question to ask")
       }),
       outputSchema: searchResponseSchema,
-      execute: async ({ query }) => searchWeb(env, query)
+      execute: async ({ query }) => searchWeb(env, query),
+      toModelOutput: ({ output }) => ({
+        type: "text",
+        value: formatSearchOutput(output)
+      })
     }),
 
     summarizeUrl: tool({
@@ -48,7 +55,58 @@ export function createSearchTools(env: SearchEnv) {
         url: z.string().url().describe("The complete URL to summarize")
       }),
       outputSchema: urlSummaryResponseSchema,
-      execute: async ({ url }) => summarizeUrl(env, url)
+      execute: async ({ url }) => summarizeUrl(env, url),
+      toModelOutput: ({ output }) => ({
+        type: "text",
+        value: formatUrlSummaryOutput(output)
+      })
     })
   };
+}
+
+function formatSearchOutput(output: SearchToolResponse) {
+  if (output.error) {
+    return [
+      "Web search failed.",
+      `query: ${output.query}`,
+      `error: ${output.error}`
+    ].join("\n");
+  }
+
+  const lines = [`Web search query: ${output.query}`];
+  if (output.answer) lines.push(`Answer: ${output.answer}`);
+  if (output.results.length > 0) {
+    lines.push("Sources:");
+    for (const result of output.results) {
+      lines.push(
+        [
+          `- ${result.title}`,
+          result.url,
+          result.snippet ? `snippet: ${result.snippet}` : undefined
+        ]
+          .filter(Boolean)
+          .join(" | ")
+      );
+    }
+  }
+  lines.push(
+    "Final response guidance: answer from the search result and include source URLs when useful or requested."
+  );
+  return lines.join("\n");
+}
+
+function formatUrlSummaryOutput(output: UrlSummaryToolResponse) {
+  if (output.error) {
+    return [
+      "URL summarization failed.",
+      `url: ${output.url}`,
+      `error: ${output.error}`
+    ].join("\n");
+  }
+
+  return [
+    `URL summarized: ${output.url}`,
+    output.summary ? `Summary: ${output.summary}` : "Summary: unavailable",
+    "Final response guidance: answer from the summary and cite the URL when useful."
+  ].join("\n");
 }
