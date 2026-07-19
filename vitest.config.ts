@@ -1,6 +1,10 @@
 import { cloudflareTest } from "@cloudflare/vitest-pool-workers";
 import { fileURLToPath } from "node:url";
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
+
+const runDebugAiIntegration =
+  process.env.STURM_RUN_DEBUG_AI_INTEGRATION === "true";
+const runPromptReplay = process.env.STURM_RUN_PROMPT_REPLAY === "true";
 
 export default defineConfig({
   resolve: {
@@ -24,6 +28,11 @@ export default defineConfig({
     })
   ],
   test: {
+    exclude: [
+      ...configDefaults.exclude,
+      ...(runDebugAiIntegration ? [] : ["tests/debug-ai.integration.test.ts"]),
+      ...(runPromptReplay ? [] : ["tests/prompt-replay.benchmark.test.ts"])
+    ],
     include: ["tests/**/*.test.ts"],
     testTimeout: 240_000
   }
