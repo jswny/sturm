@@ -1,10 +1,7 @@
-import { createWorkersAI } from "workers-ai-provider";
+import { createOpenAI } from "@ai-sdk/openai";
+import { createGatewayProvider } from "workers-ai-provider/gateway";
 
-export const CHAT_MODEL = "@cf/moonshotai/kimi-k2.7-code";
-export const REPLY_CHAT_MODEL = "dynamic/sturm-reply";
-export const ARTIFACT_SUMMARY_CHAT_MODEL = REPLY_CHAT_MODEL;
-export const COMPACTION_CHAT_MODEL = "dynamic/sturm-compaction";
-export const MEMORY_REFLECTION_CHAT_MODEL = "dynamic/sturm-memory-reflection";
+export const CHAT_MODEL = "gpt-5.6-sol";
 export const IMAGE_GENERATION_MODEL = "google/nano-banana-2";
 export const IMAGE_GENERATION_TIMEOUT_MS = 180_000;
 export const BROWSER_EXECUTION_TIMEOUT_MS = 60_000;
@@ -53,48 +50,45 @@ export const COMPACTION_TAIL_TOKEN_BUDGET = 64_000;
 export const CONTEXT_OVERFLOW_MAX_INPUT_TOKENS = COMPACTION_TOKEN_THRESHOLD;
 export const CONTEXT_OVERFLOW_HEADROOM = 0.9;
 
-type WorkersAIProviderOptions = {
-  readonly "workers-ai": {
-    readonly reasoning_effort?: "low" | "medium" | "high" | null;
-    readonly chat_template_kwargs?: {
-      readonly thinking?: boolean;
-      readonly enable_thinking?: boolean;
-      readonly clear_thinking?: boolean;
-    };
+type OpenAIProviderOptions = {
+  readonly openai: {
+    readonly reasoningEffort: "none" | "low" | "medium";
+    readonly textVerbosity: "low";
+    readonly store: false;
   };
 };
 
 export const REPLY_PROVIDER_OPTIONS = {
-  "workers-ai": {
-    reasoning_effort: "medium",
-    chat_template_kwargs: { thinking: true }
+  openai: {
+    reasoningEffort: "medium",
+    textVerbosity: "low",
+    store: false
   }
-} as const satisfies WorkersAIProviderOptions;
+} as const satisfies OpenAIProviderOptions;
 
 export const COMPACTION_PROVIDER_OPTIONS = {
-  "workers-ai": {
-    reasoning_effort: null,
-    chat_template_kwargs: { thinking: false }
+  openai: {
+    reasoningEffort: "none",
+    textVerbosity: "low",
+    store: false
   }
-} as const satisfies WorkersAIProviderOptions;
+} as const satisfies OpenAIProviderOptions;
 
 export const ARTIFACT_SUMMARY_PROVIDER_OPTIONS = {
-  "workers-ai": {
-    reasoning_effort: null,
-    chat_template_kwargs: {
-      thinking: false,
-      enable_thinking: false,
-      clear_thinking: true
-    }
+  openai: {
+    reasoningEffort: "none",
+    textVerbosity: "low",
+    store: false
   }
-} as const satisfies WorkersAIProviderOptions;
+} as const satisfies OpenAIProviderOptions;
 
 export const MEMORY_REFLECTION_PROVIDER_OPTIONS = {
-  "workers-ai": {
-    reasoning_effort: "low",
-    chat_template_kwargs: { thinking: true }
+  openai: {
+    reasoningEffort: "low",
+    textVerbosity: "low",
+    store: false
   }
-} as const satisfies WorkersAIProviderOptions;
+} as const satisfies OpenAIProviderOptions;
 
 export type ModelProviderOptions =
   | typeof REPLY_PROVIDER_OPTIONS
@@ -102,18 +96,25 @@ export type ModelProviderOptions =
   | typeof COMPACTION_PROVIDER_OPTIONS
   | typeof MEMORY_REFLECTION_PROVIDER_OPTIONS;
 
-export function createChatWorkersAI(
+export function createChatModel(
   env: Pick<Env, "AI">,
   flow: ChatAiGatewayFlow,
-  correlation: ChatAiGatewayCorrelation = {}
+  correlation: ChatAiGatewayCorrelation = {},
+  sessionAffinity?: string
 ) {
-  return createWorkersAI({
+  const openai = createGatewayProvider(createOpenAI, {
     binding: env.AI,
-    gateway: {
-      id: CHAT_AI_GATEWAY_ID,
-      metadata: createChatAiGatewayMetadata(flow, correlation)
-    }
+    gateway: CHAT_AI_GATEWAY_ID,
+    byok: false,
+    extraHeaders: removeUndefined({
+      "cf-aig-metadata": JSON.stringify(
+        createChatAiGatewayMetadata(flow, correlation)
+      ),
+      "cf-aig-request-timeout": String(REPLY_CHAT_BASE_TIMEOUT_MS),
+      "x-session-affinity": sessionAffinity
+    })
   });
+  return openai.responses(CHAT_MODEL);
 }
 
 export function createChatAiGatewayMetadata(

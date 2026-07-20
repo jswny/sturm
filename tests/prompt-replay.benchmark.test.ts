@@ -1,6 +1,5 @@
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
-import { REPLY_CHAT_MODEL } from "../src/model";
 
 type PromptReplayRequest = {
   messages: unknown[];
@@ -11,7 +10,7 @@ type PromptReplayRequest = {
 };
 
 type PromptReplayFixture = {
-  model?: string;
+  model: string;
   runs?: number;
   request: PromptReplayRequest;
   variants?: PromptReplayVariant[];
@@ -80,7 +79,7 @@ async function runPromptReplayBenchmark(
   fixture: PromptReplayFixture,
   variant: PromptReplayVariant
 ) {
-  const model = fixture.model ?? REPLY_CHAT_MODEL;
+  const model = fixture.model;
   const runs = fixture.runs ?? DEFAULT_RUNS;
   const scoring = fixture.scoring ?? DEFAULT_SCORING;
   const results: PromptReplayRunResult[] = [];
@@ -222,6 +221,9 @@ function expectPromptReplayFixture(
   }
   if (!Array.isArray(value.request.messages)) {
     throw new Error(`${path} request.messages must be an array`);
+  }
+  if (typeof value.model !== "string" || value.model.length === 0) {
+    throw new Error(`${path} must include a model`);
   }
   return value as PromptReplayFixture;
 }

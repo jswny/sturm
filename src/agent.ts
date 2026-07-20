@@ -75,7 +75,6 @@ import {
 } from "./memory-reflection";
 import {
   CHAT_STREAM_STALL_TIMEOUT_MS,
-  COMPACTION_CHAT_MODEL,
   COMPACTION_PROVIDER_OPTIONS,
   COMPACTION_TAIL_TOKEN_BUDGET,
   COMPACTION_TOKEN_THRESHOLD,
@@ -83,10 +82,8 @@ import {
   CONTEXT_OVERFLOW_MAX_INPUT_TOKENS,
   CHAT_AI_GATEWAY_FLOWS,
   type ChatAiGatewayCorrelation,
-  createChatWorkersAI,
-  MEMORY_REFLECTION_CHAT_MODEL,
+  createChatModel,
   MEMORY_REFLECTION_PROVIDER_OPTIONS,
-  REPLY_CHAT_MODEL,
   REPLY_PROVIDER_OPTIONS
 } from "./model";
 import { createBaseSystemPrompt } from "./prompts";
@@ -159,14 +156,12 @@ export class ChatAgent extends Think<Env> {
 
   override getModel() {
     const turn = this.getLatestDiscordTurn();
-    const workersai = createChatWorkersAI(
+    return createChatModel(
       this.env,
       CHAT_AI_GATEWAY_FLOWS.reply,
-      createChatAiGatewayCorrelation(turn)
+      createChatAiGatewayCorrelation(turn),
+      this.sessionAffinity
     );
-    return workersai(REPLY_CHAT_MODEL, {
-      sessionAffinity: this.sessionAffinity
-    });
   }
 
   override getSystemPrompt() {
@@ -192,15 +187,14 @@ export class ChatAgent extends Think<Env> {
         createCompactFunction({
           summarize: async (prompt) => {
             const turn = this.getLatestDiscordTurn();
-            const workersai = createChatWorkersAI(
+            const model = createChatModel(
               this.env,
               CHAT_AI_GATEWAY_FLOWS.compaction,
-              createChatAiGatewayCorrelation(turn)
+              createChatAiGatewayCorrelation(turn),
+              this.sessionAffinity
             );
             const result = await generateText({
-              model: workersai(COMPACTION_CHAT_MODEL, {
-                sessionAffinity: this.sessionAffinity
-              }),
+              model,
               providerOptions: COMPACTION_PROVIDER_OPTIONS,
               system:
                 "Summarize Discord conversation history for future assistant context. Preserve factual details, user preferences, decisions, current state, and open items.",
@@ -1061,16 +1055,13 @@ export class ChatAgent extends Think<Env> {
     return new GuildMemoryReflectionRunner({
       store: this.memoryReflections,
       getProvider: () => this.requireGuildMemoryProvider(),
-      createModel: (snapshot) => {
-        const correlatedWorkersAI = createChatWorkersAI(
+      createModel: (snapshot) =>
+        createChatModel(
           this.env,
           CHAT_AI_GATEWAY_FLOWS.memoryReflection,
-          createChatAiGatewayCorrelation(snapshot.request)
-        );
-        return correlatedWorkersAI(MEMORY_REFLECTION_CHAT_MODEL, {
-          sessionAffinity: this.sessionAffinity
-        });
-      },
+          createChatAiGatewayCorrelation(snapshot.request),
+          this.sessionAffinity
+        ),
       providerOptions: MEMORY_REFLECTION_PROVIDER_OPTIONS
     });
   }

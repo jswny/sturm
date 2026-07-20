@@ -4,10 +4,9 @@ import type { StoredResponseArtifact } from "../artifacts";
 import { getErrorMessage, logWarn } from "../logging";
 import { stripModelThinkingTraces } from "../model-output";
 import {
-  ARTIFACT_SUMMARY_CHAT_MODEL,
   ARTIFACT_SUMMARY_PROVIDER_OPTIONS,
   CHAT_AI_GATEWAY_FLOWS,
-  createChatWorkersAI,
+  createChatModel,
   REPLY_CHAT_TIMEOUT_MS
 } from "../model";
 import type { DiscordChatRequest } from "./types";
@@ -119,17 +118,18 @@ async function summarizeDiscordImageArtifact(
       return { artifactId: artifact.id };
     }
 
-    const workersai = createChatWorkersAI(
+    const model = createChatModel(
       env,
       CHAT_AI_GATEWAY_FLOWS.artifactSummary,
       {
         correlationId: request.correlationId,
         guildId: request.guildId,
         channelId: request.channelId
-      }
+      },
+      sessionAffinity
     );
     const result = await generateObject({
-      model: workersai(ARTIFACT_SUMMARY_CHAT_MODEL, { sessionAffinity }),
+      model,
       providerOptions: ARTIFACT_SUMMARY_PROVIDER_OPTIONS,
       system:
         "You summarize images for future conversation context. Respond only with the image summary.",
