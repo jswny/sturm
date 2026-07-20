@@ -224,7 +224,7 @@ export class ChatAgent extends Think<Env> {
   override async beforeTurn(ctx: TurnContext): Promise<TurnConfig> {
     const turn = this.getLatestDiscordTurn();
     const progress = turn
-      ? this.progressReporters.get(turn.correlationId)
+      ? await this.getOrCreateProgressReporter(turn.correlationId)
       : undefined;
     await progress?.report({
       type: "phase",
@@ -259,7 +259,7 @@ export class ChatAgent extends Think<Env> {
   }
 
   override async beforeStep(ctx: PrepareStepContext) {
-    const progress = this.getActiveProgressReporter();
+    const progress = await this.getActiveProgressReporter();
     await progress?.report({
       type: "phase",
       label:
@@ -1104,33 +1104,39 @@ export class ChatAgent extends Think<Env> {
     });
   }
 
-  private getActiveProgressReporter() {
+  private async getActiveProgressReporter() {
     const turn = this.getLatestDiscordTurn();
-    return turn ? this.progressReporters.get(turn.correlationId) : undefined;
+    return turn
+      ? this.getOrCreateProgressReporter(turn.correlationId)
+      : undefined;
+  }
+
+  private async getOrCreateProgressReporter(correlationId: string) {
+    // Treat the map as a cache; durable delivery records survive hibernation.
+    const existing = this.progressReporters.get(correlationId);
+    if (existing) return existing;
+
+    const record = await this.discordDeliveries.getDelivery(correlationId);
+    if (!record || isTerminalDelivery(record)) return undefined;
+
+    const concurrent = this.progressReporters.get(correlationId);
+    if (concurrent) return concurrent;
+
+    const reporter = createDiscordProgressReporter(record.responseTarget, {
+      createdAt: record.createdAt,
+      correlationId: getDeliveryCorrelationId(record),
+      sequence: record.sequence
+    });
+    if (reporter) this.progressReporters.set(correlationId, reporter);
+    return reporter;
   }
 
   private async reportDiscordRecoveryProgress(
     correlationId: string,
     event: Parameters<DiscordProgressReporter["report"]>[0]
   ) {
-    const reporter = this.progressReporters.get(correlationId);
-    if (reporter) {
-      await reporter.report(event);
-      return;
-    }
-
-    const record = await this.discordDeliveries.getDelivery(correlationId);
-    if (!record) return;
-
-    const recoveryReporter = createDiscordProgressReporter(
-      record.responseTarget,
-      {
-        createdAt: record.createdAt,
-        correlationId: getDeliveryCorrelationId(record),
-        sequence: record.sequence
-      }
-    );
-    await recoveryReporter?.report(event);
+    const reporter = await this.getOrCreateProgressReporter(correlationId);
+    await reporter?.report(event);
   }
 
   private getLatestDiscordTurn(): DiscordChatRequest | undefined {

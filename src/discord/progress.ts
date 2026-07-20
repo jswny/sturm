@@ -17,7 +17,8 @@ export type DiscordProgressEvent =
     }
   | {
       type: "tool";
-      label: string;
+      toolCallId: string;
+      toolName: string;
       status: "started" | "finished" | "failed";
     };
 
@@ -45,6 +46,8 @@ export function withProgressTools(
 ): ToolSet {
   if (!reporter) return tools;
 
+  let fallbackToolCallSequence = 0;
+
   return Object.fromEntries(
     Object.entries(tools).map(([name, definition]) => {
       const execute = definition.execute;
@@ -55,8 +58,14 @@ export function withProgressTools(
         {
           ...definition,
           execute: async (input: unknown, options?: ToolExecutionOptions) => {
-            const label = getToolProgressLabel(name);
-            await reporter.report({ type: "tool", label, status: "started" });
+            const toolCallId =
+              options?.toolCallId ?? `${name}:${fallbackToolCallSequence++}`;
+            await reporter.report({
+              type: "tool",
+              toolCallId,
+              toolName: name,
+              status: "started"
+            });
 
             try {
               const output = await execute(
@@ -65,12 +74,18 @@ export function withProgressTools(
               );
               await reporter.report({
                 type: "tool",
-                label,
+                toolCallId,
+                toolName: name,
                 status: isToolFailureOutput(output) ? "failed" : "finished"
               });
               return output;
             } catch (error) {
-              await reporter.report({ type: "tool", label, status: "failed" });
+              await reporter.report({
+                type: "tool",
+                toolCallId,
+                toolName: name,
+                status: "failed"
+              });
               throw error;
             }
           }
@@ -97,7 +112,7 @@ function isToolFailureOutput(output: unknown) {
 class DiscordInteractionProgressReporter implements DiscordProgressReporter {
   private readonly startedAt = Date.now();
   private lastEditAt = 0;
-  private lines: string[] = [];
+  private lines: ProgressLine[] = [];
 
   constructor(
     private readonly target: DiscordWebhookResponseTarget,
@@ -106,10 +121,8 @@ class DiscordInteractionProgressReporter implements DiscordProgressReporter {
 
   async report(event: DiscordProgressEvent) {
     const line = renderProgressEvent(event);
-    if (!line) return;
-
-    this.appendLine(line);
-    if (!this.shouldEditNow()) return;
+    if (!this.upsertLine(line)) return;
+    if (!this.shouldEditNow(event)) return;
 
     await this.waitUntilDeferredResponseSettled();
     try {
@@ -124,13 +137,28 @@ class DiscordInteractionProgressReporter implements DiscordProgressReporter {
     }
   }
 
-  private appendLine(line: string) {
-    if (this.lines.at(-1) === line) return;
+  private upsertLine(line: ProgressLine) {
+    if (line.key) {
+      const existingIndex = this.lines.findIndex(
+        (candidate) => candidate.key === line.key
+      );
+      if (existingIndex >= 0) {
+        if (this.lines[existingIndex].text === line.text) return false;
+        this.lines[existingIndex] = line;
+        return true;
+      }
+    } else if (this.lines.at(-1)?.text === line.text) {
+      return false;
+    }
+
     this.lines.push(line);
     this.lines = this.lines.slice(-DISCORD_PROGRESS_MAX_LINES);
+    return true;
   }
 
-  private shouldEditNow() {
+  private shouldEditNow(event: DiscordProgressEvent) {
+    // A fast failure must not remain hidden behind an earlier started update.
+    if (event.type === "tool" && event.status === "failed") return true;
     if (this.lastEditAt === 0) return true;
     return (
       Date.now() - this.lastEditAt >= DISCORD_PROGRESS_MIN_EDIT_INTERVAL_MS
@@ -147,30 +175,139 @@ class DiscordInteractionProgressReporter implements DiscordProgressReporter {
   }
 
   private render() {
-    return ["Thinking...", ...this.lines.map((line) => `- ${line}`)].join("\n");
+    return ["Thinking...", ...this.lines.map((line) => `- ${line.text}`)].join(
+      "\n"
+    );
   }
 }
 
+type ProgressLine = {
+  key?: string;
+  text: string;
+};
+
+type ToolProgressCopy = Record<
+  Extract<DiscordProgressEvent, { type: "tool" }>["status"],
+  string
+>;
+
+const TOOL_PROGRESS_COPY: Readonly<Record<string, ToolProgressCopy>> = {
+  archiveUrl: {
+    started: "Creating an archive link",
+    finished: "Created an archive link",
+    failed: "Archive link creation failed"
+  },
+  webSearch: {
+    started: "Searching the web",
+    finished: "Searched the web",
+    failed: "Web search failed"
+  },
+  summarizeUrl: {
+    started: "Reading the page",
+    finished: "Read the page",
+    failed: "Page reading failed"
+  },
+  searchDiscordMessages: {
+    started: "Searching channel history",
+    finished: "Searched channel history",
+    failed: "Channel history search failed"
+  },
+  searchGuildMembers: {
+    started: "Finding server members",
+    finished: "Found server members",
+    failed: "Server member search failed"
+  },
+  setNicknamePostfix: {
+    started: "Updating a nickname",
+    finished: "Updated a nickname",
+    failed: "Nickname update failed"
+  },
+  clearNicknamePostfix: {
+    started: "Updating a nickname",
+    finished: "Updated a nickname",
+    failed: "Nickname update failed"
+  },
+  muteGuildMember: {
+    started: "Applying a member timeout",
+    finished: "Applied a member timeout",
+    failed: "Member timeout failed"
+  },
+  unmuteGuildMember: {
+    started: "Removing a member timeout",
+    finished: "Removed a member timeout",
+    failed: "Member timeout removal failed"
+  },
+  createGuildEmojiFromArtifact: {
+    started: "Creating an emoji",
+    finished: "Created an emoji",
+    failed: "Emoji creation failed"
+  },
+  createGuildStickerFromArtifact: {
+    started: "Creating a sticker",
+    finished: "Created a sticker",
+    failed: "Sticker creation failed"
+  },
+  scheduleChannelTask: {
+    started: "Scheduling a channel task",
+    finished: "Scheduled a channel task",
+    failed: "Channel task scheduling failed"
+  },
+  listScheduledChannelTasks: {
+    started: "Reading scheduled tasks",
+    finished: "Read scheduled tasks",
+    failed: "Scheduled task lookup failed"
+  },
+  replaceScheduledChannelTask: {
+    started: "Updating a scheduled task",
+    finished: "Updated a scheduled task",
+    failed: "Scheduled task update failed"
+  },
+  cancelScheduledChannelTask: {
+    started: "Cancelling a scheduled task",
+    finished: "Cancelled a scheduled task",
+    failed: "Scheduled task cancellation failed"
+  },
+  askUserToConfirm: {
+    started: "Preparing a confirmation prompt",
+    finished: "Prepared a confirmation prompt",
+    failed: "Confirmation prompt setup failed"
+  },
+  askUserToSelect: {
+    started: "Preparing a selection prompt",
+    finished: "Prepared a selection prompt",
+    failed: "Selection prompt setup failed"
+  },
+  generateImage: {
+    started: "Generating an image",
+    finished: "Generated an image",
+    failed: "Image generation failed"
+  },
+  exportWorkspaceFile: {
+    started: "Preparing a file attachment",
+    finished: "Prepared a file attachment",
+    failed: "File attachment preparation failed"
+  },
+  browser_execute: {
+    started: "Using the browser",
+    finished: "Finished using the browser",
+    failed: "Browser task failed"
+  }
+};
+
+const DEFAULT_TOOL_PROGRESS_COPY: ToolProgressCopy = {
+  started: "Using a tool",
+  finished: "Finished using a tool",
+  failed: "Tool failed"
+};
+
 function renderProgressEvent(event: DiscordProgressEvent) {
-  if (event.type === "phase") return event.label;
+  if (event.type === "phase") return { text: event.label };
 
-  if (event.status === "started") return `Using ${event.label}`;
-  if (event.status === "finished") return `Finished ${event.label}`;
-  return `${capitalize(event.label)} failed`;
-}
-
-function getToolProgressLabel(toolName: string) {
-  if (toolName === "browser_execute") return "browser";
-
-  return toolName
-    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
-    .replace(/[_-]+/g, " ")
-    .trim()
-    .toLowerCase();
-}
-
-function capitalize(value: string) {
-  return value ? `${value[0].toUpperCase()}${value.slice(1)}` : value;
+  const copy = TOOL_PROGRESS_COPY[event.toolName] ?? DEFAULT_TOOL_PROGRESS_COPY;
+  return {
+    key: `tool:${event.toolCallId}`,
+    text: copy[event.status]
+  };
 }
 
 function sleep(ms: number) {
