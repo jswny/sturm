@@ -66,7 +66,7 @@ export function withProgressTools(
               await reporter.report({
                 type: "tool",
                 label,
-                status: "finished"
+                status: isToolFailureOutput(output) ? "failed" : "finished"
               });
               return output;
             } catch (error) {
@@ -78,6 +78,20 @@ export function withProgressTools(
       ];
     })
   ) as ToolSet;
+}
+
+// Expected operational failures are often returned to the model as data.
+function isToolFailureOutput(output: unknown) {
+  if (!output || typeof output !== "object" || Array.isArray(output)) {
+    return false;
+  }
+
+  const result = output as Record<string, unknown>;
+  return (
+    result.ok === false ||
+    result.success === false ||
+    (typeof result.error === "string" && result.error.trim().length > 0)
+  );
 }
 
 class DiscordInteractionProgressReporter implements DiscordProgressReporter {
