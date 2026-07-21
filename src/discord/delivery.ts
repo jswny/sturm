@@ -97,9 +97,16 @@ export type DiscordDeliveryCreateResult = {
 
 const DISCORD_DELIVERY_META_KEY = "discord:delivery:meta";
 const DISCORD_DELIVERY_PREFIX = "discord:delivery:record:";
+const DISCORD_ACTIVE_DELIVERY_PREFIX = "discord:delivery:active:";
+const DISCORD_ACTIVE_INDEX_MIGRATION_CURSOR_KEY =
+  "discord:delivery:active-index:v1:cursor";
+const DISCORD_ACTIVE_INDEX_MIGRATION_COMPLETE_KEY =
+  "discord:delivery:active-index:v1:complete";
 const DISCORD_DEBUG_RESULT_PREFIX = "discord:delivery:debug-result:";
 const DELIVERY_RECORD_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const DELIVERY_RECORD_PRUNE_BATCH_SIZE = 100;
+const ACTIVE_DELIVERY_LIST_LIMIT = 100;
+const ACTIVE_DELIVERY_MIGRATION_BATCH_SIZE = 100;
 const DEBUG_RESULT_RETENTION_MS = 24 * 60 * 60 * 1000;
 const DEBUG_RESULT_PRUNE_BATCH_SIZE = 100;
 
@@ -126,6 +133,7 @@ export class DiscordDeliveryStore {
 
       await txn.put(DISCORD_DELIVERY_META_KEY, meta);
       await txn.put(deliveryKey, record);
+      await txn.put(getDiscordActiveDeliveryKey(correlationId), true);
 
       return { created: true, record };
     });
@@ -143,6 +151,9 @@ export class DiscordDeliveryStore {
       }
 
       await txn.delete(key);
+      await txn.delete(
+        getDiscordActiveDeliveryKey(getDeliveryCorrelationId(record))
+      );
     });
   }
 
@@ -150,6 +161,49 @@ export class DiscordDeliveryStore {
     return this.storage.get<DiscordDeliveryRecord>(
       getDiscordDeliveryKey(correlationId)
     );
+  }
+
+  async listActiveDeliveryRecords(limit = ACTIVE_DELIVERY_LIST_LIMIT) {
+    const activeEntries = await this.storage.list<boolean>({
+      prefix: DISCORD_ACTIVE_DELIVERY_PREFIX,
+      limit
+    });
+    const activeKeys = [...activeEntries.keys()];
+    const deliveryKeys = activeKeys.map((key) =>
+      getDiscordDeliveryKey(key.slice(DISCORD_ACTIVE_DELIVERY_PREFIX.length))
+    );
+    const indexedDeliveries =
+      deliveryKeys.length > 0
+        ? await this.storage.get<DiscordDeliveryRecord>(deliveryKeys)
+        : new Map<string, DiscordDeliveryRecord>();
+    const records: DiscordDeliveryRecord[] = [];
+    const seen = new Set<string>();
+    const staleActiveKeys: string[] = [];
+
+    for (let index = 0; index < activeKeys.length; index++) {
+      const activeKey = activeKeys[index];
+      const deliveryKey = deliveryKeys[index];
+      const record = indexedDeliveries.get(deliveryKey);
+      if (!record || isTerminalDeliveryStatus(record.status)) {
+        staleActiveKeys.push(activeKey);
+        continue;
+      }
+
+      records.push(record);
+      seen.add(record.correlationId);
+    }
+    if (staleActiveKeys.length > 0) {
+      await this.storage.delete(staleActiveKeys);
+    }
+
+    const migratedRecords = await this.migrateActiveDeliveryIndex();
+    for (const record of migratedRecords) {
+      if (seen.has(record.correlationId)) continue;
+      records.push(record);
+      if (records.length >= limit) break;
+    }
+
+    return records;
   }
 
   async markRunning(correlationId: string) {
@@ -253,6 +307,9 @@ export class DiscordDeliveryStore {
       delete nextRecord.lifecycle;
 
       await txn.put<DiscordDeliveryRecord>(key, nextRecord);
+      await txn.delete(
+        getDiscordActiveDeliveryKey(getDeliveryCorrelationId(record))
+      );
     });
   }
 
@@ -315,6 +372,52 @@ export class DiscordDeliveryStore {
       await txn.put(key, update(record));
     });
   }
+
+  private async migrateActiveDeliveryIndex() {
+    const migrationComplete = await this.storage.get<boolean>(
+      DISCORD_ACTIVE_INDEX_MIGRATION_COMPLETE_KEY
+    );
+    if (migrationComplete) return [];
+
+    const cursor = await this.storage.get<string>(
+      DISCORD_ACTIVE_INDEX_MIGRATION_CURSOR_KEY
+    );
+    const page = await this.storage.list<DiscordDeliveryRecord>({
+      prefix: DISCORD_DELIVERY_PREFIX,
+      startAfter: cursor,
+      limit: ACTIVE_DELIVERY_MIGRATION_BATCH_SIZE
+    });
+    if (page.size === 0) {
+      await this.storage.put(DISCORD_ACTIVE_INDEX_MIGRATION_COMPLETE_KEY, true);
+      await this.storage.delete(DISCORD_ACTIVE_INDEX_MIGRATION_CURSOR_KEY);
+      return [];
+    }
+
+    const records: DiscordDeliveryRecord[] = [];
+    const indexBackfill: Record<string, boolean> = {};
+    let lastKey: string | undefined;
+    for (const [key, record] of page) {
+      lastKey = key;
+      if (isTerminalDeliveryStatus(record.status)) continue;
+      records.push(record);
+      indexBackfill[getDiscordActiveDeliveryKey(record.correlationId)] = true;
+    }
+    if (Object.keys(indexBackfill).length > 0) {
+      await this.storage.put(indexBackfill);
+    }
+
+    if (page.size < ACTIVE_DELIVERY_MIGRATION_BATCH_SIZE) {
+      await this.storage.put(DISCORD_ACTIVE_INDEX_MIGRATION_COMPLETE_KEY, true);
+      await this.storage.delete(DISCORD_ACTIVE_INDEX_MIGRATION_CURSOR_KEY);
+    } else if (lastKey) {
+      await this.storage.put(
+        DISCORD_ACTIVE_INDEX_MIGRATION_CURSOR_KEY,
+        lastKey
+      );
+    }
+
+    return records;
+  }
 }
 
 function createDiscordDeliveryRecord(
@@ -372,6 +475,10 @@ export function getDeliveryCorrelationId(record: DiscordDeliveryRecord) {
 
 function getDiscordDeliveryKey(correlationId: string) {
   return `${DISCORD_DELIVERY_PREFIX}${correlationId}`;
+}
+
+function getDiscordActiveDeliveryKey(correlationId: string) {
+  return `${DISCORD_ACTIVE_DELIVERY_PREFIX}${correlationId}`;
 }
 
 function getDiscordDebugResultKey(targetId: string) {

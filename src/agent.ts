@@ -37,6 +37,7 @@ import {
   DiscordDeliveryStore,
   getDeliveryCorrelationId,
   isTerminalDelivery,
+  type DiscordChatDeliveryRecord,
   type DiscordDeliveryChatInput,
   type DiscordDeliveryRecord,
   type DiscordDeliveryResetInput
@@ -107,6 +108,7 @@ import type { UserPromptController } from "./tools/user-prompts";
 
 const HOUSEKEEPING_INTERVAL_SECONDS = 24 * 60 * 60;
 const TERMINAL_SUBMISSION_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+const DISCORD_ADMISSION_RECONCILIATION_LIMIT = 100;
 const CHAT_RECOVERY_MAX_ATTEMPTS = 6;
 const CHAT_RECOVERY_STABLE_TIMEOUT_MS = 10_000;
 const CHAT_RECOVERY_TERMINAL_MESSAGE =
@@ -117,6 +119,15 @@ type ScheduledChannelTaskExecution = Pick<
   ScheduledChannelTaskSchedule,
   "id" | "time" | "type"
 >;
+
+type DiscordAdmissionReconciliationResult = {
+  deliveriesInspected: number;
+  missingSubmissionsRepaired: number;
+  pendingSubmissionsRearmed: number;
+  terminalDeliveriesResumed: number;
+  submissionsWithoutDeliveries: number;
+  reconciliationFailures: number;
+};
 
 export class ChatAgent extends Think<Env> {
   override sendReasoning = false;
@@ -219,6 +230,8 @@ export class ChatAgent extends Think<Env> {
         agentName: this.name
       });
     }
+
+    await this.reconcileDiscordAdmissionsSafely("on_start");
   }
 
   override async beforeTurn(ctx: TurnContext): Promise<TurnConfig> {
@@ -470,11 +483,15 @@ export class ChatAgent extends Think<Env> {
     const record = result.record;
     if (isTerminalDelivery(record)) return;
     const correlationId = getDeliveryCorrelationId(record);
-    const request = record.request;
 
     if (!result.created) {
       const existingSubmission = await this.inspectSubmission(correlationId);
-      if (existingSubmission) return;
+      if (existingSubmission) {
+        if (existingSubmission.status === "pending") {
+          await this.submitDiscordChatDelivery(record);
+        }
+        return;
+      }
 
       logWarn("Repairing pending Discord delivery without Think submission", {
         sequence: record.sequence,
@@ -494,39 +511,84 @@ export class ChatAgent extends Think<Env> {
     }
 
     try {
-      await this.submitMessages([createDiscordUserMessage(request)], {
-        submissionId: correlationId,
-        idempotencyKey: correlationId,
-        metadata: {
-          source: "discord",
-          type: "chat",
-          correlationId,
-          discordInteractionId: record.discordInteractionId,
+      await this.submitDiscordChatDelivery(record);
+    } catch (initialError) {
+      try {
+        const retry = await this.submitDiscordChatDelivery(record);
+        logWarn("Recovered Discord Think submission with idempotent retry", {
           sequence: record.sequence,
-          guildId: request.guildId,
-          channelId: request.channelId,
-          userId: request.userId
-        }
-      });
-    } catch (error) {
-      this.progressReporters.delete(correlationId);
-      if (result.created) {
-        await this.discordDeliveries.deleteCreatedDelivery(record);
-      }
-      const context = {
-        sequence: record.sequence,
-        ...getDeliveryLogContext(record),
-        deliveryType: record.type
-      };
-      if (isPlatformTransientError(error)) {
-        logWarn("Discord Think submission hit transient platform error", {
-          ...context,
-          error: getErrorMessage(error)
+          ...getDeliveryLogContext(record),
+          deliveryType: record.type,
+          submissionStatus: retry.status,
+          submissionAccepted: retry.accepted,
+          initialError: getErrorMessage(initialError)
         });
-      } else {
-        logError("Discord Think submission failed", error, context);
+        return;
+      } catch (retryError) {
+        let inspectionCompleted = false;
+        let persistedSubmission: ThinkSubmissionInspection | null = null;
+        try {
+          persistedSubmission = await this.inspectSubmission(correlationId);
+          inspectionCompleted = true;
+        } catch (inspectionError) {
+          logWarn(
+            "Discord Think submission inspection failed after enqueue error",
+            {
+              sequence: record.sequence,
+              ...getDeliveryLogContext(record),
+              deliveryType: record.type,
+              initialError: getErrorMessage(initialError),
+              retryError: getErrorMessage(retryError),
+              inspectionError: getErrorMessage(inspectionError)
+            }
+          );
+        }
+
+        if (persistedSubmission) {
+          logWarn(
+            "Preserved Discord delivery after Think submission enqueue error",
+            {
+              sequence: record.sequence,
+              ...getDeliveryLogContext(record),
+              deliveryType: record.type,
+              submissionStatus: persistedSubmission.status,
+              initialError: getErrorMessage(initialError),
+              retryError: getErrorMessage(retryError)
+            }
+          );
+          return;
+        }
+
+        if (result.created && inspectionCompleted) {
+          await this.discordDeliveries.deleteCreatedDelivery(record);
+        } else if (!inspectionCompleted) {
+          logWarn(
+            "Preserving Discord delivery because Think acceptance is uncertain",
+            {
+              sequence: record.sequence,
+              ...getDeliveryLogContext(record),
+              deliveryType: record.type
+            }
+          );
+        }
+
+        this.progressReporters.delete(correlationId);
+        const context = {
+          sequence: record.sequence,
+          ...getDeliveryLogContext(record),
+          deliveryType: record.type,
+          initialError: getErrorMessage(initialError)
+        };
+        if (isPlatformTransientError(retryError)) {
+          logWarn("Discord Think submission hit transient platform error", {
+            ...context,
+            error: getErrorMessage(retryError)
+          });
+        } else {
+          logError("Discord Think submission failed", retryError, context);
+        }
+        throw retryError;
       }
-      throw error;
     }
   }
 
@@ -649,6 +711,7 @@ export class ChatAgent extends Think<Env> {
   async housekeeping() {
     try {
       const [
+        admissionReconciliation,
         completedDeliveryRecords,
         staleDebugResults,
         staleComponentPrompts,
@@ -656,6 +719,7 @@ export class ChatAgent extends Think<Env> {
         memoryReflectionRecords,
         managedFiberRecords
       ] = await Promise.all([
+        this.reconcileDiscordAdmissionsSafely("housekeeping"),
         this.discordDeliveries.pruneCompletedDeliveryRecords(),
         this.discordDeliveries.pruneStaleDebugResults(),
         this.componentPrompts.pruneStalePrompts(),
@@ -678,6 +742,7 @@ export class ChatAgent extends Think<Env> {
         })
       ]);
       if (
+        hasDiscordAdmissionReconciliationChanges(admissionReconciliation) ||
         completedDeliveryRecords > 0 ||
         staleDebugResults > 0 ||
         staleComponentPrompts > 0 ||
@@ -685,8 +750,9 @@ export class ChatAgent extends Think<Env> {
         memoryReflectionRecords > 0 ||
         managedFiberRecords > 0
       ) {
-        logInfo("Discord housekeeping pruned stale records", {
+        logInfo("Discord housekeeping completed repairs or pruning", {
           agentName: this.name,
+          ...admissionReconciliation,
           completedDeliveryRecords,
           staleDebugResults,
           staleComponentPrompts,
@@ -700,6 +766,117 @@ export class ChatAgent extends Think<Env> {
         agentName: this.name
       });
     }
+  }
+
+  private async submitDiscordChatDelivery(record: DiscordChatDeliveryRecord) {
+    const correlationId = getDeliveryCorrelationId(record);
+    const request = record.request;
+    return this.submitMessages([createDiscordUserMessage(request)], {
+      submissionId: correlationId,
+      idempotencyKey: correlationId,
+      metadata: {
+        source: "discord",
+        type: "chat",
+        correlationId,
+        discordInteractionId: record.discordInteractionId,
+        sequence: record.sequence,
+        guildId: request.guildId,
+        channelId: request.channelId,
+        userId: request.userId
+      }
+    });
+  }
+
+  private async reconcileDiscordAdmissionsSafely(
+    source: "on_start" | "housekeeping"
+  ) {
+    try {
+      return await this.reconcileDiscordAdmissions();
+    } catch (error) {
+      logError("Discord admission reconciliation failed", error, {
+        agentName: this.name,
+        source
+      });
+      return createEmptyDiscordAdmissionReconciliationResult();
+    }
+  }
+
+  private async reconcileDiscordAdmissions() {
+    const result = createEmptyDiscordAdmissionReconciliationResult();
+    const records = await this.discordDeliveries.listActiveDeliveryRecords(
+      DISCORD_ADMISSION_RECONCILIATION_LIMIT
+    );
+
+    for (const record of records) {
+      if (record.type !== "chat") continue;
+      result.deliveriesInspected++;
+
+      try {
+        const submission = await this.inspectSubmission(record.correlationId);
+        if (!submission) {
+          await this.submitDiscordChatDelivery(record);
+          result.missingSubmissionsRepaired++;
+          logWarn("Repaired Discord delivery without Think submission", {
+            agentName: this.name,
+            sequence: record.sequence,
+            ...getDeliveryLogContext(record),
+            responseTargetType: record.responseTarget.type
+          });
+          continue;
+        }
+
+        if (submission.status === "pending") {
+          await this.submitDiscordChatDelivery(record);
+          result.pendingSubmissionsRearmed++;
+          continue;
+        }
+
+        if (submission.status === "running") {
+          await this.discordDeliveries.markRunning(record.correlationId);
+          continue;
+        }
+
+        await this.onSubmissionStatus(submission);
+        result.terminalDeliveriesResumed++;
+      } catch (error) {
+        result.reconciliationFailures++;
+        logError("Discord delivery admission reconciliation failed", error, {
+          agentName: this.name,
+          sequence: record.sequence,
+          ...getDeliveryLogContext(record),
+          responseTargetType: record.responseTarget.type
+        });
+      }
+    }
+
+    const activeSubmissions = await this.listSubmissions({
+      status: ["pending", "running"],
+      limit: DISCORD_ADMISSION_RECONCILIATION_LIMIT
+    });
+    for (const submission of activeSubmissions) {
+      if (!isDiscordChatSubmission(submission)) continue;
+      const delivery = await this.discordDeliveries.getDelivery(
+        submission.submissionId
+      );
+      if (delivery) continue;
+
+      result.submissionsWithoutDeliveries++;
+      logError(
+        "Discord Think submission has no durable delivery record",
+        new Error("Cannot reconstruct a Discord response target safely."),
+        {
+          agentName: this.name,
+          correlationId: submission.submissionId,
+          submissionStatus: submission.status,
+          discordInteractionId: submission.metadata?.discordInteractionId,
+          guildId: submission.metadata?.guildId,
+          channelId: submission.metadata?.channelId,
+          userId: submission.metadata?.userId
+        }
+      );
+    }
+
+    return result;
   }
 
   private async createDiscordThinkTools(
@@ -1188,6 +1365,36 @@ function mergeStoredArtifacts(artifacts: StoredResponseArtifact[]) {
     seen.add(artifact.id);
     return true;
   });
+}
+
+function createEmptyDiscordAdmissionReconciliationResult(): DiscordAdmissionReconciliationResult {
+  return {
+    deliveriesInspected: 0,
+    missingSubmissionsRepaired: 0,
+    pendingSubmissionsRearmed: 0,
+    terminalDeliveriesResumed: 0,
+    submissionsWithoutDeliveries: 0,
+    reconciliationFailures: 0
+  };
+}
+
+function hasDiscordAdmissionReconciliationChanges(
+  result: DiscordAdmissionReconciliationResult
+) {
+  return (
+    result.missingSubmissionsRepaired > 0 ||
+    result.pendingSubmissionsRearmed > 0 ||
+    result.terminalDeliveriesResumed > 0 ||
+    result.submissionsWithoutDeliveries > 0 ||
+    result.reconciliationFailures > 0
+  );
+}
+
+function isDiscordChatSubmission(submission: ThinkSubmissionInspection) {
+  return (
+    submission.metadata?.source === "discord" &&
+    submission.metadata?.type === "chat"
+  );
 }
 
 function createDebugDeliveryStatus(record: DiscordDeliveryRecord) {
