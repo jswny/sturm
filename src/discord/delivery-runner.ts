@@ -247,7 +247,8 @@ export class DiscordDeliveryRunner {
         response.content,
         response.attachments,
         response.components,
-        response.flags
+        response.flags,
+        { idempotencyKey: getDeliveryCorrelationId(record) }
       );
       logInfo("Sent Discord channel message", {
         sequence: record.sequence,

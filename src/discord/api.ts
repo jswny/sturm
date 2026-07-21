@@ -140,7 +140,8 @@ export async function deliverChannelMessage(
   content: string,
   attachments: DiscordResponseAttachment[] = [],
   components: APIMessageTopLevelComponent[] = [],
-  flags?: MessageFlags
+  flags?: MessageFlags,
+  options: { idempotencyKey?: string } = {}
 ) {
   if (components.length > 0) {
     await createChannelMessage(
@@ -149,7 +150,8 @@ export async function deliverChannelMessage(
       content,
       attachments,
       components,
-      flags
+      flags,
+      await createDiscordMessageNonce(options.idempotencyKey, 0)
     );
     return 1;
   }
@@ -157,9 +159,25 @@ export async function deliverChannelMessage(
   const chunks = splitDiscordContent(content);
   const [firstChunk = "", ...followupChunks] = chunks;
 
-  await createChannelMessage(env, channelId, firstChunk, attachments);
-  for (const chunk of followupChunks) {
-    await createChannelMessage(env, channelId, chunk);
+  await createChannelMessage(
+    env,
+    channelId,
+    firstChunk,
+    attachments,
+    [],
+    undefined,
+    await createDiscordMessageNonce(options.idempotencyKey, 0)
+  );
+  for (let index = 0; index < followupChunks.length; index++) {
+    await createChannelMessage(
+      env,
+      channelId,
+      followupChunks[index],
+      [],
+      [],
+      undefined,
+      await createDiscordMessageNonce(options.idempotencyKey, index + 1)
+    );
   }
 
   return chunks.length;
@@ -199,13 +217,15 @@ async function createChannelMessage(
   content: string,
   attachments: DiscordResponseAttachment[] = [],
   components: APIMessageTopLevelComponent[] = [],
-  flags?: MessageFlags
+  flags?: MessageFlags,
+  nonce?: string
 ) {
   const request = createDiscordRestMessageRequest(
     content,
     attachments,
     components,
-    flags
+    flags,
+    nonce
   );
   const result = await getDiscordRestDispatcher(env.DiscordRest).request({
     method: "POST",
@@ -584,14 +604,16 @@ function createDiscordRestMessageRequest(
   content: string,
   attachments: DiscordResponseAttachment[],
   components: APIMessageTopLevelComponent[],
-  flags?: MessageFlags
+  flags?: MessageFlags,
+  nonce?: string
 ) {
   if (components.length === 0) assertDiscordContentLength(content);
   const payload = createDiscordMessagePayload(
     content,
     attachments,
     components,
-    flags
+    flags,
+    { nonce }
   );
   const body = JSON.stringify(payload);
 
@@ -621,12 +643,12 @@ function createDiscordMessagePayload(
   attachments: DiscordResponseAttachment[],
   components: APIMessageTopLevelComponent[] = [],
   flags?: MessageFlags,
-  options: { clearLegacyContent?: boolean } = {}
+  options: { clearLegacyContent?: boolean; nonce?: string } = {}
 ):
   | RESTPatchAPIWebhookWithTokenMessageJSONBody
   | RESTPostAPIChannelMessageJSONBody {
   if (components.length > 0) {
-    return {
+    const payload = {
       allowed_mentions: { parse: [] },
       content: options.clearLegacyContent ? null : undefined,
       components,
@@ -637,9 +659,16 @@ function createDiscordMessagePayload(
         description: attachment.description
       }))
     };
+    return options.nonce
+      ? {
+          ...payload,
+          nonce: options.nonce,
+          enforce_nonce: true
+        }
+      : payload;
   }
 
-  return {
+  const payload = {
     content,
     allowed_mentions: { parse: [] },
     attachments: attachments.map((attachment, index) => ({
@@ -648,6 +677,29 @@ function createDiscordMessagePayload(
       description: attachment.description
     }))
   };
+  return options.nonce
+    ? {
+        ...payload,
+        nonce: options.nonce,
+        enforce_nonce: true
+      }
+    : payload;
+}
+
+async function createDiscordMessageNonce(
+  idempotencyKey: string | undefined,
+  chunkIndex: number
+) {
+  if (!idempotencyKey) return undefined;
+
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(`${idempotencyKey}:${chunkIndex}`)
+  );
+  return [...new Uint8Array(digest)]
+    .slice(0, 12)
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
 }
 
 function base64ToBytes(base64: string) {

@@ -43,6 +43,16 @@ import {
   type DiscordDeliveryResetInput
 } from "./discord/delivery";
 import { DiscordDeliveryRunner } from "./discord/delivery-runner";
+import {
+  createCompletedDiscordDeliveryFiberSnapshot,
+  createDiscordDeliveryFiberMetadata,
+  createDiscordDeliveryFiberSnapshot,
+  createFailedDiscordDeliveryFiberSnapshot,
+  getDiscordDeliveryFiberCorrelationId,
+  getDiscordDeliveryFiberName,
+  parseDiscordDeliveryFiberSnapshot,
+  type DiscordDeliveryFiberSnapshot
+} from "./discord/delivery-fiber";
 import { inlineDataUrls } from "./discord/format";
 import { getCurrentBotUser } from "./discord/api";
 import {
@@ -333,40 +343,24 @@ export class ChatAgent extends Think<Env> {
 
     if (result.status !== "completed") {
       this.artifactSummaryPromises.delete(getDeliveryCorrelationId(record));
-      await this.createDiscordDeliveryRunner().failDelivery(
+      if (record.type !== "chat") return;
+      await this.startDiscordResponseDelivery(
         record,
-        result.error ?? `Think turn ended with status ${result.status}.`
+        createFailedDiscordDeliveryFiberSnapshot(
+          record,
+          result.error ?? `Think turn ended with status ${result.status}.`
+        )
       );
       return;
     }
 
     try {
-      if (record.type === "chat") {
-        record = await this.applyArtifactSummaries(record);
-      }
-
-      try {
-        await this.createDiscordDeliveryRunner().deliverChatResponse(
-          record,
-          result
-        );
-      } catch (error) {
-        await this.createDiscordDeliveryRunner().failDelivery(
-          record,
-          getErrorMessage(error)
-        );
-        return;
-      }
-
-      try {
-        await this.reflectGuildMemoryAfterDiscordChat(record, result);
-      } catch (error) {
-        logWarn("Guild memory reflection failed after Discord delivery", {
-          agentName: this.name,
-          ...getDeliveryLogContext(record),
-          error: getErrorMessage(error)
-        });
-      }
+      if (record.type !== "chat") return;
+      record = await this.applyArtifactSummaries(record);
+      await this.startDiscordResponseDelivery(
+        record,
+        createDiscordDeliveryFiberSnapshot(record, result)
+      );
     } finally {
       this.progressReporters.delete(getDeliveryCorrelationId(record));
       this.artifactSummaryPromises.delete(getDeliveryCorrelationId(record));
@@ -388,12 +382,25 @@ export class ChatAgent extends Think<Env> {
     }
 
     if (submission.status === "completed") {
+      const deliveryFiber = await this.inspectFiberByKey(
+        getDiscordDeliveryFiberName(getDeliveryCorrelationId(record))
+      );
+      if (
+        deliveryFiber?.status === "pending" ||
+        deliveryFiber?.status === "running" ||
+        deliveryFiber?.status === "interrupted"
+      ) {
+        return;
+      }
+
       const deliveryRecord =
         record.type === "chat"
           ? await this.applyArtifactSummaries(record)
           : record;
-      await this.createDiscordDeliveryRunner().deliverCompletedSubmissionWithoutResponse(
-        deliveryRecord
+      if (deliveryRecord.type !== "chat") return;
+      await this.startDiscordResponseDelivery(
+        deliveryRecord,
+        createCompletedDiscordDeliveryFiberSnapshot(deliveryRecord)
       );
       return;
     }
@@ -406,10 +413,14 @@ export class ChatAgent extends Think<Env> {
       const error =
         submission.error ??
         `Think submission ended with status ${submission.status}.`;
-      await this.createDiscordDeliveryRunner().failDelivery(
+      if (record.type !== "chat") return;
+      await this.startDiscordResponseDelivery(
         record,
-        error,
-        error === CHAT_RECOVERY_TERMINAL_MESSAGE ? { userMessage: error } : {}
+        createFailedDiscordDeliveryFiberSnapshot(
+          record,
+          error,
+          error === CHAT_RECOVERY_TERMINAL_MESSAGE ? error : undefined
+        )
       );
     }
   }
@@ -424,6 +435,13 @@ export class ChatAgent extends Think<Env> {
   override async onFiberRecovered(
     ctx: FiberRecoveryContext
   ): Promise<void | FiberRecoveryResult> {
+    const deliveryCorrelationId = getDiscordDeliveryFiberCorrelationId(
+      ctx.name
+    );
+    if (deliveryCorrelationId) {
+      return this.recoverDiscordResponseDelivery(ctx, deliveryCorrelationId);
+    }
+
     const correlationId = getGuildMemoryReflectionCorrelationId(ctx.name);
     if (!correlationId) return super.onFiberRecovered(ctx);
 
@@ -629,17 +647,26 @@ export class ChatAgent extends Think<Env> {
   }
 
   async getDebugDiscordStatus(correlationId: string) {
-    const [delivery, submission, memoryReflection, memoryReflectionFiber] =
-      await Promise.all([
-        this.discordDeliveries.getDelivery(correlationId),
-        this.inspectSubmission(correlationId),
-        this.memoryReflections.get(correlationId),
-        this.inspectFiberByKey(getGuildMemoryReflectionFiberName(correlationId))
-      ]);
+    const [
+      delivery,
+      submission,
+      deliveryFiber,
+      memoryReflection,
+      memoryReflectionFiber
+    ] = await Promise.all([
+      this.discordDeliveries.getDelivery(correlationId),
+      this.inspectSubmission(correlationId),
+      this.inspectFiberByKey(getDiscordDeliveryFiberName(correlationId)),
+      this.memoryReflections.get(correlationId),
+      this.inspectFiberByKey(getGuildMemoryReflectionFiberName(correlationId))
+    ]);
 
     return {
       delivery: delivery ? createDebugDeliveryStatus(delivery) : null,
       submission: submission ? createDebugSubmissionStatus(submission) : null,
+      deliveryFiber: deliveryFiber
+        ? createDebugFiberStatus(deliveryFiber)
+        : null,
       memoryReflection: createDebugMemoryReflectionStatus(
         memoryReflection,
         memoryReflectionFiber
@@ -785,6 +812,135 @@ export class ChatAgent extends Think<Env> {
         userId: request.userId
       }
     });
+  }
+
+  private async startDiscordResponseDelivery(
+    record: DiscordChatDeliveryRecord,
+    snapshot: DiscordDeliveryFiberSnapshot
+  ) {
+    const fiberName = getDiscordDeliveryFiberName(record.correlationId);
+    const fiber = await this.startFiber(
+      fiberName,
+      async (ctx) => {
+        ctx.stash(snapshot);
+        await this.runDiscordResponseDelivery(snapshot);
+      },
+      {
+        idempotencyKey: fiberName,
+        metadata: createDiscordDeliveryFiberMetadata(record),
+        waitForCompletion: true
+      }
+    );
+
+    if (fiber.status === "error") {
+      const freshRecord = await this.discordDeliveries.getDelivery(
+        record.correlationId
+      );
+      if (freshRecord && !isTerminalDelivery(freshRecord)) {
+        await this.createDiscordDeliveryRunner().failDelivery(
+          freshRecord,
+          fiber.error ?? "Discord response delivery fiber failed."
+        );
+      }
+    }
+  }
+
+  private async runDiscordResponseDelivery(
+    snapshot: DiscordDeliveryFiberSnapshot
+  ) {
+    let record = await this.discordDeliveries.getDelivery(
+      snapshot.correlationId
+    );
+    if (!record || record.type !== "chat") return;
+
+    if (snapshot.action === "failure") {
+      if (!isTerminalDelivery(record)) {
+        await this.createDiscordDeliveryRunner().failDelivery(
+          record,
+          snapshot.error,
+          snapshot.userMessage ? { userMessage: snapshot.userMessage } : {}
+        );
+      }
+      return;
+    }
+
+    if (snapshot.action === "completed_without_response") {
+      if (!isTerminalDelivery(record)) {
+        await this.createDiscordDeliveryRunner().deliverCompletedSubmissionWithoutResponse(
+          record
+        );
+      }
+      return;
+    }
+
+    if (!isTerminalDelivery(record)) {
+      try {
+        await this.createDiscordDeliveryRunner().deliverChatResponse(
+          record,
+          snapshot.result
+        );
+      } catch (error) {
+        await this.createDiscordDeliveryRunner().failDelivery(
+          record,
+          getErrorMessage(error)
+        );
+        return;
+      }
+    }
+
+    record = await this.discordDeliveries.getDelivery(snapshot.correlationId);
+    if (record?.type !== "chat" || record.status !== "delivered") return;
+
+    try {
+      await this.reflectGuildMemoryAfterDiscordChat(record, snapshot.result);
+    } catch (error) {
+      logWarn("Guild memory reflection failed after Discord delivery", {
+        agentName: this.name,
+        ...getDeliveryLogContext(record),
+        error: getErrorMessage(error)
+      });
+    }
+  }
+
+  private async recoverDiscordResponseDelivery(
+    ctx: FiberRecoveryContext,
+    correlationId: string
+  ): Promise<FiberRecoveryResult> {
+    const snapshot = parseDiscordDeliveryFiberSnapshot(ctx.snapshot);
+    if (!snapshot || snapshot.correlationId !== correlationId) {
+      const message =
+        "Discord response delivery recovery could not resume without a valid checkpoint.";
+      const record = await this.discordDeliveries.getDelivery(correlationId);
+      if (record && !isTerminalDelivery(record)) {
+        await this.createDiscordDeliveryRunner().failDelivery(record, message);
+      }
+      logWarn(message, {
+        agentName: this.name,
+        correlationId,
+        fiberId: ctx.id,
+        fiberName: ctx.name,
+        fiberAgeMs: Date.now() - ctx.createdAt
+      });
+      return { status: "error", error: message };
+    }
+
+    try {
+      await this.runDiscordResponseDelivery(snapshot);
+      return {
+        status: "completed",
+        snapshot,
+        metadata: ctx.metadata ?? undefined
+      };
+    } catch (error) {
+      const message = getErrorMessage(error);
+      logWarn("Recovered Discord response delivery failed", {
+        agentName: this.name,
+        correlationId,
+        fiberId: ctx.id,
+        error: message
+      });
+      return { status: "error", error: message, snapshot };
+    }
   }
 
   private async reconcileDiscordAdmissionsSafely(
