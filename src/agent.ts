@@ -26,8 +26,8 @@ import { createRecentDiscordChannelContext } from "./discord/channel-context";
 import { freezeDiscordRequestAttachments } from "./discord/attachment-artifacts";
 import {
   DiscordComponentPromptStore,
-  formatComponentPromptContinuationText,
-  type DiscordComponentPromptInteractionInput
+  type DiscordComponentPromptInteractionInput,
+  type StoredComponentPrompt
 } from "./discord/component-prompts";
 import { summarizeDiscordArtifacts } from "./discord/artifact-summaries";
 import { formatDiscordRuntimeContext } from "./discord/context";
@@ -60,10 +60,7 @@ import {
   withProgressTools
 } from "./discord/progress";
 import type { DiscordProgressReporter } from "./discord/progress";
-import {
-  applyDiscordSourceTurnContext,
-  createDiscordSourceTurnContext
-} from "./discord/source-context";
+import { createDiscordSourceTurnContext } from "./discord/source-context";
 import {
   clearDiscordSession,
   createDiscordUserMessage,
@@ -137,6 +134,12 @@ type DiscordAdmissionReconciliationResult = {
   terminalDeliveriesResumed: number;
   submissionsWithoutDeliveries: number;
   reconciliationFailures: number;
+};
+
+type DiscordComponentContinuationReconciliationResult = {
+  continuationsInspected: number;
+  continuationsSubmitted: number;
+  continuationFailures: number;
 };
 
 export class ChatAgent extends Think<Env> {
@@ -242,6 +245,7 @@ export class ChatAgent extends Think<Env> {
     }
 
     await this.reconcileDiscordAdmissionsSafely("on_start");
+    await this.reconcileComponentPromptContinuationsSafely("on_start");
   }
 
   override async beforeTurn(ctx: TurnContext): Promise<TurnConfig> {
@@ -739,6 +743,7 @@ export class ChatAgent extends Think<Env> {
     try {
       const [
         admissionReconciliation,
+        componentContinuationReconciliation,
         completedDeliveryRecords,
         staleDebugResults,
         staleComponentPrompts,
@@ -747,6 +752,7 @@ export class ChatAgent extends Think<Env> {
         managedFiberRecords
       ] = await Promise.all([
         this.reconcileDiscordAdmissionsSafely("housekeeping"),
+        this.reconcileComponentPromptContinuationsSafely("housekeeping"),
         this.discordDeliveries.pruneCompletedDeliveryRecords(),
         this.discordDeliveries.pruneStaleDebugResults(),
         this.componentPrompts.pruneStalePrompts(),
@@ -770,6 +776,9 @@ export class ChatAgent extends Think<Env> {
       ]);
       if (
         hasDiscordAdmissionReconciliationChanges(admissionReconciliation) ||
+        hasDiscordComponentContinuationReconciliationChanges(
+          componentContinuationReconciliation
+        ) ||
         completedDeliveryRecords > 0 ||
         staleDebugResults > 0 ||
         staleComponentPrompts > 0 ||
@@ -780,6 +789,7 @@ export class ChatAgent extends Think<Env> {
         logInfo("Discord housekeeping completed repairs or pruning", {
           agentName: this.name,
           ...admissionReconciliation,
+          ...componentContinuationReconciliation,
           completedDeliveryRecords,
           staleDebugResults,
           staleComponentPrompts,
@@ -1194,40 +1204,85 @@ export class ChatAgent extends Think<Env> {
     input: DiscordComponentPromptInteractionInput
   ) {
     const result = await this.componentPrompts.select(input);
-    if (result.status !== "accepted" || !result.option.pendingAction) {
-      return result;
+    if (result.status === "accepted" && result.prompt.continuation) {
+      await this.submitComponentPromptContinuation(result.prompt);
     }
+    return result;
+  }
 
-    const prompt = result.prompt;
-    const channelId = prompt.channelId ?? input.channelId;
-    if (!channelId) return result;
+  private async submitComponentPromptContinuation(
+    prompt: StoredComponentPrompt
+  ) {
+    const continuation = prompt.continuation;
+    if (!continuation || continuation.status !== "pending") return false;
 
-    const text = formatComponentPromptContinuationText(prompt, result.option);
-    await this.enqueueDiscordChat({
-      responseTarget: {
-        type: "channel_message",
-        channelId
-      },
-      request: applyDiscordSourceTurnContext(
-        {
-          correlationId: input.interactionId,
-          discordInteractionId: input.interactionId,
-          sourceCorrelationId: prompt.sourceCorrelationId,
-          sourceInteractionId: prompt.sourceInteractionId,
-          text,
-          emptyResponseBehavior: "suppress",
-          guildId: prompt.guildId ?? input.guildId,
-          channelId: prompt.channelId ?? input.channelId,
-          channel: input.channel,
-          app: input.app,
-          appPermissions: input.appPermissions,
-          userId: input.userId,
-          user: input.user,
-          userPermissions: input.userPermissions
-        },
-        prompt.sourceContext
-      )
-    });
+    try {
+      await this.enqueueDiscordChat({
+        responseTarget: continuation.responseTarget,
+        request: continuation.request
+      });
+      await this.componentPrompts.markContinuationSubmitted(
+        prompt.id,
+        continuation.correlationId
+      );
+      return true;
+    } catch (error) {
+      const message = getErrorMessage(error);
+      try {
+        await this.componentPrompts.recordContinuationFailure(
+          prompt.id,
+          continuation.correlationId,
+          message
+        );
+      } catch (recordError) {
+        logError(
+          "Discord component continuation failure could not be recorded",
+          recordError,
+          {
+            agentName: this.name,
+            promptId: prompt.id,
+            correlationId: continuation.correlationId
+          }
+        );
+      }
+      logWarn("Discord component continuation admission failed", {
+        agentName: this.name,
+        promptId: prompt.id,
+        correlationId: continuation.correlationId,
+        attempts: continuation.attempts + 1,
+        error: message
+      });
+      return false;
+    }
+  }
+
+  private async reconcileComponentPromptContinuationsSafely(
+    source: "on_start" | "housekeeping"
+  ) {
+    try {
+      return await this.reconcileComponentPromptContinuations();
+    } catch (error) {
+      logError("Discord component continuation reconciliation failed", error, {
+        agentName: this.name,
+        source
+      });
+      return createEmptyDiscordComponentContinuationReconciliationResult();
+    }
+  }
+
+  private async reconcileComponentPromptContinuations() {
+    const result =
+      createEmptyDiscordComponentContinuationReconciliationResult();
+    const prompts = await this.componentPrompts.listPendingContinuations();
+    result.continuationsInspected = prompts.length;
+
+    for (const prompt of prompts) {
+      if (await this.submitComponentPromptContinuation(prompt)) {
+        result.continuationsSubmitted++;
+      } else {
+        result.continuationFailures++;
+      }
+    }
 
     return result;
   }
@@ -1544,6 +1599,20 @@ function hasDiscordAdmissionReconciliationChanges(
     result.submissionsWithoutDeliveries > 0 ||
     result.reconciliationFailures > 0
   );
+}
+
+function createEmptyDiscordComponentContinuationReconciliationResult(): DiscordComponentContinuationReconciliationResult {
+  return {
+    continuationsInspected: 0,
+    continuationsSubmitted: 0,
+    continuationFailures: 0
+  };
+}
+
+function hasDiscordComponentContinuationReconciliationChanges(
+  result: DiscordComponentContinuationReconciliationResult
+) {
+  return result.continuationsSubmitted > 0 || result.continuationFailures > 0;
 }
 
 function isDiscordChatSubmission(submission: ThinkSubmissionInspection) {

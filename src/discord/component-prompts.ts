@@ -9,12 +9,15 @@ import {
 } from "discord-api-types/v10";
 import type {
   DiscordAppContext,
+  DiscordChatRequest,
   DiscordChannelContext,
+  DiscordChannelMessageTarget,
   DiscordPermissionContext,
   DiscordSourceTurnContext,
   DiscordUserContext
 } from "./types";
 import { pruneDurableStorageRecords } from "../storage-prune";
+import { applyDiscordSourceTurnContext } from "./source-context";
 
 export type ComponentPromptKind = "confirm" | "select";
 export type ComponentPromptPresentation = "buttons" | "select";
@@ -52,9 +55,20 @@ export type StoredComponentPrompt = {
   status: ComponentPromptStatus;
   selectedOptionId?: string;
   selectedByUserId?: string;
+  continuation?: StoredComponentPromptContinuation;
   createdAt: string;
   updatedAt: string;
   expiresAt: string;
+};
+
+export type StoredComponentPromptContinuation = {
+  status: "pending" | "submitted";
+  correlationId: string;
+  responseTarget: DiscordChannelMessageTarget;
+  request: DiscordChatRequest;
+  attempts: number;
+  updatedAt: string;
+  lastError?: string;
 };
 
 export type CreateComponentPromptInput = {
@@ -111,10 +125,13 @@ export type ParsedComponentPromptCustomId = {
 };
 
 const COMPONENT_PROMPT_KEY_PREFIX = "discord:component-prompt:";
+const PENDING_COMPONENT_CONTINUATION_KEY_PREFIX =
+  "discord:component-continuation:pending:";
 const CUSTOM_ID_PREFIX = "sturm:prompt";
 const DEFAULT_PROMPT_TTL_MS = 15 * 60 * 1000;
 const COMPONENT_PROMPT_RETENTION_MS = 24 * 60 * 60 * 1000;
 const COMPONENT_PROMPT_PRUNE_BATCH_SIZE = 100;
+const PENDING_COMPONENT_CONTINUATION_LIST_LIMIT = 100;
 export const MAX_PROMPT_OPTIONS = 10;
 export const MAX_PROMPT_QUESTION_LENGTH = 1200;
 export const MAX_BUTTON_LABEL_LENGTH = 80;
@@ -194,7 +211,7 @@ export class DiscordComponentPromptStore {
   }
 
   async select(
-    input: ComponentPromptSelectionInput
+    input: DiscordComponentPromptInteractionInput
   ): Promise<ComponentPromptSelectionResult> {
     return this.storage.transaction(async (txn) => {
       const key = getComponentPromptKey(input.promptId);
@@ -236,12 +253,77 @@ export class DiscordComponentPromptStore {
         status: "consumed",
         selectedOptionId: option.id,
         selectedByUserId: input.userId,
+        continuation: createStoredComponentPromptContinuation(
+          prompt,
+          option,
+          input,
+          now.toISOString()
+        ),
         updatedAt: now.toISOString()
       } satisfies StoredComponentPrompt;
       await txn.put<StoredComponentPrompt>(key, consumed);
+      if (consumed.continuation) {
+        await txn.put(getPendingComponentContinuationKey(prompt.id), true);
+      }
 
       return { status: "accepted", prompt: consumed, option };
     });
+  }
+
+  async listPendingContinuations(
+    limit = PENDING_COMPONENT_CONTINUATION_LIST_LIMIT
+  ) {
+    const pendingEntries = await this.storage.list<boolean>({
+      prefix: PENDING_COMPONENT_CONTINUATION_KEY_PREFIX,
+      limit
+    });
+    const pendingKeys = [...pendingEntries.keys()];
+    const promptKeys = pendingKeys.map((key) =>
+      getComponentPromptKey(
+        key.slice(PENDING_COMPONENT_CONTINUATION_KEY_PREFIX.length)
+      )
+    );
+    const prompts =
+      promptKeys.length > 0
+        ? await this.storage.get<StoredComponentPrompt>(promptKeys)
+        : new Map<string, StoredComponentPrompt>();
+    const pending: StoredComponentPrompt[] = [];
+    const staleKeys: string[] = [];
+
+    for (let index = 0; index < pendingKeys.length; index++) {
+      const prompt = prompts.get(promptKeys[index]);
+      if (prompt?.continuation?.status === "pending") {
+        pending.push(prompt);
+      } else {
+        staleKeys.push(pendingKeys[index]);
+      }
+    }
+
+    if (staleKeys.length > 0) await this.storage.delete(staleKeys);
+    return pending;
+  }
+
+  async markContinuationSubmitted(promptId: string, correlationId: string) {
+    await this.updateContinuation(promptId, correlationId, (continuation) => ({
+      ...continuation,
+      status: "submitted",
+      attempts: continuation.attempts + 1,
+      updatedAt: new Date().toISOString(),
+      lastError: undefined
+    }));
+  }
+
+  async recordContinuationFailure(
+    promptId: string,
+    correlationId: string,
+    error: string
+  ) {
+    await this.updateContinuation(promptId, correlationId, (continuation) => ({
+      ...continuation,
+      attempts: continuation.attempts + 1,
+      updatedAt: new Date().toISOString(),
+      lastError: error
+    }));
   }
 
   async pruneStalePrompts(retentionMs = COMPONENT_PROMPT_RETENTION_MS) {
@@ -252,6 +334,68 @@ export class DiscordComponentPromptStore {
       shouldPrune: (prompt) => shouldPruneComponentPrompt(prompt, cutoffMs)
     });
   }
+
+  private async updateContinuation(
+    promptId: string,
+    correlationId: string,
+    update: (
+      continuation: StoredComponentPromptContinuation
+    ) => StoredComponentPromptContinuation
+  ) {
+    await this.storage.transaction(async (txn) => {
+      const key = getComponentPromptKey(promptId);
+      const prompt = await txn.get<StoredComponentPrompt>(key);
+      if (prompt?.continuation?.correlationId !== correlationId) return;
+
+      const continuation = update(prompt.continuation);
+      await txn.put<StoredComponentPrompt>(key, {
+        ...prompt,
+        continuation,
+        updatedAt: continuation.updatedAt
+      });
+      if (continuation.status === "submitted") {
+        await txn.delete(getPendingComponentContinuationKey(promptId));
+      }
+    });
+  }
+}
+
+function createStoredComponentPromptContinuation(
+  prompt: StoredComponentPrompt,
+  option: ComponentPromptOption,
+  input: DiscordComponentPromptInteractionInput,
+  now: string
+): StoredComponentPromptContinuation | undefined {
+  if (!option.pendingAction) return undefined;
+  const channelId = prompt.channelId ?? input.channelId;
+  if (!channelId) return undefined;
+
+  return {
+    status: "pending",
+    correlationId: input.interactionId,
+    responseTarget: { type: "channel_message", channelId },
+    request: applyDiscordSourceTurnContext(
+      {
+        correlationId: input.interactionId,
+        discordInteractionId: input.interactionId,
+        sourceCorrelationId: prompt.sourceCorrelationId,
+        sourceInteractionId: prompt.sourceInteractionId,
+        text: formatComponentPromptContinuationText(prompt, option),
+        emptyResponseBehavior: "suppress",
+        guildId: prompt.guildId ?? input.guildId,
+        channelId: prompt.channelId ?? input.channelId,
+        channel: input.channel,
+        app: input.app,
+        appPermissions: input.appPermissions,
+        userId: input.userId,
+        user: input.user,
+        userPermissions: input.userPermissions
+      },
+      prompt.sourceContext
+    ),
+    attempts: 0,
+    updatedAt: now
+  };
 }
 
 export function createComponentPromptButtonCustomId(
@@ -453,6 +597,7 @@ function shouldPruneComponentPrompt(
   prompt: StoredComponentPrompt,
   cutoffMs: number
 ) {
+  if (prompt.continuation?.status === "pending") return false;
   const timestamp =
     prompt.status === "pending" ? prompt.expiresAt : prompt.updatedAt;
   const timestampMs = Date.parse(timestamp);
@@ -466,4 +611,8 @@ function truncate(value: string, maxLength: number) {
 
 function getComponentPromptKey(promptId: string) {
   return `${COMPONENT_PROMPT_KEY_PREFIX}${promptId}`;
+}
+
+function getPendingComponentContinuationKey(promptId: string) {
+  return `${PENDING_COMPONENT_CONTINUATION_KEY_PREFIX}${promptId}`;
 }
