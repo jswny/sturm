@@ -315,7 +315,7 @@ export class ChatAgent extends Think<Env> {
   }
 
   override async onChatResponse(result: ChatResponseResult) {
-    let record = await this.discordDeliveries.getDelivery(result.requestId);
+    let record = await this.getDiscordDeliveryForChatResponse(result);
     if (!record || isTerminalDelivery(record)) return;
 
     if (result.status !== "completed") {
@@ -1137,6 +1137,38 @@ export class ChatAgent extends Think<Env> {
   ) {
     const reporter = await this.getOrCreateProgressReporter(correlationId);
     await reporter?.report(event);
+  }
+
+  private async getDiscordDeliveryForChatResponse(result: ChatResponseResult) {
+    const directRecord = await this.discordDeliveries.getDelivery(
+      result.requestId
+    );
+    if (directRecord || !result.continuation) return directRecord;
+
+    // Think gives a recovered continuation a new request ID. The Discord
+    // delivery remains keyed by the stable correlation/recovery-root ID stored
+    // on the originating user turn.
+    const turn = this.getLatestDiscordTurn();
+    if (!turn) return undefined;
+
+    const recoveryRecord = await this.discordDeliveries.getDelivery(
+      turn.correlationId
+    );
+    if (
+      recoveryRecord?.type !== "chat" ||
+      isTerminalDelivery(recoveryRecord) ||
+      recoveryRecord.lifecycle?.state !== "recovering"
+    ) {
+      return undefined;
+    }
+
+    logInfo("Resolved recovered Discord delivery", {
+      agentName: this.name,
+      requestId: result.requestId,
+      correlationId: turn.correlationId,
+      discordInteractionId: recoveryRecord.discordInteractionId
+    });
+    return recoveryRecord;
   }
 
   private getLatestDiscordTurn(): DiscordChatRequest | undefined {
