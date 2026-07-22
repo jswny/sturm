@@ -278,7 +278,6 @@ export class ChatAgent extends Think<Env> {
           : ctx.messages
       ),
       tools,
-      activeTools: Object.keys(tools),
       maxSteps: this.maxSteps,
       sendReasoning: false,
       providerOptions: REPLY_PROVIDER_OPTIONS as Record<string, unknown>

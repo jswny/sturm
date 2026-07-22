@@ -18,6 +18,7 @@ const BROWSER_CONNECTOR_HINT = [
 const BROWSER_EXECUTE_DESCRIPTION = [
   "Run an async JavaScript arrow function in a sandbox with access to a live browser through the cdp connector.",
   "Use this only when a task needs rendered page state, browser interaction, screenshots, or CDP inspection.",
+  "Files created or downloaded by the browser and browser filesystem paths are isolated from the Think workspace. Workspace tools cannot read those paths, and exportWorkspaceFile cannot export them; use the workspace tools for files the user should receive.",
   "Return the small result needed for the final answer.",
   "Available globals are cdp, codemode, and standard JavaScript. Do not use imports, require, process, Node.js APIs, or TypeScript-only syntax such as type annotations, interfaces, or generics.",
   BROWSER_CONNECTOR_HINT
@@ -40,9 +41,8 @@ export function createBrowserAutomationTools(
       description: BROWSER_EXECUTE_DESCRIPTION,
       inputSchema: browserExecuteInputSchema,
       execute: async (input, options) => {
-        // Keep browser automation as the only code-execution-style tool, but
-        // create the Code Mode runtime lazily so normal turns do not initialize
-        // Browser Run or Worker Loader plumbing when the tool is unused.
+        // Create the browser-only Code Mode runtime lazily so normal turns do
+        // not initialize Browser Run or Worker Loader plumbing when unused.
         const { runtime } = createBrowserRuntime({
           ctx,
           browser: env.BROWSER,
