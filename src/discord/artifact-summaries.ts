@@ -1,4 +1,4 @@
-import { generateObject, type ModelMessage } from "ai";
+import { generateText, Output, type ModelMessage } from "ai";
 import { z } from "zod";
 import type { StoredResponseArtifact } from "../artifacts";
 import { getErrorMessage, logWarn } from "../logging";
@@ -128,15 +128,17 @@ async function summarizeDiscordImageArtifact(
       },
       sessionAffinity
     );
-    const result = await generateObject({
+    const result = await generateText({
       model,
       providerOptions: ARTIFACT_SUMMARY_PROVIDER_OPTIONS,
       system:
         "You summarize images for future conversation context. Respond only with the image summary.",
-      schema: imageSummarySchema,
-      schemaName: "imageSummary",
-      schemaDescription:
-        "A concise summary of visible image content and important visible text.",
+      output: Output.object({
+        schema: imageSummarySchema,
+        name: "imageSummary",
+        description:
+          "A concise summary of visible image content and important visible text."
+      }),
       messages: [
         {
           role: "user",
@@ -170,7 +172,7 @@ async function summarizeDiscordImageArtifact(
       timeout: REPLY_CHAT_TIMEOUT_MS
     });
 
-    const summary = normalizeVisualSummary(result.object.summary);
+    const summary = normalizeVisualSummary(result.output.summary);
     if (!summary) {
       logWarn("Image artifact summary produced no usable summary", {
         correlationId: request.correlationId,

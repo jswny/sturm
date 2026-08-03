@@ -302,7 +302,7 @@ export class ChatAgent extends Think<Env> {
       finishReason: ctx.finishReason,
       inputTokens: usage?.inputTokens,
       outputTokens: usage?.outputTokens,
-      reasoningTokens: usage?.reasoningTokens,
+      reasoningTokens: usage?.outputTokenDetails.reasoningTokens,
       totalTokens: usage?.totalTokens
     });
   }

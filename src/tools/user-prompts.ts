@@ -119,14 +119,11 @@ const selectPromptInputSchema = z.object({
     )
 });
 
-type ConfirmPromptInput = z.infer<typeof confirmPromptInputSchema>;
-type SelectPromptInput = z.infer<typeof selectPromptInputSchema>;
-
 export function createUserPromptTools(
   controller: UserPromptController | undefined
 ) {
   return {
-    askUserToConfirm: tool<ConfirmPromptInput, UserPromptToolResponse>({
+    askUserToConfirm: tool({
       description:
         "Ask the current Discord user to confirm or cancel before Sturm continues. Use this instead of guessing when a user must explicitly approve a pending action. The prompt is shown publicly, but only the current requester can answer; other users' clicks are rejected before reaching the model. The Discord component prompt is rendered automatically, so do not expose promptId or other internal identifiers in the final response unless the user explicitly asks for diagnostic details. After calling this tool, end the turn with a short note and do not perform the pending action until the confirmation result comes back in a later turn. If later code needs prompt details, keep or return the structured tool result.",
       inputSchema: confirmPromptInputSchema,
@@ -170,7 +167,7 @@ export function createUserPromptTools(
         value: formatUserPromptOutput(output)
       })
     }),
-    askUserToSelect: tool<SelectPromptInput, UserPromptToolResponse>({
+    askUserToSelect: tool({
       description:
         "Ask the current Discord user to choose one option before Sturm continues. Use for disambiguation, choosing one of several proposed paths, or collecting a missing bounded value. The prompt is shown publicly, but only the current requester can answer; other users' clicks are rejected before reaching the model. The Discord component prompt is rendered automatically, so do not expose promptId or other internal identifiers in the final response unless the user explicitly asks for diagnostic details. Each option's pendingAction is durable task state for the later turn, so include explicit durable IDs needed to continue, such as artifactId and the chosen sticker/emoji name when prompting for an expression name. After calling this tool, end the turn with a short note and do not perform the pending action until the selection result comes back in a later turn. If later code needs prompt details, keep or return the structured tool result.",
       inputSchema: selectPromptInputSchema,

@@ -1,0 +1,2 @@
+# Wrangler runtime declarations contain generated trailing whitespace.
+env.d.ts -whitespace

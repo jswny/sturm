@@ -57,7 +57,10 @@ export function withProgressTools(
         name,
         {
           ...definition,
-          execute: async (input: unknown, options?: ToolExecutionOptions) => {
+          execute: async (
+            input: unknown,
+            options?: ToolExecutionOptions<unknown>
+          ) => {
             const toolCallId =
               options?.toolCallId ?? `${name}:${fallbackToolCallSequence++}`;
             await reporter.report({
@@ -70,7 +73,7 @@ export function withProgressTools(
             try {
               const output = await execute(
                 input,
-                options as ToolExecutionOptions
+                options as ToolExecutionOptions<unknown>
               );
               await reporter.report({
                 type: "tool",
