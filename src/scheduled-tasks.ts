@@ -35,7 +35,7 @@ export type ScheduleChannelTaskInput = {
   intervalSeconds?: number;
 };
 
-export type ReplaceScheduledChannelTaskInput = {
+export type UpdateScheduledChannelTaskInput = {
   scheduleId: string;
   instruction?: string;
   mode?: ScheduleChannelTaskInput["mode"];
@@ -49,9 +49,9 @@ export type ScheduledTaskController = {
   schedule(input: ScheduleChannelTaskInput): Promise<ScheduleChannelTaskResult>;
   list(): Promise<ListScheduledChannelTasksResult>;
   cancel(scheduleId: string): Promise<CancelScheduledChannelTaskResult>;
-  replace(
-    input: ReplaceScheduledChannelTaskInput
-  ): Promise<ReplaceScheduledChannelTaskResult>;
+  update(
+    input: UpdateScheduledChannelTaskInput
+  ): Promise<UpdateScheduledChannelTaskResult>;
 };
 
 export type ScheduleChannelTaskResult = {
@@ -78,16 +78,16 @@ export type CancelScheduledChannelTaskResult = {
   error?: string;
 };
 
-export type ReplaceScheduledChannelTaskResult = {
+export type UpdateScheduledChannelTaskResult = {
   ok: boolean;
   scheduleId: string;
-  replaced?: boolean;
+  updated?: boolean;
   oldScheduleId?: string;
   oldTaskId?: string;
   oldScheduleCancelled?: boolean;
   newScheduleId?: string;
   newTaskId?: string;
-  replacementCancelled?: boolean;
+  newScheduleCancelled?: boolean;
   type?: string;
   nextRunAt?: string;
   recurring?: boolean;

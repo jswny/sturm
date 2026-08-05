@@ -10,8 +10,8 @@ import {
   summarizeScheduledChannelTask,
   type CancelScheduledChannelTaskResult,
   type ListScheduledChannelTasksResult,
-  type ReplaceScheduledChannelTaskInput,
-  type ReplaceScheduledChannelTaskResult,
+  type UpdateScheduledChannelTaskInput,
+  type UpdateScheduledChannelTaskResult,
   type ScheduleChannelTaskInput,
   type ScheduleChannelTaskResult,
   type ScheduledChannelTaskPayload,
@@ -49,7 +49,7 @@ export function createChannelScheduledTaskController(
     schedule: (input) => scheduleDiscordChannelTask(host, turn, input),
     list: () => listDiscordChannelTasks(host, turn),
     cancel: (scheduleId) => cancelDiscordChannelTask(host, turn, scheduleId),
-    replace: (input) => replaceDiscordChannelTask(host, turn, input)
+    update: (input) => updateDiscordChannelTask(host, turn, input)
   };
 }
 
@@ -187,11 +187,11 @@ async function cancelDiscordChannelTask(
   }
 }
 
-async function replaceDiscordChannelTask(
+async function updateDiscordChannelTask(
   host: ChannelSchedulerHost,
   turn: DiscordChatRequest,
-  input: ReplaceScheduledChannelTaskInput
-): Promise<ReplaceScheduledChannelTaskResult> {
+  input: UpdateScheduledChannelTaskInput
+): Promise<UpdateScheduledChannelTaskResult> {
   const preparedScheduleId = input.scheduleId.trim();
   if (!preparedScheduleId) {
     return {
@@ -207,14 +207,14 @@ async function replaceDiscordChannelTask(
       return {
         ok: true,
         scheduleId: preparedScheduleId,
-        replaced: false
+        updated: false
       };
     }
 
     const target = getScheduledChannelTaskMutationTarget(
       schedule,
       turn,
-      "replace"
+      "update"
     );
     if (!target.ok) {
       return {
@@ -254,7 +254,7 @@ async function replaceDiscordChannelTask(
     try {
       oldScheduleCancelled = await host.cancelSchedule(preparedScheduleId);
     } catch (error) {
-      const replacementCancelled = await cancelReplacementSchedule(
+      const newScheduleCancelled = await cancelReplacementSchedule(
         host,
         replacementSchedule.id
       );
@@ -267,7 +267,7 @@ async function replaceDiscordChannelTask(
           channelId: turn.channelId,
           scheduleId: preparedScheduleId,
           newScheduleId: replacementSchedule.id,
-          replacementCancelled
+          newScheduleCancelled
         }
       );
       return {
@@ -277,8 +277,8 @@ async function replaceDiscordChannelTask(
         oldTaskId: target.payload.taskId,
         oldScheduleCancelled: false,
         ...replacementFields,
-        replacementCancelled,
-        error: `Original schedule cancellation failed after replacement creation: ${getErrorMessage(error)}`
+        newScheduleCancelled,
+        error: `Original schedule cancellation failed after revised schedule creation: ${getErrorMessage(error)}`
       };
     }
 
@@ -286,20 +286,20 @@ async function replaceDiscordChannelTask(
       return {
         ok: true,
         scheduleId: preparedScheduleId,
-        replaced: true,
+        updated: true,
         oldScheduleId: preparedScheduleId,
         oldTaskId: target.payload.taskId,
         oldScheduleCancelled: false,
         ...replacementFields,
         warning:
-          "Original schedule was no longer available after the replacement was created, so the replacement was kept."
+          "Original schedule was no longer available after the revised schedule was created, so the revised schedule was kept."
       };
     }
 
     return {
       ok: true,
       scheduleId: preparedScheduleId,
-      replaced: true,
+      updated: true,
       oldScheduleId: preparedScheduleId,
       oldTaskId: target.payload.taskId,
       oldScheduleCancelled: true,
@@ -468,7 +468,7 @@ function createReplacementScheduleFields(
     recurring: schedule.type === "cron" || schedule.type === "interval",
     instruction: payload.instruction
   } satisfies Pick<
-    ReplaceScheduledChannelTaskResult,
+    UpdateScheduledChannelTaskResult,
     | "newScheduleId"
     | "newTaskId"
     | "type"
@@ -481,7 +481,7 @@ function createReplacementScheduleFields(
 function getScheduledChannelTaskMutationTarget(
   schedule: Schedule<unknown>,
   turn: DiscordChatRequest,
-  action: "cancel" | "replace"
+  action: "cancel" | "update"
 ):
   | { ok: true; payload: ScheduledChannelTaskPayload }
   | { ok: false; error: string } {
@@ -522,7 +522,7 @@ function getScheduledChannelTaskMutationTarget(
 
 function prepareReplacementScheduledChannelTask(
   turn: DiscordChatRequest,
-  input: ReplaceScheduledChannelTaskInput,
+  input: UpdateScheduledChannelTaskInput,
   existingPayload: ScheduledChannelTaskPayload,
   existingSchedule: Schedule<unknown>
 ):
@@ -551,13 +551,31 @@ function prepareReplacementScheduledChannelTask(
 
   return {
     ok: true,
-    payload: createScheduledChannelTaskPayload(turn, instruction.value),
+    payload: createReplacementScheduledChannelTaskPayload(
+      turn,
+      instruction.value,
+      existingPayload
+    ),
     when: when.value
   };
 }
 
+function createReplacementScheduledChannelTaskPayload(
+  turn: DiscordChatRequest,
+  instruction: string,
+  existingPayload: ScheduledChannelTaskPayload
+) {
+  return {
+    ...createScheduledChannelTaskPayload(turn, instruction),
+    taskId: existingPayload.taskId,
+    createdByUserId: existingPayload.createdByUserId,
+    createdByUser: existingPayload.createdByUser,
+    createdAt: existingPayload.createdAt
+  } satisfies ScheduledChannelTaskPayload;
+}
+
 function getReplacementInstruction(
-  input: ReplaceScheduledChannelTaskInput,
+  input: UpdateScheduledChannelTaskInput,
   existingPayload: ScheduledChannelTaskPayload
 ): { ok: true; value: string } | { ok: false; error: string } {
   if (input.instruction === undefined) {
@@ -568,14 +586,14 @@ function getReplacementInstruction(
   if (!instruction) {
     return {
       ok: false,
-      error: "Replacement scheduled task instruction cannot be empty."
+      error: "Updated scheduled task instruction cannot be empty."
     };
   }
   return { ok: true, value: instruction };
 }
 
 function getReplacementScheduleWhen(
-  input: ReplaceScheduledChannelTaskInput,
+  input: UpdateScheduledChannelTaskInput,
   existingSchedule: Schedule<unknown>
 ): { ok: true; value: PreparedScheduleWhen } | { ok: false; error: string } {
   if (input.mode) {
@@ -624,7 +642,7 @@ function getExistingScheduleWhen(
   }
 }
 
-function hasReplacementTimingFields(input: ReplaceScheduledChannelTaskInput) {
+function hasReplacementTimingFields(input: UpdateScheduledChannelTaskInput) {
   return (
     input.delaySeconds !== undefined ||
     input.runAt !== undefined ||

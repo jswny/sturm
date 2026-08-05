@@ -4,7 +4,7 @@ import {
   MIN_RECURRING_SCHEDULE_SECONDS,
   type CancelScheduledChannelTaskResult,
   type ListScheduledChannelTasksResult,
-  type ReplaceScheduledChannelTaskResult,
+  type UpdateScheduledChannelTaskResult,
   type ScheduleChannelTaskResult,
   type ScheduledTaskController
 } from "../scheduled-tasks";
@@ -51,16 +51,16 @@ const cancelResultSchema = z.object({
   error: z.string().optional()
 });
 
-const replaceResultSchema = z.object({
+const updateResultSchema = z.object({
   ok: z.boolean(),
   scheduleId: z.string(),
-  replaced: z.boolean().optional(),
+  updated: z.boolean().optional(),
   oldScheduleId: z.string().optional(),
   oldTaskId: z.string().optional(),
   oldScheduleCancelled: z.boolean().optional(),
   newScheduleId: z.string().optional(),
   newTaskId: z.string().optional(),
-  replacementCancelled: z.boolean().optional(),
+  newScheduleCancelled: z.boolean().optional(),
   type: z.string().optional(),
   nextRunAt: z.string().optional(),
   recurring: z.boolean().optional(),
@@ -72,7 +72,7 @@ const replaceResultSchema = z.object({
 type ScheduleTaskToolResult = z.infer<typeof scheduleResultSchema>;
 type ListScheduledTasksToolResult = z.infer<typeof listResultSchema>;
 type CancelScheduledTaskToolResult = z.infer<typeof cancelResultSchema>;
-type ReplaceScheduledTaskToolResult = z.infer<typeof replaceResultSchema>;
+type UpdateScheduledTaskToolResult = z.infer<typeof updateResultSchema>;
 
 export function createScheduledTaskTools(
   controller: ScheduledTaskController | undefined
@@ -146,16 +146,16 @@ export function createScheduledTaskTools(
         value: formatListScheduledTasksOutput(output)
       })
     }),
-    replaceScheduledChannelTask: tool({
+    updateScheduledChannelTask: tool({
       description:
-        "Replace an existing scheduled task in the current Discord channel or thread by schedule ID. Use this when a user asks to edit, update, reschedule, or change a scheduled task. This creates a replacement schedule, then cancels the old schedule; Cloudflare schedules are not edited in place. The caller can replace tasks they created; callers with Manage Messages can replace any channel task. Omit instruction to keep the existing instruction. Omit mode and timing fields to keep the existing time or recurrence. Provide mode whenever changing timing. In the final response, use scheduleId as the user-facing handle when a handle is needed; taskId is internal and should be omitted unless the user explicitly asks for diagnostic details.",
+        "Update an existing scheduled task in the current Discord channel or thread by schedule ID. Use this when a user asks to edit, update, reschedule, or change a scheduled task. Cloudflare schedules are not edited in place, so Sturm creates the revised schedule and then cancels the old schedule internally. The caller can update tasks they created; callers with Manage Messages can update any channel task. Updating preserves the original task creator and does not transfer ownership to the caller performing the update. Omit instruction to keep the existing instruction. Omit mode and timing fields to keep the existing time or recurrence. Provide mode whenever changing timing. A successful update returns a new scheduleId because Cloudflare assigns a new schedule ID; use that new scheduleId as the user-facing handle when a handle is needed. taskId is internal and should be omitted unless the user explicitly asks for diagnostic details.",
       inputSchema: z.object({
-        scheduleId: z.string().min(1).describe("Schedule ID to replace"),
+        scheduleId: z.string().min(1).describe("Schedule ID to update"),
         instruction: z
           .string()
           .optional()
           .describe(
-            "Replacement instruction. Omit to keep the current scheduled instruction."
+            "Updated instruction. Omit to keep the current scheduled instruction."
           ),
         mode: z
           .enum(["delay", "at", "cron", "interval"])
@@ -188,17 +188,17 @@ export function createScheduledTaskTools(
           .optional()
           .describe(INTERVAL_SECONDS_DESCRIPTION)
       }),
-      outputSchema: replaceResultSchema,
+      outputSchema: updateResultSchema,
       execute: async (input) =>
-        controller?.replace(input) ??
+        controller?.update(input) ??
         ({
           ok: false,
           scheduleId: input.scheduleId,
           error: "Scheduling is unavailable outside a Discord channel turn."
-        } satisfies ReplaceScheduledChannelTaskResult),
+        } satisfies UpdateScheduledChannelTaskResult),
       toModelOutput: ({ output }) => ({
         type: "text",
-        value: formatReplaceScheduledTaskOutput(output)
+        value: formatUpdateScheduledTaskOutput(output)
       })
     }),
     cancelScheduledChannelTask: tool({
@@ -271,26 +271,26 @@ function formatListScheduledTasksOutput(output: ListScheduledTasksToolResult) {
   ].join("\n");
 }
 
-function formatReplaceScheduledTaskOutput(
-  output: ReplaceScheduledTaskToolResult
+function formatUpdateScheduledTaskOutput(
+  output: UpdateScheduledTaskToolResult
 ) {
   if (!output.ok) {
     return [
-      "Scheduled task replacement failed.",
+      "Scheduled task update failed.",
       `scheduleId: ${output.scheduleId}`,
       `error: ${output.error ?? "Unknown error."}`
     ].join("\n");
   }
 
-  if (output.replaced === false) {
+  if (output.updated === false) {
     return [
-      "Scheduled task was not replaced because no matching active schedule was found.",
+      "Scheduled task was not updated because no matching active schedule was found.",
       `scheduleId: ${output.scheduleId}`,
       "Final response guidance: tell the user no active scheduled task matched that scheduleId."
     ].join("\n");
   }
 
-  const lines = ["Scheduled task replaced."];
+  const lines = ["Scheduled task updated."];
   if (output.oldScheduleId)
     lines.push(`oldScheduleId: ${output.oldScheduleId}`);
   if (output.newScheduleId) lines.push(`scheduleId: ${output.newScheduleId}`);
@@ -303,7 +303,7 @@ function formatReplaceScheduledTaskOutput(
   if (output.instruction) lines.push(`instruction: ${output.instruction}`);
   if (output.warning) lines.push(`warning: ${output.warning}`);
   lines.push(
-    "Final response guidance: confirm the replacement and use the new scheduleId as the user-facing handle. Do not expose task IDs unless the user explicitly asks for diagnostics."
+    "Final response guidance: confirm the update and use the new scheduleId as the user-facing handle. Do not expose task IDs unless the user explicitly asks for diagnostics."
   );
   return lines.join("\n");
 }

@@ -260,7 +260,7 @@ const TOOL_PROGRESS_COPY: Readonly<Record<string, ToolProgressCopy>> = {
     finished: "Read scheduled tasks",
     failed: "Scheduled task lookup failed"
   },
-  replaceScheduledChannelTask: {
+  updateScheduledChannelTask: {
     started: "Updating a scheduled task",
     finished: "Updated a scheduled task",
     failed: "Scheduled task update failed"
