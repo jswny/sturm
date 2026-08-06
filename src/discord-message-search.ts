@@ -9,8 +9,8 @@ import {
   searchGuildMessages as searchDiscordGuildMessages
 } from "./discord/api";
 import type { DiscordApiEnv } from "./discord/api";
+import { formatDiscordChannelMessageForModel } from "./discord/channel-context";
 import { resolveDiscordMemberDisplayName } from "./discord/display-name";
-import { normalizeUtcTimestamp } from "./discord/timestamps";
 import { logError, logWarn } from "./logging";
 
 export const DISCORD_MESSAGE_SEARCH_MAX_CONTENT_CHARS = 1024;
@@ -26,6 +26,10 @@ export type DiscordMessageSearchContext = {
   guildId?: string;
   channelId?: string;
   channel?: { nsfw?: boolean };
+  app?: {
+    applicationId?: string;
+    botUserId?: string;
+  };
 };
 
 export type DiscordMessageSearchHas =
@@ -68,15 +72,7 @@ export type DiscordMessageSearchResponse = {
 export type DiscordMessageSearchMatch = {
   id: string;
   channelId: string;
-  authorId: string;
-  authorDisplayName: string;
-  authorBot: boolean;
-  sent_at_utc: string;
-  edited_at_utc?: string;
-  content?: string;
-  attachments?: string[];
-  embeds?: number;
-  stickers?: string[];
+  formattedText?: string;
   url: string;
 };
 
@@ -167,7 +163,12 @@ export async function searchDiscordMessages(
       totalResults: result.total_results,
       documentsIndexed: result.documents_indexed,
       results: messages.map((message) =>
-        formatSearchMatch(context.guildId ?? "", message, authorDisplayNames)
+        formatSearchMatch(
+          context.guildId ?? "",
+          message,
+          authorDisplayNames,
+          context
+        )
       )
     };
   } catch (error) {
@@ -234,30 +235,19 @@ function prepareSearchInput(input: DiscordMessageSearchInput): {
 function formatSearchMatch(
   guildId: string,
   message: SearchMessage,
-  authorDisplayNames: Map<string, string>
+  authorDisplayNames: Map<string, string>,
+  context: DiscordMessageSearchContext
 ) {
-  const attachments = message.attachments.map((attachment) =>
-    attachment.content_type
-      ? `${attachment.filename} ${attachment.content_type}`
-      : attachment.filename
-  );
+  const formatted = formatDiscordChannelMessageForModel(message, {
+    applicationId: context.app?.applicationId,
+    botUserId: context.app?.botUserId,
+    memberDisplayNames: authorDisplayNames,
+    sturmMessageContent: "full"
+  });
   return {
     id: message.id,
     channelId: message.channel_id,
-    authorId: message.author.id,
-    authorDisplayName:
-      authorDisplayNames.get(message.author.id) ??
-      message.author.global_name ??
-      message.author.username,
-    authorBot: message.author.bot ?? false,
-    sent_at_utc: normalizeUtcTimestamp(message.timestamp),
-    edited_at_utc: message.edited_timestamp
-      ? normalizeUtcTimestamp(message.edited_timestamp)
-      : undefined,
-    content: normalizeMessageContent(message.content) || undefined,
-    attachments: attachments.length ? attachments : undefined,
-    embeds: message.embeds.length || undefined,
-    stickers: message.sticker_items?.map((sticker) => sticker.name),
+    formattedText: formatted?.text,
     url: `https://discord.com/channels/${guildId}/${message.channel_id}/${message.id}`
   } satisfies DiscordMessageSearchMatch;
 }
@@ -367,10 +357,6 @@ function formatDiscordMessageSearchError(error: unknown) {
   }
 
   return error instanceof Error ? error.message : String(error);
-}
-
-function normalizeMessageContent(content: string) {
-  return content.replace(/\s+/g, " ").trim();
 }
 
 function clampSearchLimit(limit: number) {

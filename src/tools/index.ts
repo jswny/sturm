@@ -58,19 +58,23 @@ export type ToolOptions = {
 };
 
 export function createDiscordTools(env: ToolEnv, options: ToolOptions = {}) {
+  const discordToolContext = {
+    ...(options.discordRequest ?? {}),
+    app: {
+      ...options.discordRequest?.app,
+      botUserId:
+        options.discordBotUserId ?? options.discordRequest?.app?.botUserId
+    }
+  };
+
   return {
     ...createArchiveTools(),
     ...createSearchTools(env),
     ...createDiscordMessageHistoryTools(env, {
-      ...(options.discordRequest ?? {}),
-      initialBeforeMessageId: options.recentChannelBeforeMessageId,
-      app: {
-        ...options.discordRequest?.app,
-        botUserId:
-          options.discordBotUserId ?? options.discordRequest?.app?.botUserId
-      }
+      ...discordToolContext,
+      initialBeforeMessageId: options.recentChannelBeforeMessageId
     }),
-    ...createDiscordMessageSearchTools(env, options.discordRequest ?? {}),
+    ...createDiscordMessageSearchTools(env, discordToolContext),
     ...createNicknameTools(env, options.discordRequest ?? {}),
     ...createModerationTools(env, options.discordRequest ?? {}),
     ...createEmojiTools(env, options.discordRequest ?? {}),

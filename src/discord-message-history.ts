@@ -122,7 +122,8 @@ function formatHistoryMessage(
   const formatted = formatDiscordChannelMessageForModel(message, {
     applicationId: context.app?.applicationId,
     botUserId: context.app?.botUserId,
-    memberDisplayNames: authorDisplayNames
+    memberDisplayNames: authorDisplayNames,
+    sturmMessageContent: "full"
   });
   return {
     id: message.id,

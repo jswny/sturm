@@ -9,6 +9,8 @@ const RECENT_CHANNEL_CONTEXT_MAX_WAIT_MS = 1_500;
 const RECENT_CHANNEL_CONTEXT_MAX_CHARS = 6_000;
 const RECENT_CHANNEL_MESSAGE_MAX_CHARS = 700;
 
+type DiscordChannelMessage = Omit<APIMessage, "reactions">;
+
 type DiscordChannelContextEnv = DiscordApiEnv & {
   DISCORD_APPLICATION_ID?: string;
 };
@@ -18,6 +20,8 @@ export type DiscordChannelMessageFormatOptions = {
   botUserId?: string;
   currentInteractionId?: string;
   memberDisplayNames: Map<string, string>;
+  sturmMessageContent: "marker" | "full";
+  maxBodyChars?: number;
 };
 
 export type RecentDiscordChannelContext = {
@@ -52,7 +56,9 @@ export async function createRecentDiscordChannelContext(
     applicationId: env.DISCORD_APPLICATION_ID?.trim(),
     botUserId: request.app?.botUserId,
     currentInteractionId: request.discordInteractionId,
-    memberDisplayNames
+    memberDisplayNames,
+    sturmMessageContent: "marker",
+    maxBodyChars: RECENT_CHANNEL_MESSAGE_MAX_CHARS
   });
 }
 
@@ -98,28 +104,33 @@ function formatRecentDiscordChannelMessages(
 }
 
 export function formatDiscordChannelMessageForModel(
-  message: APIMessage,
+  message: DiscordChannelMessage,
   options: DiscordChannelMessageFormatOptions
 ): FormattedDiscordChannelMessage | undefined {
   if (isCurrentSturmInteractionMessage(message, options)) return undefined;
-  if (isSturmMessage(message, options)) {
+  const isSturm = isSturmMessage(message, options);
+  const author = formatMessageAuthor(
+    message,
+    options.memberDisplayNames,
+    isSturm ? "Sturm" : undefined
+  );
+  if (isSturm && options.sturmMessageContent === "marker") {
     return {
       id: message.id,
-      text: `- ${formatMessageTimestamps(message)} Sturm (bot): [assistant response omitted; see persisted assistant history]`
+      text: `- ${formatMessageTimestamps(message)} ${author}: [assistant response omitted; see persisted assistant history]`
     };
   }
 
-  const body = formatMessageBody(message);
+  const body = formatMessageBody(message, options.maxBodyChars);
   if (!body) return undefined;
 
-  const author = formatMessageAuthor(message, options.memberDisplayNames);
   return {
     id: message.id,
     text: `- ${formatMessageTimestamps(message)} ${author}: ${body}`
   };
 }
 
-function formatMessageTimestamps(message: APIMessage) {
+function formatMessageTimestamps(message: DiscordChannelMessage) {
   return [
     formatUtcTimestampField("sent_at_utc", message.timestamp),
     message.edited_timestamp
@@ -131,10 +142,12 @@ function formatMessageTimestamps(message: APIMessage) {
 }
 
 function formatMessageAuthor(
-  message: APIMessage,
-  memberDisplayNames: Map<string, string>
+  message: DiscordChannelMessage,
+  memberDisplayNames: Map<string, string>,
+  displayNameOverride?: string
 ) {
   const displayName =
+    displayNameOverride ??
     memberDisplayNames.get(message.author.id) ??
     message.author.global_name ??
     message.author.username;
@@ -144,7 +157,10 @@ function formatMessageAuthor(
   return `${displayName} (${labels.join(", ")})`;
 }
 
-function formatMessageBody(message: APIMessage) {
+function formatMessageBody(
+  message: DiscordChannelMessage,
+  maxBodyChars: number | undefined
+) {
   const parts: string[] = [];
   const content = normalizeMessageContent(message.content);
   if (content) parts.push(content);
@@ -163,14 +179,17 @@ function formatMessageBody(message: APIMessage) {
   }
   if (message.poll) parts.push("poll: present");
 
-  return limitText(parts.join(" | "), RECENT_CHANNEL_MESSAGE_MAX_CHARS);
+  const body = parts.join(" | ");
+  return maxBodyChars === undefined ? body : limitText(body, maxBodyChars);
 }
 
 function normalizeMessageContent(content: string) {
   return content.replace(/\s+/g, " ").trim();
 }
 
-function formatAttachment(attachment: APIMessage["attachments"][number]) {
+function formatAttachment(
+  attachment: DiscordChannelMessage["attachments"][number]
+) {
   const contentType = attachment.content_type
     ? ` ${attachment.content_type}`
     : "";
@@ -178,7 +197,7 @@ function formatAttachment(attachment: APIMessage["attachments"][number]) {
 }
 
 function isCurrentSturmInteractionMessage(
-  message: APIMessage,
+  message: DiscordChannelMessage,
   options: DiscordChannelMessageFormatOptions
 ) {
   return Boolean(
@@ -189,7 +208,7 @@ function isCurrentSturmInteractionMessage(
 }
 
 function isSturmMessage(
-  message: APIMessage,
+  message: DiscordChannelMessage,
   options: DiscordChannelMessageFormatOptions
 ) {
   return Boolean(
@@ -199,7 +218,7 @@ function isSturmMessage(
   );
 }
 
-function getMessageInteractionId(message: APIMessage) {
+function getMessageInteractionId(message: DiscordChannelMessage) {
   return message.interaction_metadata?.id ?? message.interaction?.id;
 }
 

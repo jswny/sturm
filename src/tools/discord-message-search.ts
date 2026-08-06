@@ -38,15 +38,7 @@ const discordMessageSearchResponseSchema = z.object({
       z.object({
         id: z.string(),
         channelId: z.string(),
-        authorId: z.string(),
-        authorDisplayName: z.string(),
-        authorBot: z.boolean(),
-        sent_at_utc: z.string(),
-        edited_at_utc: z.string().optional(),
-        content: z.string().optional(),
-        attachments: z.array(z.string()).optional(),
-        embeds: z.number().int().optional(),
-        stickers: z.array(z.string()).optional(),
+        formattedText: z.string().optional(),
         url: z.string()
       })
     )
@@ -164,21 +156,9 @@ function formatDiscordMessageSearchOutput(
       ? `totalResults: ${output.totalResults}`
       : undefined,
     ...results.map((message) =>
-      [
-        `- ${message.sent_at_utc}`,
-        `author: ${message.authorDisplayName}`,
-        message.content ? `content: ${message.content}` : undefined,
-        message.attachments?.length
-          ? `attachments: ${message.attachments.join(", ")}`
-          : undefined,
-        message.stickers?.length
-          ? `stickers: ${message.stickers.join(", ")}`
-          : undefined,
-        message.embeds ? `embeds: ${message.embeds}` : undefined,
-        `url: ${message.url}`
-      ]
+      [message.formattedText, `  message_url: ${message.url}`]
         .filter(Boolean)
-        .join("; ")
+        .join("\n")
     ),
     "Final response guidance: answer using the relevant messages and include message links when useful."
   ]
