@@ -35,6 +35,11 @@ export type DiscordSourceTurnContext = Pick<
   | "userPermissions"
 >;
 
+export type DiscordMessageToolContext = Pick<
+  DiscordChatRequest,
+  "guildId" | "channelId" | "channel" | "app"
+>;
+
 export type DiscordChatResponse = {
   content: string;
   attachments?: DiscordResponseAttachment[];

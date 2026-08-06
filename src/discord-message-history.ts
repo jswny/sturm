@@ -1,12 +1,14 @@
-import type { APIMessage } from "discord-api-types/v10";
 import {
   DiscordApiError,
   getChannelMessages,
-  getGuildMember,
   type DiscordApiEnv
 } from "./discord/api";
-import { formatDiscordChannelMessageForModel } from "./discord/channel-context";
-import { resolveDiscordMemberDisplayName } from "./discord/display-name";
+import { resolveDiscordMessageAuthorDisplayNames } from "./discord/message-authors";
+import {
+  createDiscordRetrievedMessage,
+  type DiscordRetrievedMessage
+} from "./discord/message-format";
+import type { DiscordMessageToolContext } from "./discord/types";
 import { logError, logWarn } from "./logging";
 
 export const DISCORD_MESSAGE_HISTORY_PAGE_SIZE = 15;
@@ -14,14 +16,8 @@ const DISCORD_MESSAGE_HISTORY_MAX_WAIT_MS = 5_000;
 
 export type DiscordMessageHistoryEnv = DiscordApiEnv;
 
-export type DiscordMessageHistoryContext = {
-  guildId?: string;
-  channelId?: string;
+export type DiscordMessageHistoryContext = DiscordMessageToolContext & {
   initialBeforeMessageId?: string;
-  app?: {
-    applicationId?: string;
-    botUserId?: string;
-  };
 };
 
 export type DiscordMessageHistoryInput = {
@@ -38,11 +34,7 @@ export type DiscordMessageHistoryResponse = {
   error?: string;
 };
 
-export type DiscordMessageHistoryMessage = {
-  id: string;
-  formattedText?: string;
-  url: string;
-};
+export type DiscordMessageHistoryMessage = DiscordRetrievedMessage;
 
 export async function readEarlierDiscordMessages(
   env: DiscordMessageHistoryEnv,
@@ -84,10 +76,11 @@ export async function readEarlierDiscordMessages(
       beforeMessageId,
       maxWaitMs: DISCORD_MESSAGE_HISTORY_MAX_WAIT_MS
     });
-    const authorDisplayNames = await resolveMessageAuthorDisplayNames(
+    const authorDisplayNames = await resolveDiscordMessageAuthorDisplayNames(
       env,
       context.guildId,
-      fetchedMessages
+      fetchedMessages,
+      DISCORD_MESSAGE_HISTORY_MAX_WAIT_MS
     );
 
     return {
@@ -98,12 +91,10 @@ export async function readEarlierDiscordMessages(
       nextBeforeMessageId: fetchedMessages.at(-1)?.id,
       messages: fetchedMessages
         .map((message) =>
-          formatHistoryMessage(
-            context.guildId ?? "",
-            message,
-            authorDisplayNames,
-            context
-          )
+          createDiscordRetrievedMessage(context.guildId ?? "", message, {
+            app: context.app,
+            memberDisplayNames: authorDisplayNames
+          })
         )
         .reverse()
     };
@@ -111,47 +102,6 @@ export async function readEarlierDiscordMessages(
     logDiscordMessageHistoryFailure(error, context, beforeMessageId);
     return failure(context, formatDiscordMessageHistoryError(error));
   }
-}
-
-function formatHistoryMessage(
-  guildId: string,
-  message: APIMessage,
-  authorDisplayNames: Map<string, string>,
-  context: DiscordMessageHistoryContext
-): DiscordMessageHistoryMessage {
-  const formatted = formatDiscordChannelMessageForModel(message, {
-    applicationId: context.app?.applicationId,
-    botUserId: context.app?.botUserId,
-    memberDisplayNames: authorDisplayNames,
-    sturmMessageContent: "full"
-  });
-  return {
-    id: message.id,
-    formattedText: formatted?.text,
-    url: `https://discord.com/channels/${guildId}/${message.channel_id}/${message.id}`
-  };
-}
-
-async function resolveMessageAuthorDisplayNames(
-  env: DiscordMessageHistoryEnv,
-  guildId: string,
-  messages: APIMessage[]
-) {
-  const authorIds = [...new Set(messages.map((message) => message.author.id))];
-  const results = await Promise.all(
-    authorIds.map(async (authorId) => {
-      try {
-        const member = await getGuildMember(env, guildId, authorId, {
-          maxWaitMs: DISCORD_MESSAGE_HISTORY_MAX_WAIT_MS
-        });
-        return [authorId, resolveDiscordMemberDisplayName(member)] as const;
-      } catch {
-        return undefined;
-      }
-    })
-  );
-
-  return new Map(results.filter((entry) => entry !== undefined));
 }
 
 function failure(

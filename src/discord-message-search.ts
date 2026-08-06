@@ -1,16 +1,18 @@
 import {
   MessageSearchHasType,
-  MessageSearchSortMode,
-  type APIMessage
+  MessageSearchSortMode
 } from "discord-api-types/v10";
 import {
   DiscordApiError,
-  getGuildMember,
   searchGuildMessages as searchDiscordGuildMessages
 } from "./discord/api";
 import type { DiscordApiEnv } from "./discord/api";
-import { formatDiscordChannelMessageForModel } from "./discord/channel-context";
-import { resolveDiscordMemberDisplayName } from "./discord/display-name";
+import { resolveDiscordMessageAuthorDisplayNames } from "./discord/message-authors";
+import {
+  createDiscordRetrievedMessage,
+  type DiscordRetrievedMessage
+} from "./discord/message-format";
+import type { DiscordMessageToolContext } from "./discord/types";
 import { logError, logWarn } from "./logging";
 
 export const DISCORD_MESSAGE_SEARCH_MAX_CONTENT_CHARS = 1024;
@@ -22,15 +24,7 @@ const DISCORD_MESSAGE_SEARCH_MAX_WAIT_MS = 5_000;
 
 export type DiscordMessageSearchEnv = DiscordApiEnv;
 
-export type DiscordMessageSearchContext = {
-  guildId?: string;
-  channelId?: string;
-  channel?: { nsfw?: boolean };
-  app?: {
-    applicationId?: string;
-    botUserId?: string;
-  };
-};
+export type DiscordMessageSearchContext = DiscordMessageToolContext;
 
 export type DiscordMessageSearchHas =
   | "image"
@@ -69,14 +63,7 @@ export type DiscordMessageSearchResponse = {
   error?: string;
 };
 
-export type DiscordMessageSearchMatch = {
-  id: string;
-  channelId: string;
-  formattedText?: string;
-  url: string;
-};
-
-type SearchMessage = Omit<APIMessage, "reactions">;
+export type DiscordMessageSearchMatch = DiscordRetrievedMessage;
 
 export async function searchDiscordMessages(
   env: DiscordMessageSearchEnv,
@@ -149,10 +136,11 @@ export async function searchDiscordMessages(
     }
 
     const messages = result.messages.flat();
-    const authorDisplayNames = await resolveSearchMessageAuthorDisplayNames(
+    const authorDisplayNames = await resolveDiscordMessageAuthorDisplayNames(
       env,
       context.guildId,
-      messages
+      messages,
+      DISCORD_MESSAGE_SEARCH_MAX_WAIT_MS
     );
 
     return {
@@ -163,12 +151,10 @@ export async function searchDiscordMessages(
       totalResults: result.total_results,
       documentsIndexed: result.documents_indexed,
       results: messages.map((message) =>
-        formatSearchMatch(
-          context.guildId ?? "",
-          message,
-          authorDisplayNames,
-          context
-        )
+        createDiscordRetrievedMessage(context.guildId ?? "", message, {
+          app: context.app,
+          memberDisplayNames: authorDisplayNames
+        })
       )
     };
   } catch (error) {
@@ -230,54 +216,6 @@ function prepareSearchInput(input: DiscordMessageSearchInput): {
   }
 
   return { input: prepared };
-}
-
-function formatSearchMatch(
-  guildId: string,
-  message: SearchMessage,
-  authorDisplayNames: Map<string, string>,
-  context: DiscordMessageSearchContext
-) {
-  const formatted = formatDiscordChannelMessageForModel(message, {
-    applicationId: context.app?.applicationId,
-    botUserId: context.app?.botUserId,
-    memberDisplayNames: authorDisplayNames,
-    sturmMessageContent: "full"
-  });
-  return {
-    id: message.id,
-    channelId: message.channel_id,
-    formattedText: formatted?.text,
-    url: `https://discord.com/channels/${guildId}/${message.channel_id}/${message.id}`
-  } satisfies DiscordMessageSearchMatch;
-}
-
-async function resolveSearchMessageAuthorDisplayNames(
-  env: DiscordMessageSearchEnv,
-  guildId: string | undefined,
-  messages: SearchMessage[]
-) {
-  const authorIds = getUniqueSearchMessageAuthorIds(messages);
-  if (!guildId || authorIds.length === 0) return new Map<string, string>();
-
-  const results = await Promise.all(
-    authorIds.map(async (authorId) => {
-      try {
-        const member = await getGuildMember(env, guildId, authorId, {
-          maxWaitMs: DISCORD_MESSAGE_SEARCH_MAX_WAIT_MS
-        });
-        return [authorId, resolveDiscordMemberDisplayName(member)] as const;
-      } catch {
-        return undefined;
-      }
-    })
-  );
-
-  return new Map(results.filter((entry) => entry !== undefined));
-}
-
-function getUniqueSearchMessageAuthorIds(messages: SearchMessage[]) {
-  return [...new Set(messages.map((message) => message.author.id))];
 }
 
 function toDiscordSearchHasType(has: DiscordMessageSearchHas) {

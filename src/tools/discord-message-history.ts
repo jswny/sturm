@@ -6,6 +6,10 @@ import {
   type DiscordMessageHistoryContext,
   type DiscordMessageHistoryEnv
 } from "../discord-message-history";
+import {
+  discordRetrievedMessageSchema,
+  formatDiscordRetrievedMessageOutput
+} from "./discord-message-common";
 
 const discordMessageHistoryResponseSchema = z.object({
   ok: z.boolean().describe("Whether the history read succeeded"),
@@ -21,15 +25,7 @@ const discordMessageHistoryResponseSchema = z.object({
     .string()
     .optional()
     .describe("Tool-only cursor to pass as beforeMessageId on the next call"),
-  messages: z
-    .array(
-      z.object({
-        id: z.string(),
-        formattedText: z.string().optional(),
-        url: z.string()
-      })
-    )
-    .optional(),
+  messages: z.array(discordRetrievedMessageSchema).optional(),
   error: z.string().optional()
 });
 
@@ -43,7 +39,7 @@ export function createDiscordMessageHistoryTools(
 ) {
   return {
     readEarlierDiscordMessages: tool({
-      description: `Read a chronological page of up to ${DISCORD_MESSAGE_HISTORY_PAGE_SIZE} messages older than the live Discord channel transcript snapshot. This is limited to the current channel. On the first call, omit beforeMessageId to start immediately before the oldest message retained in the snapshot; if the snapshot did not provide a cursor, the tool starts from the latest available messages and reports that fallback. A full page may have older messages; if more context is needed, call again with the returned nextBeforeMessageId as beforeMessageId. A partial or empty page means there are no older messages. Stop paging as soon as there is enough context to answer. Use searchDiscordMessages instead when looking for specific content, authors, mentions, attachments, or pinned messages. Cursor IDs are tool-only and must not appear in the final response.`,
+      description: `Read a chronological page of up to ${DISCORD_MESSAGE_HISTORY_PAGE_SIZE} messages older than the live Discord channel transcript snapshot. This is limited to the current channel. Results include full formatted content for user and Sturm messages plus message links. On the first call, omit beforeMessageId to start immediately before the oldest message retained in the snapshot; if the snapshot did not provide a cursor, the tool starts from the latest available messages and reports that fallback. A full page may have older messages; if more context is needed, call again with the returned nextBeforeMessageId as beforeMessageId. A partial or empty page means there are no older messages. Stop paging as soon as there is enough context to answer. Use searchDiscordMessages instead when looking for specific content, authors, mentions, attachments, or pinned messages. Cursor IDs are tool-only and must not appear in the final response.`,
       inputSchema: z.object({
         beforeMessageId: z
           .string()
@@ -72,11 +68,7 @@ function formatDiscordMessageHistoryOutput(
   const messages = output.messages ?? [];
   return [
     `Earlier Discord messages: ${messages.length} (oldest to newest)`,
-    ...messages
-      .filter((message) => message.formattedText)
-      .map(
-        (message) => `${message.formattedText}\n  message_url: ${message.url}`
-      ),
+    ...messages.map(formatDiscordRetrievedMessageOutput),
     output.startedFromLatest
       ? "The live snapshot did not provide a cursor, so this page started from the latest available channel messages."
       : undefined,

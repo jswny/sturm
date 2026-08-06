@@ -9,6 +9,10 @@ import {
   type DiscordMessageSearchEnv,
   type DiscordMessageSearchContext
 } from "../discord-message-search";
+import {
+  discordRetrievedMessageSchema,
+  formatDiscordRetrievedMessageOutput
+} from "./discord-message-common";
 
 const DISCORD_MESSAGE_SEARCH_MAX_HAS_FILTERS = 3;
 
@@ -33,16 +37,7 @@ const discordMessageSearchResponseSchema = z.object({
   indexNotReady: z.boolean().optional(),
   retryAfterSeconds: z.number().optional(),
   documentsIndexed: z.number().int().optional(),
-  results: z
-    .array(
-      z.object({
-        id: z.string(),
-        channelId: z.string(),
-        formattedText: z.string().optional(),
-        url: z.string()
-      })
-    )
-    .optional(),
+  results: z.array(discordRetrievedMessageSchema).optional(),
   error: z.string().optional()
 });
 
@@ -57,7 +52,7 @@ export function createDiscordMessageSearchTools(
   return {
     searchDiscordMessages: tool({
       description:
-        "Search Discord messages in the current channel only. Use this when recent channel context is not enough and the user asks about earlier channel discussion. Provide at least one filter: content, authorUserId, mentionsUserId, has, or pinned. Results include message links. Do not use this to search other channels or the whole guild.",
+        "Search Discord messages in the current channel only. Use this when recent channel context is not enough and the user asks about earlier channel discussion. Provide at least one filter: content, authorUserId, mentionsUserId, has, or pinned. Results include full formatted content for user and Sturm messages plus message links. Do not use this to search other channels or the whole guild.",
       inputSchema: z.object({
         content: z
           .string()
@@ -155,11 +150,7 @@ function formatDiscordMessageSearchOutput(
     output.totalResults !== undefined
       ? `totalResults: ${output.totalResults}`
       : undefined,
-    ...results.map((message) =>
-      [message.formattedText, `  message_url: ${message.url}`]
-        .filter(Boolean)
-        .join("\n")
-    ),
+    ...results.map(formatDiscordRetrievedMessageOutput),
     "Final response guidance: answer using the relevant messages and include message links when useful."
   ]
     .filter(Boolean)

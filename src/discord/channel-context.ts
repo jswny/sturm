@@ -1,37 +1,23 @@
 import type { APIMessage } from "discord-api-types/v10";
-import { getChannelMessages, getGuildMember, type DiscordApiEnv } from "./api";
-import { resolveDiscordMemberDisplayName } from "./display-name";
-import { formatUtcTimestampField } from "./timestamps";
+import { getChannelMessages, type DiscordApiEnv } from "./api";
+import { resolveDiscordMessageAuthorDisplayNames } from "./message-authors";
+import {
+  formatDiscordMessageForSnapshot,
+  type DiscordMessageFormatContext
+} from "./message-format";
 import type { DiscordChatRequest } from "./types";
 
 const RECENT_CHANNEL_MESSAGE_LIMIT = 30;
 const RECENT_CHANNEL_CONTEXT_MAX_WAIT_MS = 1_500;
 const RECENT_CHANNEL_CONTEXT_MAX_CHARS = 6_000;
-const RECENT_CHANNEL_MESSAGE_MAX_CHARS = 700;
-
-type DiscordChannelMessage = Omit<APIMessage, "reactions">;
 
 type DiscordChannelContextEnv = DiscordApiEnv & {
   DISCORD_APPLICATION_ID?: string;
 };
 
-export type DiscordChannelMessageFormatOptions = {
-  applicationId?: string;
-  botUserId?: string;
-  currentInteractionId?: string;
-  memberDisplayNames: Map<string, string>;
-  sturmMessageContent: "marker" | "full";
-  maxBodyChars?: number;
-};
-
 export type RecentDiscordChannelContext = {
   text: string;
   oldestVisibleMessageId?: string;
-};
-
-export type FormattedDiscordChannelMessage = {
-  id: string;
-  text: string;
 };
 
 export async function createRecentDiscordChannelContext(
@@ -46,28 +32,30 @@ export async function createRecentDiscordChannelContext(
     limit: RECENT_CHANNEL_MESSAGE_LIMIT,
     maxWaitMs: RECENT_CHANNEL_CONTEXT_MAX_WAIT_MS
   });
-  const memberDisplayNames = await resolveRecentMessageAuthorDisplayNames(
+  const memberDisplayNames = await resolveDiscordMessageAuthorDisplayNames(
     env,
     request.guildId,
-    messages
+    messages,
+    RECENT_CHANNEL_CONTEXT_MAX_WAIT_MS
   );
 
   return formatRecentDiscordChannelMessages(messages, {
-    applicationId: env.DISCORD_APPLICATION_ID?.trim(),
-    botUserId: request.app?.botUserId,
+    app: {
+      ...request.app,
+      applicationId:
+        env.DISCORD_APPLICATION_ID?.trim() ?? request.app?.applicationId
+    },
     currentInteractionId: request.discordInteractionId,
-    memberDisplayNames,
-    sturmMessageContent: "marker",
-    maxBodyChars: RECENT_CHANNEL_MESSAGE_MAX_CHARS
+    memberDisplayNames
   });
 }
 
 function formatRecentDiscordChannelMessages(
   messages: APIMessage[],
-  options: DiscordChannelMessageFormatOptions
+  options: DiscordMessageFormatContext & { currentInteractionId?: string }
 ): RecentDiscordChannelContext {
   const entries = messages
-    .map((message) => formatDiscordChannelMessageForModel(message, options))
+    .map((message) => formatDiscordMessageForSnapshot(message, options))
     .filter((entry) => entry !== undefined)
     .reverse();
 
@@ -101,153 +89,6 @@ function formatRecentDiscordChannelMessages(
     text: limitText(block, RECENT_CHANNEL_CONTEXT_MAX_CHARS),
     oldestVisibleMessageId: keptEntries[0]?.id
   };
-}
-
-export function formatDiscordChannelMessageForModel(
-  message: DiscordChannelMessage,
-  options: DiscordChannelMessageFormatOptions
-): FormattedDiscordChannelMessage | undefined {
-  if (isCurrentSturmInteractionMessage(message, options)) return undefined;
-  const isSturm = isSturmMessage(message, options);
-  const author = formatMessageAuthor(
-    message,
-    options.memberDisplayNames,
-    isSturm ? "Sturm" : undefined
-  );
-  if (isSturm && options.sturmMessageContent === "marker") {
-    return {
-      id: message.id,
-      text: `- ${formatMessageTimestamps(message)} ${author}: [assistant response omitted; see persisted assistant history]`
-    };
-  }
-
-  const body = formatMessageBody(message, options.maxBodyChars);
-  if (!body) return undefined;
-
-  return {
-    id: message.id,
-    text: `- ${formatMessageTimestamps(message)} ${author}: ${body}`
-  };
-}
-
-function formatMessageTimestamps(message: DiscordChannelMessage) {
-  return [
-    formatUtcTimestampField("sent_at_utc", message.timestamp),
-    message.edited_timestamp
-      ? formatUtcTimestampField("edited_at_utc", message.edited_timestamp)
-      : ""
-  ]
-    .filter(Boolean)
-    .join(" ");
-}
-
-function formatMessageAuthor(
-  message: DiscordChannelMessage,
-  memberDisplayNames: Map<string, string>,
-  displayNameOverride?: string
-) {
-  const displayName =
-    displayNameOverride ??
-    memberDisplayNames.get(message.author.id) ??
-    message.author.global_name ??
-    message.author.username;
-  const labels = [`id: ${message.author.id}`];
-  if (message.author.bot) labels.push("bot");
-  if (message.webhook_id) labels.push(`webhook_id: ${message.webhook_id}`);
-  return `${displayName} (${labels.join(", ")})`;
-}
-
-function formatMessageBody(
-  message: DiscordChannelMessage,
-  maxBodyChars: number | undefined
-) {
-  const parts: string[] = [];
-  const content = normalizeMessageContent(message.content);
-  if (content) parts.push(content);
-  if (message.attachments.length > 0) {
-    parts.push(
-      `attachments: ${message.attachments.map(formatAttachment).join(", ")}`
-    );
-  }
-  if (message.embeds.length > 0) parts.push(`embeds: ${message.embeds.length}`);
-  if (message.sticker_items?.length) {
-    parts.push(
-      `stickers: ${message.sticker_items
-        .map((sticker) => sticker.name)
-        .join(", ")}`
-    );
-  }
-  if (message.poll) parts.push("poll: present");
-
-  const body = parts.join(" | ");
-  return maxBodyChars === undefined ? body : limitText(body, maxBodyChars);
-}
-
-function normalizeMessageContent(content: string) {
-  return content.replace(/\s+/g, " ").trim();
-}
-
-function formatAttachment(
-  attachment: DiscordChannelMessage["attachments"][number]
-) {
-  const contentType = attachment.content_type
-    ? ` ${attachment.content_type}`
-    : "";
-  return `${attachment.filename}${contentType}`;
-}
-
-function isCurrentSturmInteractionMessage(
-  message: DiscordChannelMessage,
-  options: DiscordChannelMessageFormatOptions
-) {
-  return Boolean(
-    options.currentInteractionId &&
-    isSturmMessage(message, options) &&
-    getMessageInteractionId(message) === options.currentInteractionId
-  );
-}
-
-function isSturmMessage(
-  message: DiscordChannelMessage,
-  options: DiscordChannelMessageFormatOptions
-) {
-  return Boolean(
-    (options.applicationId &&
-      message.application_id === options.applicationId) ||
-    (options.botUserId && message.author.id === options.botUserId)
-  );
-}
-
-function getMessageInteractionId(message: DiscordChannelMessage) {
-  return message.interaction_metadata?.id ?? message.interaction?.id;
-}
-
-async function resolveRecentMessageAuthorDisplayNames(
-  env: DiscordChannelContextEnv,
-  guildId: string | undefined,
-  messages: APIMessage[]
-) {
-  const authorIds = getUniqueMessageAuthorIds(messages);
-  if (!guildId || authorIds.length === 0) return new Map<string, string>();
-
-  const results = await Promise.all(
-    authorIds.map(async (authorId) => {
-      try {
-        const member = await getGuildMember(env, guildId, authorId, {
-          maxWaitMs: RECENT_CHANNEL_CONTEXT_MAX_WAIT_MS
-        });
-        return [authorId, resolveDiscordMemberDisplayName(member)] as const;
-      } catch {
-        return undefined;
-      }
-    })
-  );
-
-  return new Map(results.filter((entry) => entry !== undefined));
-}
-
-function getUniqueMessageAuthorIds(messages: APIMessage[]) {
-  return [...new Set(messages.map((message) => message.author.id))];
 }
 
 function isDiscordSnowflake(value: string) {

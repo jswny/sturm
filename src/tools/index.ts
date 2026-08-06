@@ -1,13 +1,8 @@
 import type { WorkspaceFsLike } from "@cloudflare/shell";
 import type { ArtifactEnv, ResponseArtifact } from "../artifacts";
-import type {
-  DiscordMessageHistoryContext,
-  DiscordMessageHistoryEnv
-} from "../discord-message-history";
-import type {
-  DiscordMessageSearchContext,
-  DiscordMessageSearchEnv
-} from "../discord-message-search";
+import type { DiscordMessageHistoryEnv } from "../discord-message-history";
+import type { DiscordMessageSearchEnv } from "../discord-message-search";
+import type { DiscordMessageToolContext } from "../discord/types";
 import type { EmojiEnv, EmojiRequestContext } from "../emojis";
 import type { ImageEnv } from "../images";
 import type { ModerationEnv, ModerationRequestContext } from "../moderation";
@@ -45,8 +40,7 @@ export type ToolEnv = SearchEnv &
 export type ToolOptions = {
   discordRequest?: NicknameRequestContext &
     ModerationRequestContext &
-    DiscordMessageHistoryContext &
-    DiscordMessageSearchContext &
+    DiscordMessageToolContext &
     EmojiRequestContext &
     StickerRequestContext;
   recentChannelBeforeMessageId?: string;
