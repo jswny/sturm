@@ -266,10 +266,18 @@ export class ChatAgent extends Think<Env> {
       ? await this.createDiscordTurnRuntimeContext(turn)
       : undefined;
     if (turn) this.startArtifactSummaries(turn);
-    const tools = await this.createDiscordThinkTools(turn, progress);
+    const tools = await this.createDiscordThinkTools(
+      turn,
+      progress,
+      runtimeContext?.recentChannelBeforeMessageId,
+      runtimeContext?.discordBotUserId
+    );
 
     return {
-      system: createDiscordThinkSystemPrompt(sessionContext, runtimeContext),
+      system: createDiscordThinkSystemPrompt(
+        sessionContext,
+        runtimeContext?.text
+      ),
       messages: inlineDataUrls(
         turn
           ? await addCurrentTurnImagesToModelMessages(ctx.messages, turn, {
@@ -1046,7 +1054,9 @@ export class ChatAgent extends Think<Env> {
 
   private async createDiscordThinkTools(
     turn: DiscordChatRequest | undefined,
-    progress: DiscordProgressReporter | undefined
+    progress: DiscordProgressReporter | undefined,
+    recentChannelBeforeMessageId?: string,
+    discordBotUserId?: string
   ): Promise<ToolSet> {
     const toolTurn = turn
       ? this.createDiscordToolRequestContext(turn)
@@ -1054,6 +1064,8 @@ export class ChatAgent extends Think<Env> {
     const tools = {
       ...createDiscordTools(this.env, {
         discordRequest: toolTurn,
+        recentChannelBeforeMessageId,
+        discordBotUserId,
         workspace: this.workspace,
         scheduledTasks: turn
           ? this.createScheduledTaskController(turn)
@@ -1291,8 +1303,12 @@ export class ChatAgent extends Think<Env> {
     const sections = [formatDiscordRuntimeContext(runtimeTurn)];
     const recentChannelContext =
       await this.createRecentDiscordChannelContext(runtimeTurn);
-    if (recentChannelContext) sections.push(recentChannelContext);
-    return sections.filter(Boolean).join("\n\n");
+    if (recentChannelContext.text) sections.push(recentChannelContext.text);
+    return {
+      text: sections.filter(Boolean).join("\n\n"),
+      recentChannelBeforeMessageId: recentChannelContext.oldestVisibleMessageId,
+      discordBotUserId: runtimeTurn.app?.botUserId
+    };
   }
 
   private async withResolvedDiscordAppContext(
@@ -1355,7 +1371,7 @@ export class ChatAgent extends Think<Env> {
         channelId: turn.channelId,
         error: getErrorMessage(error)
       });
-      return "";
+      return { text: "" };
     }
   }
 

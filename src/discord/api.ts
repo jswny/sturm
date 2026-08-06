@@ -59,11 +59,14 @@ export class DiscordApiError extends Error {
 export async function getChannelMessages(
   env: DiscordApiEnv,
   channelId: string,
-  options: { limit: number; maxWaitMs?: number }
+  options: { limit: number; beforeMessageId?: string; maxWaitMs?: number }
 ): Promise<RESTGetAPIChannelMessagesResult> {
   const params = new URLSearchParams({
     limit: String(clampDiscordMessageLimit(options.limit))
   });
+  if (options.beforeMessageId) {
+    params.set("before", options.beforeMessageId);
+  }
   return discordApiFetch<RESTGetAPIChannelMessagesResult>(
     env,
     `/channels/${channelId}/messages?${params.toString()}`,

@@ -215,6 +215,11 @@ const TOOL_PROGRESS_COPY: Readonly<Record<string, ToolProgressCopy>> = {
     finished: "Searched channel history",
     failed: "Channel history search failed"
   },
+  readEarlierDiscordMessages: {
+    started: "Reading earlier channel messages",
+    finished: "Read earlier channel messages",
+    failed: "Earlier channel message read failed"
+  },
   searchGuildMembers: {
     started: "Finding server members",
     finished: "Found server members",

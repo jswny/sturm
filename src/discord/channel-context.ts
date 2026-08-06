@@ -13,18 +13,30 @@ type DiscordChannelContextEnv = DiscordApiEnv & {
   DISCORD_APPLICATION_ID?: string;
 };
 
-type RecentDiscordChannelMessageOptions = {
+export type DiscordChannelMessageFormatOptions = {
   applicationId?: string;
   botUserId?: string;
   currentInteractionId?: string;
   memberDisplayNames: Map<string, string>;
 };
 
+export type RecentDiscordChannelContext = {
+  text: string;
+  oldestVisibleMessageId?: string;
+};
+
+export type FormattedDiscordChannelMessage = {
+  id: string;
+  text: string;
+};
+
 export async function createRecentDiscordChannelContext(
   env: DiscordChannelContextEnv,
   request: DiscordChatRequest
-) {
-  if (!request.channelId || !isDiscordSnowflake(request.channelId)) return "";
+): Promise<RecentDiscordChannelContext> {
+  if (!request.channelId || !isDiscordSnowflake(request.channelId)) {
+    return { text: "" };
+  }
 
   const messages = await getChannelMessages(env, request.channelId, {
     limit: RECENT_CHANNEL_MESSAGE_LIMIT,
@@ -46,14 +58,14 @@ export async function createRecentDiscordChannelContext(
 
 function formatRecentDiscordChannelMessages(
   messages: APIMessage[],
-  options: RecentDiscordChannelMessageOptions
-) {
-  const lines = messages
-    .map((message) => formatRecentDiscordChannelMessage(message, options))
-    .filter(Boolean)
+  options: DiscordChannelMessageFormatOptions
+): RecentDiscordChannelContext {
+  const entries = messages
+    .map((message) => formatDiscordChannelMessageForModel(message, options))
+    .filter((entry) => entry !== undefined)
     .reverse();
 
-  if (lines.length === 0) return "";
+  if (entries.length === 0) return { text: "" };
 
   const header = [
     "Live Discord channel transcript snapshot (fetched at turn time; may be incomplete):",
@@ -64,33 +76,47 @@ function formatRecentDiscordChannelMessages(
     "the current Discord user message appears after this snapshot as the final user message in the model input"
   ].join("\n");
   const transcriptHeader = "Recent messages:";
-  let keptLines = lines;
+  let keptEntries = entries;
   while (
-    [header, transcriptHeader, ...keptLines].join("\n").length >
-      RECENT_CHANNEL_CONTEXT_MAX_CHARS &&
-    keptLines.length > 1
+    [header, transcriptHeader, ...keptEntries.map((entry) => entry.text)].join(
+      "\n"
+    ).length > RECENT_CHANNEL_CONTEXT_MAX_CHARS &&
+    keptEntries.length > 1
   ) {
-    keptLines = keptLines.slice(1);
+    keptEntries = keptEntries.slice(1);
   }
 
-  const block = [header, transcriptHeader, ...keptLines].join("\n");
-  return limitText(block, RECENT_CHANNEL_CONTEXT_MAX_CHARS);
+  const block = [
+    header,
+    transcriptHeader,
+    ...keptEntries.map((entry) => entry.text)
+  ].join("\n");
+  return {
+    text: limitText(block, RECENT_CHANNEL_CONTEXT_MAX_CHARS),
+    oldestVisibleMessageId: keptEntries[0]?.id
+  };
 }
 
-function formatRecentDiscordChannelMessage(
+export function formatDiscordChannelMessageForModel(
   message: APIMessage,
-  options: RecentDiscordChannelMessageOptions
-): string {
-  if (isCurrentSturmInteractionMessage(message, options)) return "";
+  options: DiscordChannelMessageFormatOptions
+): FormattedDiscordChannelMessage | undefined {
+  if (isCurrentSturmInteractionMessage(message, options)) return undefined;
   if (isSturmMessage(message, options)) {
-    return `- ${formatMessageTimestamps(message)} Sturm (bot): [assistant response omitted; see persisted assistant history]`;
+    return {
+      id: message.id,
+      text: `- ${formatMessageTimestamps(message)} Sturm (bot): [assistant response omitted; see persisted assistant history]`
+    };
   }
 
   const body = formatMessageBody(message);
-  if (!body) return "";
+  if (!body) return undefined;
 
   const author = formatMessageAuthor(message, options.memberDisplayNames);
-  return `- ${formatMessageTimestamps(message)} ${author}: ${body}`;
+  return {
+    id: message.id,
+    text: `- ${formatMessageTimestamps(message)} ${author}: ${body}`
+  };
 }
 
 function formatMessageTimestamps(message: APIMessage) {
@@ -153,7 +179,7 @@ function formatAttachment(attachment: APIMessage["attachments"][number]) {
 
 function isCurrentSturmInteractionMessage(
   message: APIMessage,
-  options: RecentDiscordChannelMessageOptions
+  options: DiscordChannelMessageFormatOptions
 ) {
   return Boolean(
     options.currentInteractionId &&
@@ -164,7 +190,7 @@ function isCurrentSturmInteractionMessage(
 
 function isSturmMessage(
   message: APIMessage,
-  options: RecentDiscordChannelMessageOptions
+  options: DiscordChannelMessageFormatOptions
 ) {
   return Boolean(
     (options.applicationId &&

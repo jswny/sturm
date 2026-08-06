@@ -1,6 +1,10 @@
 import type { WorkspaceFsLike } from "@cloudflare/shell";
 import type { ArtifactEnv, ResponseArtifact } from "../artifacts";
 import type {
+  DiscordMessageHistoryContext,
+  DiscordMessageHistoryEnv
+} from "../discord-message-history";
+import type {
   DiscordMessageSearchContext,
   DiscordMessageSearchEnv
 } from "../discord-message-search";
@@ -14,6 +18,7 @@ import type { StickerEnv, StickerRequestContext } from "../stickers";
 import { createArchiveTools } from "./archive";
 import { createArtifactTools } from "./artifacts";
 import { createBrowserAutomationTools } from "./browser";
+import { createDiscordMessageHistoryTools } from "./discord-message-history";
 import { createDiscordMessageSearchTools } from "./discord-message-search";
 import { createEmojiTools } from "./emojis";
 import { createImageTools } from "./images";
@@ -28,6 +33,7 @@ import {
 } from "./user-prompts";
 
 export type ToolEnv = SearchEnv &
+  DiscordMessageHistoryEnv &
   DiscordMessageSearchEnv &
   ImageEnv &
   ArtifactEnv &
@@ -39,9 +45,12 @@ export type ToolEnv = SearchEnv &
 export type ToolOptions = {
   discordRequest?: NicknameRequestContext &
     ModerationRequestContext &
+    DiscordMessageHistoryContext &
     DiscordMessageSearchContext &
     EmojiRequestContext &
     StickerRequestContext;
+  recentChannelBeforeMessageId?: string;
+  discordBotUserId?: string;
   scheduledTasks?: ScheduledTaskController;
   userPrompts?: UserPromptController;
   workspace?: WorkspaceFsLike;
@@ -52,6 +61,15 @@ export function createDiscordTools(env: ToolEnv, options: ToolOptions = {}) {
   return {
     ...createArchiveTools(),
     ...createSearchTools(env),
+    ...createDiscordMessageHistoryTools(env, {
+      ...(options.discordRequest ?? {}),
+      initialBeforeMessageId: options.recentChannelBeforeMessageId,
+      app: {
+        ...options.discordRequest?.app,
+        botUserId:
+          options.discordBotUserId ?? options.discordRequest?.app?.botUserId
+      }
+    }),
     ...createDiscordMessageSearchTools(env, options.discordRequest ?? {}),
     ...createNicknameTools(env, options.discordRequest ?? {}),
     ...createModerationTools(env, options.discordRequest ?? {}),
