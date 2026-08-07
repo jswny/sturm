@@ -6,6 +6,7 @@ import type { StoredResponseArtifact } from "../artifacts";
 
 export type DiscordChatRequest = {
   correlationId: string;
+  trigger?: "scheduled_channel_task";
   discordInteractionId?: string;
   sourceCorrelationId?: string;
   sourceInteractionId?: string;

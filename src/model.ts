@@ -19,6 +19,7 @@ export const REPLY_CHAT_TIMEOUT_MS = Math.max(
   )
 );
 export const CHAT_STREAM_STALL_TIMEOUT_MS = REPLY_CHAT_TIMEOUT_MS;
+export const SCHEDULED_CHAT_MAX_RETRIES = 5;
 export const DEFAULT_IMAGE_ASPECT_RATIO = "1:1";
 export const IMAGE_GENERATION_OUTPUT_FORMAT = "jpg";
 export const DEFAULT_IMAGE_RESOLUTION = "1K";

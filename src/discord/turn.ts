@@ -16,6 +16,7 @@ import type { DiscordChatRequest, DiscordChatResponse } from "./types";
 type DiscordUserMessageMetadata = {
   source?: unknown;
   correlationId?: unknown;
+  trigger?: unknown;
   discordInteractionId?: unknown;
   sourceCorrelationId?: unknown;
   sourceInteractionId?: unknown;
@@ -52,6 +53,7 @@ export function createDiscordUserMessage(
     metadata: {
       source: "discord",
       correlationId: request.correlationId,
+      trigger: request.trigger,
       discordInteractionId: request.discordInteractionId,
       sourceCorrelationId: request.sourceCorrelationId,
       sourceInteractionId: request.sourceInteractionId,
@@ -82,6 +84,10 @@ export function getDiscordTurnFromUserMessage(
 
   return {
     correlationId: metadata.correlationId,
+    trigger:
+      metadata.trigger === "scheduled_channel_task"
+        ? "scheduled_channel_task"
+        : undefined,
     discordInteractionId:
       typeof metadata.discordInteractionId === "string"
         ? metadata.discordInteractionId

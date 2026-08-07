@@ -92,7 +92,8 @@ import {
   type ChatAiGatewayCorrelation,
   createChatModel,
   MEMORY_REFLECTION_PROVIDER_OPTIONS,
-  REPLY_PROVIDER_OPTIONS
+  REPLY_PROVIDER_OPTIONS,
+  SCHEDULED_CHAT_MAX_RETRIES
 } from "./model";
 import { createBaseSystemPrompt } from "./prompts";
 import {
@@ -287,6 +288,10 @@ export class ChatAgent extends Think<Env> {
       ),
       tools,
       maxSteps: this.maxSteps,
+      maxRetries:
+        turn?.trigger === "scheduled_channel_task"
+          ? SCHEDULED_CHAT_MAX_RETRIES
+          : undefined,
       sendReasoning: false,
       providerOptions: REPLY_PROVIDER_OPTIONS as Record<string, unknown>
     };
@@ -709,6 +714,7 @@ export class ChatAgent extends Think<Env> {
         },
         request: {
           correlationId,
+          trigger: "scheduled_channel_task",
           text: createScheduledChannelTaskUserText(task),
           guildId: task.guildId,
           channelId: task.channelId,
