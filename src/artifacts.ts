@@ -74,6 +74,11 @@ export type StoreResponseArtifactInput<
     }
   : never;
 
+export type HydrateStoredArtifactsOptions = {
+  maxArtifacts?: number;
+  maxTotalBytes?: number;
+};
+
 export async function storeResponseArtifact<
   Source extends ResponseArtifactSource
 >(
@@ -108,21 +113,42 @@ export async function storeResponseArtifact<
 
 export async function hydrateStoredArtifacts(
   env: ArtifactEnv,
-  storedArtifacts: StoredResponseArtifact[] = []
+  storedArtifacts: StoredResponseArtifact[] = [],
+  options: HydrateStoredArtifactsOptions = {}
 ): Promise<ResponseArtifact[]> {
-  return Promise.all(
-    storedArtifacts.map(async (stored) => {
-      const object = await env.ARTIFACTS_BUCKET.get(stored.artifactKey);
-      if (!object) {
-        throw new Error(`Missing response artifact ${stored.artifactKey}.`);
-      }
+  if (
+    options.maxArtifacts !== undefined &&
+    storedArtifacts.length > options.maxArtifacts
+  ) {
+    throw new Error(
+      `Response has ${storedArtifacts.length} artifacts; the limit is ${options.maxArtifacts}.`
+    );
+  }
 
-      return {
-        ...stored,
-        base64: bytesToBase64(new Uint8Array(await object.arrayBuffer()))
-      };
-    })
-  );
+  const artifacts: ResponseArtifact[] = [];
+  let totalBytes = 0;
+  for (const stored of storedArtifacts) {
+    const object = await env.ARTIFACTS_BUCKET.get(stored.artifactKey);
+    if (!object) {
+      throw new Error(`Missing response artifact ${stored.artifactKey}.`);
+    }
+
+    totalBytes += object.size;
+    if (
+      options.maxTotalBytes !== undefined &&
+      totalBytes > options.maxTotalBytes
+    ) {
+      throw new Error(
+        `Response artifacts exceed the ${options.maxTotalBytes} byte limit.`
+      );
+    }
+
+    artifacts.push({
+      ...stored,
+      base64: bytesToBase64(new Uint8Array(await object.arrayBuffer()))
+    });
+  }
+  return artifacts;
 }
 
 export function toStoredResponseArtifact(

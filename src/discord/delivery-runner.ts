@@ -283,11 +283,14 @@ export class DiscordDeliveryRunner {
       attachments: response.attachments?.length ?? 0
     });
     const messageCount = await deliverInteractionResponse(
+      this.options.env,
       record.responseTarget,
+      record.type === "chat" ? record.request.channelId : record.channelId,
       response.content,
       response.attachments,
       response.components,
-      response.flags
+      response.flags,
+      { idempotencyKey: getDeliveryCorrelationId(record) }
     );
     logInfo("Delivered Discord interaction response", {
       sequence: record.sequence,

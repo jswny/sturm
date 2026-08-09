@@ -6,6 +6,7 @@ import {
   type DiscordAttachmentArtifactMetadata,
   type StoredResponseArtifact
 } from "../artifacts";
+import { readResponseBytesWithLimit, readResponseTextWithLimit } from "../http";
 import { getErrorMessage, logWarn } from "../logging";
 import type { DiscordChatRequest, DiscordRequestAttachment } from "./types";
 
@@ -13,6 +14,8 @@ export type DiscordAttachmentArtifactEnv = ArtifactEnv;
 
 const DISCORD_ATTACHMENT_ARTIFACT_PREFIX = "attachments/discord";
 const DISCORD_ATTACHMENT_MAX_BYTES = 5 * 1024 * 1024;
+const DISCORD_ATTACHMENT_FETCH_TIMEOUT_MS = 15_000;
+const DISCORD_ATTACHMENT_ERROR_MAX_BYTES = 16 * 1024;
 
 export async function freezeDiscordRequestAttachments(
   env: DiscordAttachmentArtifactEnv,
@@ -221,30 +224,26 @@ async function fetchAttachmentBytes(
   }
 
   const response = await fetch(attachment.url, {
-    headers: { accept: attachment.mimeType ?? "*/*" }
+    headers: { accept: attachment.mimeType ?? "*/*" },
+    signal: AbortSignal.timeout(DISCORD_ATTACHMENT_FETCH_TIMEOUT_MS)
   });
   if (!response.ok) {
-    const body = await response.text().catch(() => "");
+    const body = await readResponseTextWithLimit(
+      response,
+      DISCORD_ATTACHMENT_ERROR_MAX_BYTES
+    ).catch(() => "");
     return {
       ok: false,
       error: `${response.status} ${body.slice(0, 200)}`.trim()
     };
   }
 
-  const contentLength = getContentLength(response.headers);
-  if (
-    contentLength !== undefined &&
-    contentLength > DISCORD_ATTACHMENT_MAX_BYTES
-  ) {
-    return {
-      ok: false,
-      error: `attachment is larger than ${DISCORD_ATTACHMENT_MAX_BYTES} bytes`
-    };
-  }
-
   return {
     ok: true,
-    bytes: new Uint8Array(await response.arrayBuffer()),
+    bytes: await readResponseBytesWithLimit(
+      response,
+      DISCORD_ATTACHMENT_MAX_BYTES
+    ),
     mimeType: response.headers.get("content-type") ?? undefined
   };
 }
@@ -261,13 +260,6 @@ function decodeDataUrl(url: string) {
     : new TextEncoder().encode(decodeURIComponent(payload));
 
   return { ok: true as const, bytes, mimeType };
-}
-
-function getContentLength(headers: Headers) {
-  const value = headers.get("content-length");
-  if (!value) return undefined;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : undefined;
 }
 
 function normalizeMimeType(value: string | null | undefined) {

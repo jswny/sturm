@@ -1,4 +1,5 @@
 import { logError, logWarn } from "./logging";
+import { readResponseTextWithLimit } from "./http";
 
 export type SearchEnv = Env & {
   KAGI_API_KEY?: string;
@@ -38,6 +39,8 @@ type KagiSummaryResponse = {
 
 const KAGI_FASTGPT_URL = "https://kagi.com/api/v0/fastgpt";
 const KAGI_SUMMARIZE_URL = "https://kagi.com/api/v0/summarize";
+const KAGI_REQUEST_TIMEOUT_MS = 30_000;
+const KAGI_RESPONSE_MAX_BYTES = 2 * 1024 * 1024;
 
 function decodeSearchSnippetEntities(value: string) {
   return value
@@ -83,7 +86,8 @@ export async function searchWeb(
         Authorization: `Bot ${apiKey}`,
         "Content-Type": "application/json"
       },
-      body: JSON.stringify({ query })
+      body: JSON.stringify({ query }),
+      signal: AbortSignal.timeout(KAGI_REQUEST_TIMEOUT_MS)
     });
   } catch (error) {
     logError("Kagi search request failed", error, {
@@ -98,7 +102,10 @@ export async function searchWeb(
   }
 
   if (!response.ok) {
-    const body = await response.text().catch(() => "");
+    const body = await readResponseTextWithLimit(
+      response,
+      KAGI_RESPONSE_MAX_BYTES
+    ).catch(() => "");
     logWarn("Kagi FastGPT returned an error", {
       provider: "kagi",
       endpoint: "fastgpt",
@@ -115,7 +122,9 @@ export async function searchWeb(
 
   let payload: KagiFastGptResponse;
   try {
-    payload = (await response.json()) as KagiFastGptResponse;
+    payload = JSON.parse(
+      await readResponseTextWithLimit(response, KAGI_RESPONSE_MAX_BYTES)
+    ) as KagiFastGptResponse;
   } catch (error) {
     logError("Kagi FastGPT returned invalid JSON", error, {
       provider: "kagi",
@@ -166,7 +175,8 @@ export async function summarizeUrl(
         Authorization: `Bot ${apiKey}`,
         "Content-Type": "application/json"
       },
-      body: JSON.stringify({ url })
+      body: JSON.stringify({ url }),
+      signal: AbortSignal.timeout(KAGI_REQUEST_TIMEOUT_MS)
     });
   } catch (error) {
     logError("Kagi summarize request failed", error, {
@@ -180,7 +190,10 @@ export async function summarizeUrl(
   }
 
   if (!response.ok) {
-    const body = await response.text().catch(() => "");
+    const body = await readResponseTextWithLimit(
+      response,
+      KAGI_RESPONSE_MAX_BYTES
+    ).catch(() => "");
     logWarn("Kagi summarize returned an error", {
       provider: "kagi",
       endpoint: "summarize",
@@ -196,7 +209,9 @@ export async function summarizeUrl(
 
   let payload: KagiSummaryResponse;
   try {
-    payload = (await response.json()) as KagiSummaryResponse;
+    payload = JSON.parse(
+      await readResponseTextWithLimit(response, KAGI_RESPONSE_MAX_BYTES)
+    ) as KagiSummaryResponse;
   } catch (error) {
     logError("Kagi summarize returned invalid JSON", error, {
       provider: "kagi",

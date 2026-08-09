@@ -32,6 +32,7 @@ import type {
   DiscordWebhookResponseTarget,
   DiscordUserContext
 } from "./discord/types";
+import { BodyTooLargeError, readRequestTextWithLimit } from "./http";
 import { logError, logWarn } from "./logging";
 
 export type {
@@ -47,6 +48,8 @@ type DiscordEnv = Env & {
   DISCORD_PUBLIC_KEY?: string;
 };
 
+const DISCORD_INTERACTION_MAX_BYTES = 1024 * 1024;
+
 export async function handleDiscordRequest(
   request: Request,
   env: DiscordEnv,
@@ -59,7 +62,19 @@ export async function handleDiscordRequest(
     return json({ error: "Method not allowed" }, { status: 405 });
   }
 
-  const body = await request.text();
+  let body: string;
+  try {
+    body = await readRequestTextWithLimit(
+      request,
+      DISCORD_INTERACTION_MAX_BYTES
+    );
+  } catch (error) {
+    if (!(error instanceof BodyTooLargeError)) throw error;
+    logWarn("Discord interaction request was too large", {
+      maxBytes: error.maxBytes
+    });
+    return json({ error: "Request body too large" }, { status: 413 });
+  }
   const verified = await verifyDiscordRequest(request, body, env);
   if (!verified) {
     logWarn("Discord request verification failed", {

@@ -38,7 +38,7 @@ export default {
         method: request.method,
         path: url.pathname
       });
-      throw error;
+      return Response.json({ error: "Internal server error" }, { status: 500 });
     }
   }
 } satisfies ExportedHandler<Env>;

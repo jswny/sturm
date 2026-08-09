@@ -7,6 +7,7 @@ import type {
   DiscordPermissionContext,
   DiscordRequestAttachment
 } from "./discord/types";
+import { BodyTooLargeError, readRequestTextWithLimit } from "./http";
 import { logWarn } from "./logging";
 
 type DebugEnv = Env & {
@@ -48,6 +49,8 @@ type DebugStatusPayload = {
   surface: DebugSurface;
   correlationId?: string;
 };
+
+const DEBUG_REQUEST_MAX_BYTES = 1024 * 1024;
 
 export async function handleDebugRequest(
   request: Request,
@@ -179,8 +182,24 @@ async function replyToDebugStatus(payload: DebugStatusPayload, env: DebugEnv) {
 }
 
 async function readJson<T>(request: Request): Promise<T> {
+  let body: string;
   try {
-    return (await request.json()) as T;
+    body = await readRequestTextWithLimit(request, DEBUG_REQUEST_MAX_BYTES);
+  } catch (error) {
+    if (error instanceof BodyTooLargeError) {
+      logWarn("Debug request body was too large", {
+        maxBytes: error.maxBytes
+      });
+      throw new Response(JSON.stringify({ error: "Request body too large" }), {
+        status: 413,
+        headers: { "content-type": "application/json" }
+      });
+    }
+    throw error;
+  }
+
+  try {
+    return JSON.parse(body) as T;
   } catch (error) {
     logWarn("Debug request JSON parse failed", {
       error: error instanceof Error ? error.message : String(error)

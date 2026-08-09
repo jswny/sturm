@@ -17,9 +17,9 @@ import type {
   RESTPostAPIGuildStickerResult,
   RESTPatchAPIGuildMemberJSONBody,
   RESTPatchAPIGuildMemberResult,
-  RESTPostAPIWebhookWithTokenJSONBody,
   RESTPatchAPIWebhookWithTokenMessageJSONBody
 } from "discord-api-types/v10";
+import { readResponseTextWithLimit } from "../http";
 import type {
   DiscordResponseAttachment,
   DiscordWebhookResponseTarget
@@ -30,10 +30,15 @@ import {
   type DiscordRestRequest,
   type DiscordRestResult
 } from "./rest-dispatcher";
+import { getDiscordRestRetryAfterMs } from "./rest-rate-limits";
 
 const DISCORD_API_BASE = "https://discord.com/api/v10";
 const MAX_DISCORD_CONTENT_LENGTH = 2000;
 const MIN_DISCORD_SPLIT_LENGTH = 1200;
+const DISCORD_WEBHOOK_MAX_ATTEMPTS = 3;
+const DISCORD_WEBHOOK_REQUEST_TIMEOUT_MS = 5_000;
+const DISCORD_WEBHOOK_RESPONSE_MAX_BYTES = 64 * 1024;
+const DISCORD_WEBHOOK_MAX_RETRY_DELAY_MS = 5_000;
 
 export type DiscordApiEnv = Env & {
   DISCORD_TOKEN?: string;
@@ -81,39 +86,88 @@ export async function editOriginalInteractionResponse(
   components: APIMessageTopLevelComponent[] = [],
   flags?: MessageFlags
 ) {
-  const body = createDiscordResponseBody(
-    content,
-    attachments,
-    components,
-    flags,
-    { clearLegacyContent: components.length > 0 }
-  );
-  const response = await fetch(
-    `${DISCORD_API_BASE}/webhooks/${target.applicationId}/${target.token}/messages/@original`,
-    {
-      method: "PATCH",
-      headers: body.headers,
-      body: body.body
-    }
-  );
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= DISCORD_WEBHOOK_MAX_ATTEMPTS; attempt++) {
+    const body = createDiscordResponseBody(
+      content,
+      attachments,
+      components,
+      flags,
+      { clearLegacyContent: components.length > 0 }
+    );
 
-  if (!response.ok) {
-    const body = await response.text();
-    throw new DiscordApiError(
-      `Discord original response edit failed: ${response.status} ${body}`,
-      response.status,
-      body,
-      getDiscordErrorCode(body)
+    try {
+      const response = await fetch(
+        `${DISCORD_API_BASE}/webhooks/${target.applicationId}/${target.token}/messages/@original`,
+        {
+          method: "PATCH",
+          headers: body.headers,
+          body: body.body,
+          signal: AbortSignal.timeout(DISCORD_WEBHOOK_REQUEST_TIMEOUT_MS)
+        }
+      );
+
+      if (response.ok) {
+        await response.body?.cancel();
+        return;
+      }
+
+      const responseBody = await readResponseTextWithLimit(
+        response,
+        DISCORD_WEBHOOK_RESPONSE_MAX_BYTES
+      );
+      const retryAfterMs = getDiscordRestRetryAfterMs(response, responseBody);
+      const error = new DiscordApiError(
+        `Discord original response edit failed: ${response.status} ${responseBody}`,
+        response.status,
+        responseBody,
+        getDiscordErrorCode(responseBody),
+        response.status === 429 || response.status >= 500,
+        retryAfterMs
+      );
+      if (
+        !error.retryable ||
+        attempt === DISCORD_WEBHOOK_MAX_ATTEMPTS ||
+        (retryAfterMs !== undefined &&
+          retryAfterMs > DISCORD_WEBHOOK_MAX_RETRY_DELAY_MS)
+      ) {
+        throw error;
+      }
+      lastError = error;
+    } catch (error) {
+      lastError = error;
+      if (error instanceof DiscordApiError) {
+        if (
+          !error.retryable ||
+          (error.retryAfterMs !== undefined &&
+            error.retryAfterMs > DISCORD_WEBHOOK_MAX_RETRY_DELAY_MS)
+        ) {
+          throw error;
+        }
+      }
+      if (attempt === DISCORD_WEBHOOK_MAX_ATTEMPTS) throw error;
+    }
+
+    await sleep(
+      lastError instanceof DiscordApiError &&
+        lastError.retryAfterMs !== undefined
+        ? lastError.retryAfterMs
+        : getDiscordWebhookBackoffMs(attempt)
     );
   }
+
+  throw lastError ?? new Error("Discord original response edit failed.");
 }
 
 export async function deliverInteractionResponse(
+  env: DiscordApiEnv,
   target: DiscordWebhookResponseTarget,
+  channelId: string | undefined,
   content: string,
   attachments: DiscordResponseAttachment[] = [],
   components: APIMessageTopLevelComponent[] = [],
-  flags?: MessageFlags
+  flags?: MessageFlags,
+  options: { idempotencyKey?: string } = {}
 ) {
   if (components.length > 0) {
     await editOriginalInteractionResponse(
@@ -130,8 +184,23 @@ export async function deliverInteractionResponse(
   const [firstChunk = "", ...followupChunks] = chunks;
 
   await editOriginalInteractionResponse(target, firstChunk, attachments);
-  for (const chunk of followupChunks) {
-    await createInteractionFollowup(target, chunk);
+  if (followupChunks.length > 0) {
+    if (!channelId) {
+      throw new Error(
+        "Discord interaction response could not deliver follow-up chunks without a channel ID."
+      );
+    }
+    for (let index = 0; index < followupChunks.length; index++) {
+      await createChannelMessage(
+        env,
+        channelId,
+        followupChunks[index],
+        [],
+        [],
+        undefined,
+        await createDiscordMessageNonce(options.idempotencyKey, index + 1)
+      );
+    }
   }
 
   return chunks.length;
@@ -186,34 +255,6 @@ export async function deliverChannelMessage(
   return chunks.length;
 }
 
-async function createInteractionFollowup(
-  target: DiscordWebhookResponseTarget,
-  content: string
-) {
-  const payload: RESTPostAPIWebhookWithTokenJSONBody = {
-    content,
-    allowed_mentions: { parse: [] }
-  };
-  const response = await fetch(
-    `${DISCORD_API_BASE}/webhooks/${target.applicationId}/${target.token}`,
-    {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(payload)
-    }
-  );
-
-  if (!response.ok) {
-    const body = await response.text();
-    throw new DiscordApiError(
-      `Discord followup response failed: ${response.status} ${body}`,
-      response.status,
-      body,
-      getDiscordErrorCode(body)
-    );
-  }
-}
-
 async function createChannelMessage(
   env: DiscordApiEnv,
   channelId: string,
@@ -239,6 +280,14 @@ async function createChannelMessage(
   if (!result.ok) {
     throw createDiscordApiError(result);
   }
+}
+
+function getDiscordWebhookBackoffMs(attempt: number) {
+  return Math.min(250 * 2 ** (attempt - 1), 1000);
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export async function getGuildMember(

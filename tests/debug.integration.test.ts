@@ -16,6 +16,44 @@ const surface = {
 } as const;
 
 describe("debug integration", () => {
+  it("handles malformed and oversized HTTP requests safely", async () => {
+    const methodNotAllowed = await requestJson("GET", "/debug/status");
+    expect(methodNotAllowed.status).toBe(405);
+    expect(methodNotAllowed.body).toMatchObject({
+      error: "Method not allowed"
+    });
+
+    const invalidJson = await requestRaw("POST", "/debug/status", "{");
+    expect(invalidJson.status).toBe(400);
+    expect(JSON.parse(invalidJson.text)).toMatchObject({
+      error: "Invalid JSON"
+    });
+
+    const oversizedDebug = await requestRaw(
+      "POST",
+      "/debug/status",
+      "x".repeat(1024 * 1024 + 1)
+    );
+    expect(oversizedDebug.status).toBe(413);
+    expect(JSON.parse(oversizedDebug.text)).toMatchObject({
+      error: "Request body too large"
+    });
+
+    const oversizedDiscord = await requestRaw(
+      "POST",
+      "/discord",
+      "x".repeat(1024 * 1024 + 1)
+    );
+    expect(oversizedDiscord.status).toBe(413);
+    expect(JSON.parse(oversizedDiscord.text)).toMatchObject({
+      error: "Request body too large"
+    });
+
+    const notFound = await requestRaw("GET", "/not-found");
+    expect(notFound.status).toBe(404);
+    expect(notFound.text).toBe("Not found");
+  });
+
   it("handles debug status and reset without live AI", async () => {
     const correlationId = `debug-integration-${crypto.randomUUID()}`;
     const resetCorrelationId = `${correlationId}-reset`;
@@ -99,6 +137,20 @@ async function postJson(path: string, body: unknown) {
 }
 
 async function requestJson(method: string, path: string, body?: unknown) {
+  const response = await requestRaw(
+    method,
+    path,
+    body === undefined ? undefined : JSON.stringify(body)
+  );
+  const parsed = response.text ? (JSON.parse(response.text) as unknown) : null;
+
+  return {
+    status: response.status,
+    body: expectRecord(parsed, `${method} ${path} response`)
+  };
+}
+
+async function requestRaw(method: string, path: string, body?: string) {
   const response = await worker.fetch(
     new Request(`https://sturm.test${path}`, {
       method,
@@ -108,15 +160,14 @@ async function requestJson(method: string, path: string, body?: unknown) {
           : {
               "content-type": "application/json"
             },
-      body: body === undefined ? undefined : JSON.stringify(body)
+      body
     })
   );
   const text = await response.text();
-  const parsed = text ? (JSON.parse(text) as unknown) : null;
 
   return {
     status: response.status,
-    body: expectRecord(parsed, `${method} ${path} response`)
+    text
   };
 }
 

@@ -122,6 +122,11 @@ const CHAT_RECOVERY_STABLE_TIMEOUT_MS = 10_000;
 const CHAT_RECOVERY_TERMINAL_MESSAGE =
   "Sorry, this request was interrupted and could not be recovered. Please try again.";
 const DISCORD_BOT_USER_ID_STORAGE_KEY = "discord:bot-user-id";
+const SCHEDULED_CHANNEL_TASK_RETRY = {
+  maxAttempts: 5,
+  baseDelayMs: 500,
+  maxDelayMs: 10_000
+} as const;
 
 type ScheduledChannelTaskExecution = Pick<
   ScheduledChannelTaskSchedule,
@@ -751,10 +756,10 @@ export class ChatAgent extends Think<Env> {
             error: getErrorMessage(error)
           }
         );
-        throw error;
+      } else {
+        logError("Scheduled channel task submission failed", error, context);
       }
-
-      logError("Scheduled channel task submission failed", error, context);
+      throw error;
     }
   }
 
@@ -1178,12 +1183,15 @@ export class ChatAgent extends Think<Env> {
       {
         agentName: this.name,
         scheduleChannelTask: (when, payload) =>
-          this.schedule(when, SCHEDULED_CHANNEL_TASK_CALLBACK, payload),
+          this.schedule(when, SCHEDULED_CHANNEL_TASK_CALLBACK, payload, {
+            retry: SCHEDULED_CHANNEL_TASK_RETRY
+          }),
         scheduleChannelTaskEvery: (intervalSeconds, payload) =>
           this.scheduleEvery(
             intervalSeconds,
             SCHEDULED_CHANNEL_TASK_CALLBACK,
-            payload
+            payload,
+            { retry: SCHEDULED_CHANNEL_TASK_RETRY }
           ),
         listSchedules: () => this.listSchedules(),
         getScheduleById: (scheduleId) => this.getScheduleById(scheduleId),

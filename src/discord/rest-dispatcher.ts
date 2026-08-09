@@ -1,4 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
+import { readResponseTextWithLimit } from "../http";
 import { logError, logWarn } from "../logging";
 import { pruneDurableStorageRecords } from "../storage-prune";
 import {
@@ -26,6 +27,7 @@ const MAX_ATTEMPTS = 3;
 const JOB_TTL_MS = 10 * 60 * 1000;
 const BUCKET_ALIAS_TTL_MS = 24 * 60 * 60 * 1000;
 const GUILD_MEMBER_CACHE_TTL_MS = 5 * 60 * 1000;
+const DISCORD_REST_RESPONSE_MAX_BYTES = 2 * 1024 * 1024;
 
 type DiscordRestEnv = Env & {
   DISCORD_TOKEN?: string;
@@ -225,9 +227,13 @@ export class DiscordRestDispatcher extends DurableObject<DiscordRestEnv> {
         response = await fetch(`${DISCORD_API_BASE}${input.path}`, {
           method: job.method,
           headers,
-          body: fetchBody
+          body: fetchBody,
+          signal: AbortSignal.timeout(Math.max(1, deadline - Date.now()))
         });
-        body = await response.text();
+        body = await readResponseTextWithLimit(
+          response,
+          DISCORD_REST_RESPONSE_MAX_BYTES
+        );
       } catch (error) {
         const retryAfterMs = getDiscordRestNetworkBackoffMs(attempts);
         if (

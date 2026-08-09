@@ -18,6 +18,7 @@ import {
   createChatAiGatewayMetadata,
   type ChatAiGatewayCorrelation
 } from "./model";
+import { readResponseBytesWithLimit } from "./http";
 
 export type ImageEnv = ArtifactEnv;
 
@@ -63,6 +64,8 @@ type NanoBananaImageResponse = {
 };
 
 export const IMAGE_MODEL = IMAGE_GENERATION_MODEL;
+const GENERATED_IMAGE_DOWNLOAD_TIMEOUT_MS = 30_000;
+const GENERATED_IMAGE_MAX_BYTES = 20 * 1024 * 1024;
 
 export async function generateImage(
   env: ImageEnv,
@@ -251,7 +254,9 @@ async function downloadGeneratedImage(
 ): Promise<DownloadedImage> {
   let response: Response;
   try {
-    response = await fetch(imageUrl);
+    response = await fetch(imageUrl, {
+      signal: AbortSignal.timeout(GENERATED_IMAGE_DOWNLOAD_TIMEOUT_MS)
+    });
   } catch (error) {
     throw new Error(`Image download request failed: ${getErrorMessage(error)}`);
   }
@@ -263,7 +268,10 @@ async function downloadGeneratedImage(
   const mimeType = getRequiredJpegMimeType(
     response.headers.get("content-type")
   );
-  const bytes = new Uint8Array(await response.arrayBuffer());
+  const bytes = await readResponseBytesWithLimit(
+    response,
+    GENERATED_IMAGE_MAX_BYTES
+  );
   if (bytes.length === 0) {
     throw new Error("Image download returned an empty body.");
   }

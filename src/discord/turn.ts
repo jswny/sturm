@@ -13,6 +13,9 @@ import {
 } from "./format";
 import type { DiscordChatRequest, DiscordChatResponse } from "./types";
 
+const MAX_DISCORD_RESPONSE_ARTIFACTS = 10;
+const MAX_DISCORD_RESPONSE_ARTIFACT_BYTES = 24 * 1024 * 1024;
+
 type DiscordUserMessageMetadata = {
   source?: unknown;
   correlationId?: unknown;
@@ -150,7 +153,10 @@ export async function hydrateStoredResponseArtifacts(
   env: Env,
   storedArtifacts: StoredResponseArtifact[] = []
 ): Promise<ResponseArtifact[]> {
-  return hydrateStoredArtifacts(env, storedArtifacts);
+  return hydrateStoredArtifacts(env, storedArtifacts, {
+    maxArtifacts: MAX_DISCORD_RESPONSE_ARTIFACTS,
+    maxTotalBytes: MAX_DISCORD_RESPONSE_ARTIFACT_BYTES
+  });
 }
 
 export async function clearDiscordSession(
