@@ -298,14 +298,20 @@ export class ChatAgent extends Think<Env> {
   }
 
   override async beforeStep(ctx: PrepareStepContext) {
+    const isFinalStep = ctx.stepNumber === this.maxSteps - 1;
     const progress = await this.getActiveProgressReporter();
     await progress?.report({
       type: "phase",
-      label:
-        ctx.stepNumber === 0
+      label: isFinalStep
+        ? "Preparing final response"
+        : ctx.stepNumber === 0
           ? "Thinking through the request"
           : "Reviewing tool results"
     });
+
+    // Reserve the last model call for a user-facing answer instead of letting
+    // another tool call consume the turn's final step.
+    if (isFinalStep) return { activeTools: [] };
   }
 
   override async onStepFinish(ctx: StepContext) {
@@ -1494,6 +1500,7 @@ export class ChatAgent extends Think<Env> {
   private createDiscordDeliveryRunner() {
     return new DiscordDeliveryRunner({
       env: this.env,
+      maxSteps: this.maxSteps,
       deliveries: this.discordDeliveries,
       componentPrompts: this.componentPrompts,
       updateMessageInHistory: async (message) => {

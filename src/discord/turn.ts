@@ -1,4 +1,4 @@
-import type { UIMessage } from "ai";
+import { isToolUIPart, type UIMessage } from "ai";
 import {
   hydrateStoredArtifacts,
   toStoredResponseArtifact,
@@ -206,6 +206,10 @@ export function getDiscordMessageText(message: UIMessage) {
   return stripModelThinkingTraces(getRawDiscordMessageText(message));
 }
 
+export function getAssistantStepCount(message: UIMessage) {
+  return message.parts.filter((part) => part.type === "step-start").length;
+}
+
 export function getDiscordArtifactsFromAssistantMessage(
   message: UIMessage
 ): StoredResponseArtifact[] | undefined {
@@ -219,8 +223,15 @@ export function getDiscordArtifactsFromAssistantMessage(
 export function withAssistantText(
   message: UIMessage,
   text: string,
-  artifacts: ResponseArtifact[] = []
+  artifacts: ResponseArtifact[] = [],
+  options: { preserveToolActivity?: boolean } = {}
 ): UIMessage {
+  const preservedParts = options.preserveToolActivity
+    ? message.parts.filter(
+        (part) => part.type === "step-start" || isToolUIPart(part)
+      )
+    : [];
+
   return {
     ...message,
     metadata: {
@@ -228,7 +239,7 @@ export function withAssistantText(
       source: "discord",
       artifacts: artifacts.map(toStoredResponseArtifact)
     },
-    parts: [{ type: "text", text }]
+    parts: [...preservedParts, { type: "text", text }]
   };
 }
 

@@ -15,6 +15,7 @@ import {
 import {
   createAssistantHistoryText,
   createDiscordResponseFromAssistantMessage,
+  getAssistantStepCount,
   getDiscordMessageText,
   getRawDiscordMessageText,
   hydrateStoredResponseArtifacts,
@@ -32,9 +33,12 @@ import { getErrorMessage, logError, logInfo, logWarn } from "../logging";
 const DISCORD_DEBUG_RESPONSE_TIMEOUT_MS = 14 * 60 * 1000;
 const DISCORD_DEBUG_RESPONSE_POLL_MS = 100;
 const DISCORD_DEFERRED_RESPONSE_SETTLE_MS = 500;
+const MAX_STEPS_REACHED_RESPONSE =
+  "I reached the work limit for this response before I could finish the summary. Some requested work may be incomplete; ask me to continue.";
 
 export type DiscordDeliveryRunnerOptions = {
   env: Env;
+  maxSteps: number;
   deliveries: DiscordDeliveryStore;
   componentPrompts: DiscordComponentPromptStore;
   updateMessageInHistory(message: UIMessage): Promise<void>;
@@ -77,11 +81,19 @@ export class DiscordDeliveryRunner {
       return;
     }
 
+    const reachedMaxStepsWithoutText =
+      text.length === 0 &&
+      artifacts.length === 0 &&
+      getAssistantStepCount(result.message) >= this.options.maxSteps;
+    const responseText = reachedMaxStepsWithoutText
+      ? MAX_STEPS_REACHED_RESPONSE
+      : text;
+
     const componentPrompt = freshRecord.componentPromptId
       ? await this.options.componentPrompts.get(freshRecord.componentPromptId)
       : undefined;
     const historyText = [
-      createAssistantHistoryText(text, artifacts),
+      createAssistantHistoryText(responseText, artifacts),
       componentPrompt ? formatComponentPromptHistoryText(componentPrompt) : ""
     ]
       .filter(Boolean)
@@ -89,7 +101,9 @@ export class DiscordDeliveryRunner {
     if (historyText !== rawText) {
       try {
         await this.options.updateMessageInHistory(
-          withAssistantText(result.message, historyText, artifacts)
+          withAssistantText(result.message, historyText, artifacts, {
+            preserveToolActivity: reachedMaxStepsWithoutText
+          })
         );
       } catch (error) {
         logError("Discord assistant history update failed", error, {
@@ -99,7 +113,7 @@ export class DiscordDeliveryRunner {
       }
     }
 
-    const renderedText = renderDiscordResponseTemplate(text);
+    const renderedText = renderDiscordResponseTemplate(responseText);
     if (renderedText.error) {
       logWarn("Discord response template render failed", {
         sequence: freshRecord.sequence,
