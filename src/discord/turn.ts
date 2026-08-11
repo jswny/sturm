@@ -45,6 +45,7 @@ export type DiscordSessionMemory = {
   getPathLength(): Promise<number>;
   clearMessages(): Promise<void>;
   clearWorkspace?(): Promise<number>;
+  clearChannelContext?(): Promise<boolean>;
 };
 
 export function createDiscordUserMessage(
@@ -165,30 +166,47 @@ export async function clearDiscordSession(
   const messageCount = await session.getPathLength();
   await session.clearMessages();
   const workspaceRootEntries = await session.clearWorkspace?.();
+  const channelContextCleared = await session.clearChannelContext?.();
   return {
-    content: formatResetResponse(messageCount, workspaceRootEntries)
+    content: formatResetResponse(
+      messageCount,
+      workspaceRootEntries,
+      channelContextCleared
+    )
   };
 }
 
 function formatResetResponse(
   messageCount: number,
-  workspaceRootEntries: number | undefined
+  workspaceRootEntries: number | undefined,
+  channelContextCleared: boolean | undefined
 ) {
   const messageText =
     messageCount === 1
       ? "Cleared 1 message"
       : `Cleared ${messageCount} messages`;
 
-  if (workspaceRootEntries === undefined) {
+  if (
+    workspaceRootEntries === undefined &&
+    channelContextCleared === undefined
+  ) {
     return `Reset context. ${messageText}.`;
   }
 
-  const workspaceText =
-    workspaceRootEntries === 0
-      ? "channel workspace was already empty"
-      : "cleared channel workspace";
+  const details = [
+    workspaceRootEntries === undefined
+      ? undefined
+      : workspaceRootEntries === 0
+        ? "channel workspace was already empty"
+        : "cleared channel workspace",
+    channelContextCleared === undefined
+      ? undefined
+      : channelContextCleared
+        ? "cleared durable channel context"
+        : "durable channel context was already empty"
+  ].filter(Boolean);
 
-  return `Reset context. ${messageText}; ${workspaceText}.`;
+  return `Reset context. ${messageText}; ${details.join("; ")}.`;
 }
 
 function formatAttachmentDescription(artifact: ResponseArtifact) {

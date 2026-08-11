@@ -300,7 +300,7 @@ function isCurrentSturmInteractionMessage(
   );
 }
 
-function isSturmMessage(
+export function isSturmMessage(
   message: DiscordChannelMessage,
   app: DiscordAppContext | undefined
 ) {

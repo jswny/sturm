@@ -21,6 +21,19 @@ import { Session } from "agents/experimental/memory/session";
 import { createCompactFunction } from "agents/experimental/memory/utils";
 import { generateText, type ToolSet } from "ai";
 import type { StoredResponseArtifact } from "./artifacts";
+import {
+  ChannelContextStore,
+  formatChannelContextForPrompt,
+  isChannelContextReflectionStale
+} from "./channel-context";
+import {
+  createChannelContextReflectionSnapshot,
+  getChannelContextReflectionCorrelationId,
+  getChannelContextReflectionFiberName,
+  parseChannelContextReflectionSnapshot,
+  runChannelContextReflection,
+  type ChannelContextReflectionSnapshot
+} from "./channel-context-reflection";
 import { createChannelScheduledTaskController } from "./channel-scheduler";
 import { createRecentDiscordChannelContext } from "./discord/channel-context";
 import { freezeDiscordRequestAttachments } from "./discord/attachment-artifacts";
@@ -175,6 +188,7 @@ export class ChatAgent extends Think<Env> {
   private discordDeliveries = new DiscordDeliveryStore(this.ctx.storage);
   private componentPrompts = new DiscordComponentPromptStore(this.ctx.storage);
   private memoryReflections = new GuildMemoryReflectionStore(this.ctx.storage);
+  private channelContext = new ChannelContextStore(this.ctx.storage);
   private progressReporters = new Map<string, DiscordProgressReporter>();
   private artifactSummaryPromises = new Map<
     string,
@@ -469,6 +483,15 @@ export class ChatAgent extends Think<Env> {
       return this.recoverDiscordResponseDelivery(ctx, deliveryCorrelationId);
     }
 
+    const channelContextCorrelationId =
+      getChannelContextReflectionCorrelationId(ctx.name);
+    if (channelContextCorrelationId) {
+      return this.recoverChannelContextReflection(
+        ctx,
+        channelContextCorrelationId
+      );
+    }
+
     const correlationId = getGuildMemoryReflectionCorrelationId(ctx.name);
     if (!correlationId) return super.onFiberRecovered(ctx);
 
@@ -679,13 +702,17 @@ export class ChatAgent extends Think<Env> {
       submission,
       deliveryFiber,
       memoryReflection,
-      memoryReflectionFiber
+      memoryReflectionFiber,
+      channelContextReflectionFiber
     ] = await Promise.all([
       this.discordDeliveries.getDelivery(correlationId),
       this.inspectSubmission(correlationId),
       this.inspectFiberByKey(getDiscordDeliveryFiberName(correlationId)),
       this.memoryReflections.get(correlationId),
-      this.inspectFiberByKey(getGuildMemoryReflectionFiberName(correlationId))
+      this.inspectFiberByKey(getGuildMemoryReflectionFiberName(correlationId)),
+      this.inspectFiberByKey(
+        getChannelContextReflectionFiberName(correlationId)
+      )
     ]);
 
     return {
@@ -697,7 +724,10 @@ export class ChatAgent extends Think<Env> {
       memoryReflection: createDebugMemoryReflectionStatus(
         memoryReflection,
         memoryReflectionFiber
-      )
+      ),
+      channelContextReflection: channelContextReflectionFiber
+        ? createDebugFiberStatus(channelContextReflectionFiber)
+        : null
     };
   }
 
@@ -925,15 +955,26 @@ export class ChatAgent extends Think<Env> {
     record = await this.discordDeliveries.getDelivery(snapshot.correlationId);
     if (record?.type !== "chat" || record.status !== "delivered") return;
 
-    try {
-      await this.reflectGuildMemoryAfterDiscordChat(record, snapshot.result);
-    } catch (error) {
-      logWarn("Guild memory reflection failed after Discord delivery", {
-        agentName: this.name,
-        ...getDeliveryLogContext(record),
-        error: getErrorMessage(error)
-      });
-    }
+    await Promise.all([
+      this.reflectGuildMemoryAfterDiscordChat(record, snapshot.result).catch(
+        (error) => {
+          logWarn("Guild memory reflection failed after Discord delivery", {
+            agentName: this.name,
+            ...getDeliveryLogContext(record),
+            error: getErrorMessage(error)
+          });
+        }
+      ),
+      this.reflectChannelContextAfterDiscordChat(record, snapshot.result).catch(
+        (error) => {
+          logWarn("Channel context reflection failed after Discord delivery", {
+            agentName: this.name,
+            ...getDeliveryLogContext(record),
+            error: getErrorMessage(error)
+          });
+        }
+      )
+    ]);
   }
 
   private async recoverDiscordResponseDelivery(
@@ -1321,8 +1362,12 @@ export class ChatAgent extends Think<Env> {
   private async createDiscordTurnRuntimeContext(turn: DiscordChatRequest) {
     const runtimeTurn = await this.withResolvedDiscordAppContext(turn);
     const sections = [formatDiscordRuntimeContext(runtimeTurn)];
-    const recentChannelContext =
-      await this.createRecentDiscordChannelContext(runtimeTurn);
+    const [channelContext, recentChannelContext] = await Promise.all([
+      this.channelContext.get(),
+      this.createRecentDiscordChannelContext(runtimeTurn)
+    ]);
+    const durableChannelContext = formatChannelContextForPrompt(channelContext);
+    if (durableChannelContext) sections.push(durableChannelContext);
     if (recentChannelContext.text) sections.push(recentChannelContext.text);
     return {
       text: sections.filter(Boolean).join("\n\n"),
@@ -1463,6 +1508,136 @@ export class ChatAgent extends Think<Env> {
     }
   }
 
+  private async reflectChannelContextAfterDiscordChat(
+    record: DiscordDeliveryRecord,
+    result: ChatResponseResult
+  ) {
+    if (record.type !== "chat") return;
+    if (record.responseTarget.type !== "discord") return;
+    if (!record.request.guildId || !record.request.channelId) return;
+
+    const [currentContext, recentChannelContext] = await Promise.all([
+      this.channelContext.get(),
+      this.createRecentDiscordChannelContext(record.request)
+    ]);
+    if (!recentChannelContext.text) return;
+    const newestContextMessageId =
+      recentChannelContext.newestVisibleNonSturmMessageId;
+    if (
+      !newestContextMessageId ||
+      isChannelContextReflectionStale(
+        currentContext.lastProcessedMessageId,
+        newestContextMessageId
+      )
+    ) {
+      return;
+    }
+
+    const snapshot = createChannelContextReflectionSnapshot({
+      request: record.request,
+      assistantText: getDiscordMessageText(result.message),
+      recentChannelContext: recentChannelContext.text,
+      lastProcessedMessageId: newestContextMessageId,
+      channelContextEpoch: currentContext.epoch
+    });
+    const fiberName = getChannelContextReflectionFiberName(
+      record.correlationId
+    );
+    const fiber = await this.startFiber(
+      fiberName,
+      async (ctx) => {
+        const reflection = await this.runChannelContextReflection(
+          snapshot,
+          ctx
+        );
+        if (reflection.changed) {
+          logInfo("Channel context reflection updated context", {
+            agentName: this.name,
+            ...getDeliveryLogContext(record),
+            operation: reflection.operation,
+            attempts: reflection.attempts
+          });
+        }
+      },
+      {
+        idempotencyKey: fiberName,
+        metadata: createChannelContextReflectionFiberMetadata(record.request)
+      }
+    );
+
+    if (!fiber.accepted) {
+      logInfo("Channel context reflection fiber already exists", {
+        agentName: this.name,
+        ...getDeliveryLogContext(record),
+        fiberId: fiber.fiberId,
+        fiberStatus: fiber.status
+      });
+    }
+  }
+
+  private runChannelContextReflection(
+    snapshot: ChannelContextReflectionSnapshot,
+    fiber?: Parameters<typeof runChannelContextReflection>[0]["fiber"]
+  ) {
+    return runChannelContextReflection({
+      store: this.channelContext,
+      snapshot,
+      createModel: (reflectionSnapshot) =>
+        createChatModel(
+          this.env,
+          CHAT_AI_GATEWAY_FLOWS.channelContextReflection,
+          createChatAiGatewayCorrelation(reflectionSnapshot.request),
+          this.sessionAffinity
+        ),
+      providerOptions: MEMORY_REFLECTION_PROVIDER_OPTIONS,
+      fiber
+    });
+  }
+
+  private async recoverChannelContextReflection(
+    ctx: FiberRecoveryContext,
+    correlationId: string
+  ): Promise<FiberRecoveryResult> {
+    const snapshot = parseChannelContextReflectionSnapshot(ctx.snapshot);
+    if (!snapshot || snapshot.correlationId !== correlationId) {
+      const message =
+        "Channel context reflection recovery could not resume without a valid checkpoint.";
+      logWarn(message, {
+        agentName: this.name,
+        correlationId,
+        fiberId: ctx.id,
+        fiberName: ctx.name,
+        fiberAgeMs: Date.now() - ctx.createdAt
+      });
+      return { status: "error", error: message };
+    }
+
+    try {
+      const reflection = await this.runChannelContextReflection(snapshot);
+      if (reflection.changed) {
+        logInfo("Recovered channel context reflection updated context", {
+          agentName: this.name,
+          correlationId,
+          operation: reflection.operation,
+          attempts: reflection.attempts
+        });
+      }
+      return {
+        status: "completed",
+        metadata: createChannelContextReflectionFiberMetadata(snapshot.request)
+      };
+    } catch (error) {
+      const message = getErrorMessage(error);
+      logWarn("Recovered channel context reflection failed", {
+        agentName: this.name,
+        correlationId,
+        fiberId: ctx.id,
+        error: message
+      });
+      return { status: "error", error: message };
+    }
+  }
+
   private requireGuildMemoryProvider() {
     if (!this.guildMemoryProvider) {
       this.guildMemoryProvider = new GuildMemoryProvider(
@@ -1518,7 +1693,8 @@ export class ChatAgent extends Think<Env> {
         clearDiscordSession({
           getPathLength: () => this.session.getPathLength(),
           clearMessages: () => this.clearMessagesAndStreams(),
-          clearWorkspace: () => this.clearWorkspace()
+          clearWorkspace: () => this.clearWorkspace(),
+          clearChannelContext: () => this.channelContext.reset()
         }),
       afterFailedDelivery: async (record) => {
         this.progressReporters.delete(getDeliveryCorrelationId(record));
@@ -1802,6 +1978,20 @@ function createGuildMemoryReflectionFiberMetadata(
   return {
     source: "discord",
     type: "guild_memory_reflection",
+    correlationId: request.correlationId,
+    discordInteractionId: request.discordInteractionId,
+    guildId: request.guildId,
+    channelId: request.channelId,
+    userId: request.userId
+  };
+}
+
+function createChannelContextReflectionFiberMetadata(
+  request: DiscordChatRequest
+): Record<string, string | number | boolean | null | undefined> {
+  return {
+    source: "discord",
+    type: "channel_context_reflection",
     correlationId: request.correlationId,
     discordInteractionId: request.discordInteractionId,
     guildId: request.guildId,

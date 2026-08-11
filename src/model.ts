@@ -34,6 +34,7 @@ export const CHAT_AI_GATEWAY_FLOWS = {
   artifactSummary: "artifact-summary",
   compaction: "compaction",
   memoryReflection: "memory-reflection",
+  channelContextReflection: "channel-context-reflection",
   imageGeneration: "image-generation"
 } as const;
 

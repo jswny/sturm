@@ -3,6 +3,7 @@ import { getChannelMessages, type DiscordApiEnv } from "./api";
 import { resolveDiscordMessageAuthorDisplayNames } from "./message-authors";
 import {
   formatDiscordMessageForSnapshot,
+  isSturmMessage,
   type DiscordMessageFormatContext
 } from "./message-format";
 import type { DiscordChatRequest } from "./types";
@@ -18,6 +19,7 @@ type DiscordChannelContextEnv = DiscordApiEnv & {
 export type RecentDiscordChannelContext = {
   text: string;
   oldestVisibleMessageId?: string;
+  newestVisibleNonSturmMessageId?: string;
 };
 
 export async function createRecentDiscordChannelContext(
@@ -55,7 +57,12 @@ function formatRecentDiscordChannelMessages(
   options: DiscordMessageFormatContext & { currentInteractionId?: string }
 ): RecentDiscordChannelContext {
   const entries = messages
-    .map((message) => formatDiscordMessageForSnapshot(message, options))
+    .map((message) => {
+      const entry = formatDiscordMessageForSnapshot(message, options);
+      return entry
+        ? { ...entry, isSturm: isSturmMessage(message, options.app) }
+        : undefined;
+    })
     .filter((entry) => entry !== undefined)
     .reverse();
 
@@ -87,8 +94,19 @@ function formatRecentDiscordChannelMessages(
   ].join("\n");
   return {
     text: limitText(block, RECENT_CHANNEL_CONTEXT_MAX_CHARS),
-    oldestVisibleMessageId: keptEntries[0]?.id
+    oldestVisibleMessageId: keptEntries[0]?.id,
+    newestVisibleNonSturmMessageId: findNewestNonSturmMessageId(keptEntries)
   };
+}
+
+function findNewestNonSturmMessageId(
+  entries: { id: string; isSturm: boolean }[]
+) {
+  for (let index = entries.length - 1; index >= 0; index--) {
+    const entry = entries[index];
+    if (entry && !entry.isSturm) return entry.id;
+  }
+  return undefined;
 }
 
 function isDiscordSnowflake(value: string) {
