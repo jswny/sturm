@@ -269,13 +269,31 @@ export function withAssistantText(
 
 function getDiscordUserMetadata(value: unknown) {
   if (!value || typeof value !== "object") return undefined;
-  const user = value as { id?: unknown; displayName?: unknown };
+  const user = value as {
+    id?: unknown;
+    displayName?: unknown;
+    roleIds?: unknown;
+    roles?: unknown;
+    joinedAtUtc?: unknown;
+  };
   if (typeof user.id !== "string") return undefined;
   return {
     id: user.id,
     displayName:
-      typeof user.displayName === "string" ? user.displayName : undefined
+      typeof user.displayName === "string" ? user.displayName : undefined,
+    roleIds: getStringArray(user.roleIds),
+    roles: getStringArray(user.roles),
+    joinedAtUtc:
+      typeof user.joinedAtUtc === "string" ? user.joinedAtUtc : undefined
   };
+}
+
+function getStringArray(value: unknown) {
+  if (!Array.isArray(value)) return undefined;
+  const strings = value.filter(
+    (entry): entry is string => typeof entry === "string"
+  );
+  return strings.length > 0 ? strings : undefined;
 }
 
 function getDiscordAppMetadata(value: unknown) {

@@ -95,6 +95,9 @@ export type DiscordGeneratedResponseAttachment = Omit<
 export type DiscordUserContext = {
   id: string;
   displayName?: string;
+  roleIds?: string[];
+  roles?: string[];
+  joinedAtUtc?: string;
 };
 
 export type DiscordChannelContext = {

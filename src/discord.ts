@@ -26,6 +26,7 @@ import {
 } from "./discord/conversation";
 import { createDiscordRuntimeContext } from "./discord/context";
 import { resolveDiscordMemberDisplayName } from "./discord/display-name";
+import { normalizeDiscordMemberJoinedAt } from "./discord/user-context";
 import { runMemoryCommand } from "./discord/memory-command";
 import type {
   DiscordRequestAttachment,
@@ -386,7 +387,7 @@ async function enqueueResetCommand(
     guildId: location.guildId,
     channelId: location.channelId,
     userId: getUserId(interaction),
-    user: getUserContext(interaction),
+    user: getUserIdentityContext(interaction),
     responseTarget: getResponseTarget(interaction)
   });
   return agent;
@@ -420,7 +421,23 @@ function getUserContext(
     id: user.id,
     displayName: interaction.member
       ? resolveDiscordMemberDisplayName(interaction.member)
-      : undefined
+      : undefined,
+    roleIds: interaction.member?.roles.filter(
+      (roleId): roleId is string =>
+        typeof roleId === "string" && Boolean(roleId)
+    ),
+    joinedAtUtc: normalizeDiscordMemberJoinedAt(interaction.member?.joined_at)
+  };
+}
+
+function getUserIdentityContext(
+  interaction: DiscordRoutedInteraction
+): DiscordUserContext | undefined {
+  const user = getUserContext(interaction);
+  if (!user) return undefined;
+  return {
+    id: user.id,
+    displayName: user.displayName
   };
 }
 

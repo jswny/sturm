@@ -31,6 +31,12 @@ export function formatDiscordUserMessage(request: DiscordChatRequest) {
   if (request.user?.displayName) {
     lines.push(`display_name: ${request.user.displayName}`);
   }
+  if (request.user?.roles?.length) {
+    lines.push(`roles: ${JSON.stringify(request.user.roles)}`);
+  }
+  if (request.user?.joinedAtUtc) {
+    lines.push(`joined_at_utc: ${request.user.joinedAtUtc}`);
+  }
 
   const artifacts = formatModelArtifactReferences(request.artifacts, {
     heading: "Artifact references:"

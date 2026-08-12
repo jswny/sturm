@@ -6,6 +6,7 @@ import {
   DiscordGuildMemberCacheStore,
   type DiscordRestCacheMode
 } from "./rest-member-cache";
+import { DiscordGuildRolesCacheStore } from "./rest-guild-roles-cache";
 import {
   canWaitForDiscordRestRetry,
   getDiscordRestNetworkBackoffMs,
@@ -15,6 +16,7 @@ import {
 } from "./rest-rate-limits";
 import {
   getDiscordGuildMemberTarget,
+  getDiscordGuildRolesGuildId,
   getDiscordRestBucketRateLimitKey,
   getDiscordRestMajorResourceKey,
   getDiscordRestRouteKey
@@ -27,6 +29,7 @@ const MAX_ATTEMPTS = 3;
 const JOB_TTL_MS = 10 * 60 * 1000;
 const BUCKET_ALIAS_TTL_MS = 24 * 60 * 60 * 1000;
 const GUILD_MEMBER_CACHE_TTL_MS = 5 * 60 * 1000;
+const GUILD_ROLES_CACHE_TTL_MS = 5 * 60 * 1000;
 const DISCORD_REST_RESPONSE_MAX_BYTES = 2 * 1024 * 1024;
 
 type DiscordRestEnv = Env & {
@@ -107,13 +110,21 @@ export class DiscordRestDispatcher extends DurableObject<DiscordRestEnv> {
   async request(input: DiscordRestRequest): Promise<DiscordRestResult> {
     const method = (input.method ?? "GET").toUpperCase();
     const cacheTarget = getDiscordGuildMemberTarget(method, input.path);
+    const guildRolesCacheTarget = getDiscordGuildRolesGuildId(
+      method,
+      input.path
+    );
     if (
       method === "GET" &&
-      cacheTarget &&
+      (cacheTarget || guildRolesCacheTarget) &&
       input.cache !== "reload" &&
       input.cache !== "no-store"
     ) {
-      const cached = await this.memberCache.get(cacheTarget);
+      const cached = cacheTarget
+        ? await this.memberCache.get(cacheTarget)
+        : guildRolesCacheTarget
+          ? await this.guildRolesCache.get(guildRolesCacheTarget)
+          : undefined;
       if (cached && this.env.DISCORD_TOKEN?.trim()) {
         return {
           ok: true,
@@ -152,6 +163,7 @@ export class DiscordRestDispatcher extends DurableObject<DiscordRestEnv> {
       await this.pruneExpiredRateLimits();
       await this.pruneExpiredBucketAliases();
       await this.pruneExpiredGuildMemberCacheEntries();
+      await this.pruneExpiredGuildRolesCacheEntries();
       await this.scheduleNextAlarm();
     } catch (error) {
       logError("Discord REST dispatcher alarm failed", error);
@@ -163,6 +175,13 @@ export class DiscordRestDispatcher extends DurableObject<DiscordRestEnv> {
     return new DiscordGuildMemberCacheStore(
       this.ctx.storage,
       GUILD_MEMBER_CACHE_TTL_MS
+    );
+  }
+
+  private get guildRolesCache() {
+    return new DiscordGuildRolesCacheStore(
+      this.ctx.storage,
+      GUILD_ROLES_CACHE_TTL_MS
     );
   }
 
@@ -303,7 +322,7 @@ export class DiscordRestDispatcher extends DurableObject<DiscordRestEnv> {
         });
       }
 
-      await this.updateGuildMemberCache(job, body, input.cache ?? "default");
+      await this.updateDiscordRestCaches(job, body, input.cache ?? "default");
 
       return this.finishJob(job, {
         ok: true,
@@ -473,18 +492,31 @@ export class DiscordRestDispatcher extends DurableObject<DiscordRestEnv> {
     await this.scheduleCleanupAlarm(resetAt);
   }
 
-  private async updateGuildMemberCache(
+  private async updateDiscordRestCaches(
     job: DiscordRestJob,
     body: string,
     cacheMode: DiscordRestCacheMode
   ) {
-    const expiresAt = await this.memberCache.updateFromRestResponse(
-      job.method,
-      job.path,
-      body,
-      cacheMode
+    const expiresAts = await Promise.all([
+      this.memberCache.updateFromRestResponse(
+        job.method,
+        job.path,
+        body,
+        cacheMode
+      ),
+      this.guildRolesCache.updateFromRestResponse(
+        job.method,
+        job.path,
+        body,
+        cacheMode
+      )
+    ]);
+    const nextExpiry = expiresAts.reduce<number | undefined>(
+      (next, expiresAt) =>
+        expiresAt === undefined ? next : minTimestamp(next, expiresAt),
+      undefined
     );
-    if (expiresAt) await this.scheduleCleanupAlarm(expiresAt);
+    if (nextExpiry) await this.scheduleCleanupAlarm(nextExpiry);
   }
 
   private async pruneExpiredJobs() {
@@ -513,6 +545,10 @@ export class DiscordRestDispatcher extends DurableObject<DiscordRestEnv> {
 
   private async pruneExpiredGuildMemberCacheEntries() {
     await this.memberCache.pruneExpired();
+  }
+
+  private async pruneExpiredGuildRolesCacheEntries() {
+    await this.guildRolesCache.pruneExpired();
   }
 
   private async scheduleCleanupAlarm(timestamp: number) {
@@ -552,6 +588,12 @@ export class DiscordRestDispatcher extends DurableObject<DiscordRestEnv> {
 
       const memberCacheExpiry = await this.memberCache.getNextExpiry(now);
       if (memberCacheExpiry) next = minTimestamp(next, memberCacheExpiry);
+
+      const guildRolesCacheExpiry =
+        await this.guildRolesCache.getNextExpiry(now);
+      if (guildRolesCacheExpiry) {
+        next = minTimestamp(next, guildRolesCacheExpiry);
+      }
 
       if (next) {
         await this.ctx.storage.setAlarm(next);

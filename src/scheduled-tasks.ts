@@ -18,7 +18,7 @@ export type ScheduledChannelTaskPayload = {
   app?: DiscordAppContext;
   appPermissions?: DiscordPermissionContext;
   createdByUserId?: string;
-  createdByUser?: DiscordUserContext;
+  createdByUser?: Pick<DiscordUserContext, "id" | "displayName">;
   instruction: string;
   createdAt: string;
 };

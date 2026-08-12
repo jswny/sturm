@@ -3,6 +3,24 @@ export type DiscordGuildMemberTarget = {
   userId: string;
 };
 
+export function getDiscordGuildRolesGuildId(method: string, path: string) {
+  if (method !== "GET") return undefined;
+
+  const parts = getPathParts(path);
+  const [guilds, guildId, roles, extra] = parts;
+  if (
+    guilds !== "guilds" ||
+    roles !== "roles" ||
+    extra !== undefined ||
+    !guildId ||
+    !isDiscordSnowflake(guildId)
+  ) {
+    return undefined;
+  }
+
+  return guildId;
+}
+
 export function getDiscordRestRouteKey(method: string, path: string) {
   const pathname = path.split("?")[0] ?? path;
   const parts = pathname.split("/").map((part, index, all) => {

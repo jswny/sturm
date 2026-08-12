@@ -425,7 +425,9 @@ function createScheduledChannelTaskPayload(
     app: turn.app,
     appPermissions: turn.appPermissions,
     createdByUserId: turn.userId,
-    createdByUser: turn.user,
+    createdByUser: turn.user
+      ? { id: turn.user.id, displayName: turn.user.displayName }
+      : undefined,
     instruction,
     createdAt: new Date().toISOString()
   } satisfies ScheduledChannelTaskPayload;

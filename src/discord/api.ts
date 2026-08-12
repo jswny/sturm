@@ -9,6 +9,7 @@ import type {
   RESTGetAPIGuildMessagesSearchResult,
   RESTGetAPIGuildMemberResult,
   RESTGetAPIGuildMembersSearchResult,
+  RESTGetAPIGuildRolesResult,
   RESTPutAPIApplicationGuildCommandsJSONBody,
   RESTPutAPIApplicationGuildCommandsResult,
   RESTPostAPIChannelMessageJSONBody,
@@ -299,6 +300,18 @@ export async function getGuildMember(
   return discordApiFetch<RESTGetAPIGuildMemberResult>(
     env,
     `/guilds/${guildId}/members/${userId}`,
+    { maxWaitMs: options.maxWaitMs, cache: options.cache }
+  );
+}
+
+export async function getGuildRoles(
+  env: DiscordApiEnv,
+  guildId: string,
+  options: { maxWaitMs?: number; cache?: DiscordRestRequest["cache"] } = {}
+): Promise<RESTGetAPIGuildRolesResult> {
+  return discordApiFetch<RESTGetAPIGuildRolesResult>(
+    env,
+    `/guilds/${guildId}/roles`,
     { maxWaitMs: options.maxWaitMs, cache: options.cache }
   );
 }

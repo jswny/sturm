@@ -67,7 +67,7 @@ import {
   type DiscordDeliveryFiberSnapshot
 } from "./discord/delivery-fiber";
 import { inlineDataUrls } from "./discord/format";
-import { getCurrentBotUser } from "./discord/api";
+import { getCurrentBotUser, getGuildRoles } from "./discord/api";
 import {
   createDiscordProgressReporter,
   withProgressTools
@@ -82,6 +82,10 @@ import {
   getDiscordMessageText
 } from "./discord/turn";
 import type { DiscordChatRequest, DiscordChatResponse } from "./discord/types";
+import {
+  removeDiscordUserRoleIds,
+  resolveDiscordUserRoleNames
+} from "./discord/user-context";
 import { GuildMemoryReflectionRunner } from "./guild-memory-reflection-runner";
 import { getErrorMessage, logError, logInfo, logWarn } from "./logging";
 import { GuildMemoryProvider } from "./memory";
@@ -538,13 +542,17 @@ export class ChatAgent extends Think<Env> {
   }
 
   async enqueueDiscordChat(input: DiscordDeliveryChatInput) {
-    const frozenRequest = await freezeDiscordRequestAttachments(
-      this.env,
-      input.request
-    );
+    const [frozenRequest, resolvedUser] = await Promise.all([
+      freezeDiscordRequestAttachments(this.env, input.request),
+      this.resolveDiscordUserContext(input.request)
+    ]);
+    const enrichedRequest =
+      resolvedUser === frozenRequest.user
+        ? frozenRequest
+        : { ...frozenRequest, user: resolvedUser };
     const result = await this.discordDeliveries.create({
       ...input,
-      request: frozenRequest
+      request: enrichedRequest
     });
     if (!result.record || result.record.type !== "chat") return;
 
@@ -657,6 +665,30 @@ export class ChatAgent extends Think<Env> {
         }
         throw retryError;
       }
+    }
+  }
+
+  private async resolveDiscordUserContext(request: DiscordChatRequest) {
+    const user = request.user;
+    if (!user?.roleIds?.length || !request.guildId) {
+      return user?.roleIds ? removeDiscordUserRoleIds(user) : user;
+    }
+
+    try {
+      const guildRoles = await getGuildRoles(this.env, request.guildId, {
+        maxWaitMs: 1_500
+      });
+      return resolveDiscordUserRoleNames(user, request.guildId, guildRoles);
+    } catch (error) {
+      logWarn("Discord caller role-name resolution failed", {
+        agentName: this.name,
+        correlationId: request.correlationId,
+        discordInteractionId: request.discordInteractionId,
+        guildId: request.guildId,
+        userId: request.userId,
+        error: getErrorMessage(error)
+      });
+      return removeDiscordUserRoleIds(user);
     }
   }
 

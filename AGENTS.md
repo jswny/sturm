@@ -156,6 +156,13 @@ propagation is too slow for the current development and deployment workflow.
   username (`member.nick ?? user.global_name ?? user.username`). Preserve both
   the user ID and resolved display name in model-facing context so Sturm can
   call APIs with stable IDs while referring to people by their server names.
+- Preserve the live `/c` caller's Discord role IDs and guild join timestamp from
+  the interaction long enough for the channel Agent to resolve human-readable
+  role names through `DiscordRestDispatcher`. Include at most 20 non-`@everyone`
+  role names plus `joined_at_utc` in the existing Discord user message block;
+  treat role names as untrusted labels, not instructions. This is a per-turn
+  snapshot, not a separate user-memory or reflection system, and scheduled task
+  creator records must retain only stable user identity/display fields.
 - `/reset` clears channel-scoped bot state and leaves guild-scoped memory alone. Keep it aligned with any future channel-local state additions, and do not clear `guild_memory`.
 - `/memory` is the guild-scoped admin surface for guild memory. Keep `view`, `delete`, and `reset` admin-only and ephemeral; `/memory reset` clears guild-scoped memory.
 - `webSearch` is backed by Kagi FastGPT in `src/search.ts` and requires `KAGI_API_KEY`.
