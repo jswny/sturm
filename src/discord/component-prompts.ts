@@ -14,7 +14,8 @@ import type {
   DiscordChannelMessageTarget,
   DiscordPermissionContext,
   DiscordSourceTurnContext,
-  DiscordUserContext
+  DiscordUserSnapshot,
+  PendingDiscordUserSnapshot
 } from "./types";
 import { pruneDurableStorageRecords } from "../storage-prune";
 import { applyDiscordSourceTurnContext } from "./source-context";
@@ -90,20 +91,30 @@ export type ComponentPromptSelectionInput = {
   promptId: string;
   optionId?: string;
   userId?: string;
-  user?: DiscordUserContext;
+  user?: DiscordUserSnapshot;
   guildId?: string;
   channelId?: string;
   messageId?: string;
 };
 
-export type DiscordComponentPromptInteractionInput =
-  ComponentPromptSelectionInput & {
-    interactionId: string;
-    app?: DiscordAppContext;
-    appPermissions?: DiscordPermissionContext;
-    channel?: DiscordChannelContext;
-    userPermissions?: string;
-  };
+export type DiscordComponentPromptInteractionInput = Omit<
+  ComponentPromptSelectionInput,
+  "user"
+> & {
+  interactionId: string;
+  app?: DiscordAppContext;
+  appPermissions?: DiscordPermissionContext;
+  channel?: DiscordChannelContext;
+  user?: PendingDiscordUserSnapshot | DiscordUserSnapshot;
+  userPermissions?: string;
+};
+
+type ResolvedDiscordComponentPromptInteractionInput = Omit<
+  DiscordComponentPromptInteractionInput,
+  "user"
+> & {
+  user?: DiscordUserSnapshot;
+};
 
 export type ComponentPromptSelectionResult =
   | {
@@ -211,7 +222,7 @@ export class DiscordComponentPromptStore {
   }
 
   async select(
-    input: DiscordComponentPromptInteractionInput
+    input: ResolvedDiscordComponentPromptInteractionInput
   ): Promise<ComponentPromptSelectionResult> {
     return this.storage.transaction(async (txn) => {
       const key = getComponentPromptKey(input.promptId);
@@ -363,7 +374,7 @@ export class DiscordComponentPromptStore {
 function createStoredComponentPromptContinuation(
   prompt: StoredComponentPrompt,
   option: ComponentPromptOption,
-  input: DiscordComponentPromptInteractionInput,
+  input: ResolvedDiscordComponentPromptInteractionInput,
   now: string
 ): StoredComponentPromptContinuation | undefined {
   if (!option.pendingAction) return undefined;

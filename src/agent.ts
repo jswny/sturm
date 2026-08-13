@@ -35,7 +35,6 @@ import {
   type ChannelContextReflectionSnapshot
 } from "./channel-context-reflection";
 import { createChannelScheduledTaskController } from "./channel-scheduler";
-import { createRecentDiscordChannelContext } from "./discord/channel-context";
 import { freezeDiscordRequestAttachments } from "./discord/attachment-artifacts";
 import {
   DiscordComponentPromptStore,
@@ -51,7 +50,7 @@ import {
   getDeliveryCorrelationId,
   isTerminalDelivery,
   type DiscordChatDeliveryRecord,
-  type DiscordDeliveryChatInput,
+  type DiscordChatAdmissionInput,
   type DiscordDeliveryRecord,
   type DiscordDeliveryResetInput
 } from "./discord/delivery";
@@ -68,6 +67,8 @@ import {
 } from "./discord/delivery-fiber";
 import { inlineDataUrls } from "./discord/format";
 import { getCurrentBotUser, getGuildRoles } from "./discord/api";
+import { formatLiveDiscordChannelSnapshot } from "./discord/live-channel-snapshot-formatter";
+import { createLiveDiscordChannelSnapshot } from "./discord/live-channel-snapshot";
 import {
   createDiscordProgressReporter,
   withProgressTools
@@ -81,11 +82,17 @@ import {
   getDiscordTurnFromUserMessage,
   getDiscordMessageText
 } from "./discord/turn";
-import type { DiscordChatRequest, DiscordChatResponse } from "./discord/types";
+import type {
+  DiscordChatAdmissionRequest,
+  DiscordChatRequest,
+  DiscordChatResponse,
+  DiscordUserSnapshot
+} from "./discord/types";
 import {
-  removeDiscordUserRoleIds,
-  resolveDiscordUserRoleNames
-} from "./discord/user-context";
+  hasPendingDiscordUserRoleIds,
+  resolveDiscordUserSnapshot,
+  toDiscordUserSnapshot
+} from "./discord/user-snapshot";
 import { GuildMemoryReflectionRunner } from "./guild-memory-reflection-runner";
 import { getErrorMessage, logError, logInfo, logWarn } from "./logging";
 import { GuildMemoryProvider } from "./memory";
@@ -541,10 +548,10 @@ export class ChatAgent extends Think<Env> {
     }
   }
 
-  async enqueueDiscordChat(input: DiscordDeliveryChatInput) {
+  async enqueueDiscordChat(input: DiscordChatAdmissionInput) {
     const [frozenRequest, resolvedUser] = await Promise.all([
       freezeDiscordRequestAttachments(this.env, input.request),
-      this.resolveDiscordUserContext(input.request)
+      this.enrichDiscordUserSnapshot(input.request)
     ]);
     const enrichedRequest =
       resolvedUser === frozenRequest.user
@@ -668,17 +675,20 @@ export class ChatAgent extends Think<Env> {
     }
   }
 
-  private async resolveDiscordUserContext(request: DiscordChatRequest) {
+  private async enrichDiscordUserSnapshot(
+    request: DiscordChatAdmissionRequest
+  ): Promise<DiscordUserSnapshot | undefined> {
     const user = request.user;
-    if (!user?.roleIds?.length || !request.guildId) {
-      return user?.roleIds ? removeDiscordUserRoleIds(user) : user;
+    if (!user) return undefined;
+    if (!hasPendingDiscordUserRoleIds(user) || !request.guildId) {
+      return toDiscordUserSnapshot(user);
     }
 
     try {
       const guildRoles = await getGuildRoles(this.env, request.guildId, {
         maxWaitMs: 1_500
       });
-      return resolveDiscordUserRoleNames(user, request.guildId, guildRoles);
+      return resolveDiscordUserSnapshot(user, request.guildId, guildRoles);
     } catch (error) {
       logWarn("Discord caller role-name resolution failed", {
         agentName: this.name,
@@ -688,7 +698,7 @@ export class ChatAgent extends Think<Env> {
         userId: request.userId,
         error: getErrorMessage(error)
       });
-      return removeDiscordUserRoleIds(user);
+      return toDiscordUserSnapshot(user);
     }
   }
 
@@ -1307,7 +1317,16 @@ export class ChatAgent extends Think<Env> {
   async handleDiscordComponentPromptInteraction(
     input: DiscordComponentPromptInteractionInput
   ) {
-    const result = await this.componentPrompts.select(input);
+    const user = await this.enrichDiscordUserSnapshot({
+      correlationId: input.interactionId,
+      discordInteractionId: input.interactionId,
+      text: "",
+      guildId: input.guildId,
+      channelId: input.channelId,
+      userId: input.userId,
+      user: input.user
+    });
+    const result = await this.componentPrompts.select({ ...input, user });
     if (result.status === "accepted" && result.prompt.continuation) {
       await this.submitComponentPromptContinuation(result.prompt);
     }
@@ -1394,16 +1413,21 @@ export class ChatAgent extends Think<Env> {
   private async createDiscordTurnRuntimeContext(turn: DiscordChatRequest) {
     const runtimeTurn = await this.withResolvedDiscordAppContext(turn);
     const sections = [formatDiscordRuntimeContext(runtimeTurn)];
-    const [channelContext, recentChannelContext] = await Promise.all([
+    const [channelContext, liveChannelSnapshot] = await Promise.all([
       this.channelContext.get(),
-      this.createRecentDiscordChannelContext(runtimeTurn)
+      this.getLiveDiscordChannelSnapshot(runtimeTurn)
     ]);
+    const formattedLiveChannelSnapshot =
+      formatLiveDiscordChannelSnapshot(liveChannelSnapshot);
     const durableChannelContext = formatChannelContextForPrompt(channelContext);
     if (durableChannelContext) sections.push(durableChannelContext);
-    if (recentChannelContext.text) sections.push(recentChannelContext.text);
+    if (formattedLiveChannelSnapshot.text) {
+      sections.push(formattedLiveChannelSnapshot.text);
+    }
     return {
       text: sections.filter(Boolean).join("\n\n"),
-      recentChannelBeforeMessageId: recentChannelContext.oldestVisibleMessageId,
+      recentChannelBeforeMessageId:
+        formattedLiveChannelSnapshot.oldestVisibleMessageId,
       discordBotUserId: runtimeTurn.app?.botUserId
     };
   }
@@ -1456,11 +1480,11 @@ export class ChatAgent extends Think<Env> {
     return this.botUserIdPromise;
   }
 
-  private async createRecentDiscordChannelContext(turn: DiscordChatRequest) {
+  private async getLiveDiscordChannelSnapshot(turn: DiscordChatRequest) {
     try {
-      return await createRecentDiscordChannelContext(this.env, turn);
+      return await createLiveDiscordChannelSnapshot(this.env, turn);
     } catch (error) {
-      logWarn("Discord recent channel context fetch failed", {
+      logWarn("Discord live channel snapshot fetch failed", {
         agentName: this.name,
         correlationId: turn.correlationId,
         discordInteractionId: turn.discordInteractionId,
@@ -1468,7 +1492,7 @@ export class ChatAgent extends Think<Env> {
         channelId: turn.channelId,
         error: getErrorMessage(error)
       });
-      return { text: "" };
+      return undefined;
     }
   }
 
@@ -1548,13 +1572,15 @@ export class ChatAgent extends Think<Env> {
     if (record.responseTarget.type !== "discord") return;
     if (!record.request.guildId || !record.request.channelId) return;
 
-    const [currentContext, recentChannelContext] = await Promise.all([
+    const [currentContext, liveChannelSnapshot] = await Promise.all([
       this.channelContext.get(),
-      this.createRecentDiscordChannelContext(record.request)
+      this.getLiveDiscordChannelSnapshot(record.request)
     ]);
-    if (!recentChannelContext.text) return;
+    const formattedLiveChannelSnapshot =
+      formatLiveDiscordChannelSnapshot(liveChannelSnapshot);
+    if (!formattedLiveChannelSnapshot.text) return;
     const newestContextMessageId =
-      recentChannelContext.newestVisibleNonSturmMessageId;
+      formattedLiveChannelSnapshot.newestVisibleNonSturmMessageId;
     if (
       !newestContextMessageId ||
       isChannelContextReflectionStale(
@@ -1568,7 +1594,7 @@ export class ChatAgent extends Think<Env> {
     const snapshot = createChannelContextReflectionSnapshot({
       request: record.request,
       assistantText: getDiscordMessageText(result.message),
-      recentChannelContext: recentChannelContext.text,
+      recentChannelContext: formattedLiveChannelSnapshot.text,
       lastProcessedMessageId: newestContextMessageId,
       channelContextEpoch: currentContext.epoch
     });

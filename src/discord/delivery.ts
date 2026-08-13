@@ -8,10 +8,11 @@ import {
   pruneDurableStorageRecords
 } from "../storage-prune";
 import type {
+  DiscordChatAdmissionRequest,
   DiscordChatRequest,
   DiscordChatResponse,
   DiscordResponseTarget,
-  DiscordUserContext
+  DiscordUserIdentitySnapshot
 } from "./types";
 
 type DiscordDeliveryMeta = {
@@ -51,7 +52,7 @@ export type DiscordResetDeliveryRecord = {
   guildId?: string;
   channelId?: string;
   userId?: string;
-  user?: DiscordUserContext;
+  user?: DiscordUserIdentitySnapshot;
   status: DiscordDeliveryStatus;
   lifecycle?: DiscordDeliveryLifecycle;
   createdAt: string;
@@ -80,6 +81,13 @@ export type DiscordDeliveryChatInput = {
   responseTarget: DiscordResponseTarget;
 };
 
+export type DiscordChatAdmissionInput = Omit<
+  DiscordDeliveryChatInput,
+  "request"
+> & {
+  request: DiscordChatAdmissionRequest;
+};
+
 export type DiscordDeliveryResetInput = {
   correlationId: string;
   discordInteractionId?: string;
@@ -87,7 +95,7 @@ export type DiscordDeliveryResetInput = {
   guildId?: string;
   channelId?: string;
   userId?: string;
-  user?: DiscordUserContext;
+  user?: DiscordUserIdentitySnapshot;
 };
 
 export type DiscordDeliveryCreateResult = {

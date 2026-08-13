@@ -3,7 +3,7 @@ import type {
   DiscordAppContext,
   DiscordChannelContext,
   DiscordPermissionContext,
-  DiscordUserContext
+  DiscordUserIdentitySnapshot
 } from "./discord/types";
 
 export const SCHEDULED_CHANNEL_TASK_CALLBACK = "runScheduledChannelTask";
@@ -18,7 +18,7 @@ export type ScheduledChannelTaskPayload = {
   app?: DiscordAppContext;
   appPermissions?: DiscordPermissionContext;
   createdByUserId?: string;
-  createdByUser?: Pick<DiscordUserContext, "id" | "displayName">;
+  createdByUser?: DiscordUserIdentitySnapshot;
   instruction: string;
   createdAt: string;
 };

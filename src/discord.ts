@@ -25,14 +25,15 @@ import {
   type DiscordGuildChannelLocation
 } from "./discord/conversation";
 import { createDiscordRuntimeContext } from "./discord/context";
-import { resolveDiscordMemberDisplayName } from "./discord/display-name";
-import { normalizeDiscordMemberJoinedAt } from "./discord/user-context";
 import { runMemoryCommand } from "./discord/memory-command";
 import type {
   DiscordRequestAttachment,
-  DiscordWebhookResponseTarget,
-  DiscordUserContext
+  DiscordWebhookResponseTarget
 } from "./discord/types";
+import {
+  createDiscordUserIdentitySnapshot,
+  createPendingDiscordUserSnapshot
+} from "./discord/user-snapshot";
 import { BodyTooLargeError, readRequestTextWithLimit } from "./http";
 import { logError, logWarn } from "./logging";
 
@@ -41,7 +42,7 @@ export type {
   DiscordChatResponse,
   DiscordResponseAttachment,
   DiscordResponseTarget,
-  DiscordUserContext
+  DiscordUserSnapshot
 } from "./discord/types";
 export { editOriginalInteractionResponse } from "./discord/api";
 
@@ -236,7 +237,7 @@ async function handleMessageComponentInteraction(
       messageId: interaction.message.id,
       ...createDiscordRuntimeContext(interaction),
       userId: getUserId(interaction),
-      user: getUserContext(interaction),
+      user: createPendingDiscordUserSnapshot(interaction),
       userPermissions: interaction.member?.permissions
     });
 
@@ -363,7 +364,7 @@ async function enqueueCommand(
       ...createDiscordRuntimeContext(interaction),
       attachments: getAttachmentOption(interaction, "image"),
       userId: getUserId(interaction),
-      user: getUserContext(interaction),
+      user: createPendingDiscordUserSnapshot(interaction),
       userPermissions: interaction.member?.permissions
     }
   });
@@ -387,7 +388,7 @@ async function enqueueResetCommand(
     guildId: location.guildId,
     channelId: location.channelId,
     userId: getUserId(interaction),
-    user: getUserIdentityContext(interaction),
+    user: createDiscordUserIdentitySnapshot(interaction),
     responseTarget: getResponseTarget(interaction)
   });
   return agent;
@@ -409,36 +410,6 @@ function getGuildChannelLocation(
 
 function getUserId(interaction: DiscordRoutedInteraction) {
   return interaction.member?.user?.id ?? interaction.user?.id;
-}
-
-function getUserContext(
-  interaction: DiscordRoutedInteraction
-): DiscordUserContext | undefined {
-  const user = interaction.member?.user ?? interaction.user;
-  if (!user?.id) return undefined;
-
-  return {
-    id: user.id,
-    displayName: interaction.member
-      ? resolveDiscordMemberDisplayName(interaction.member)
-      : undefined,
-    roleIds: interaction.member?.roles.filter(
-      (roleId): roleId is string =>
-        typeof roleId === "string" && Boolean(roleId)
-    ),
-    joinedAtUtc: normalizeDiscordMemberJoinedAt(interaction.member?.joined_at)
-  };
-}
-
-function getUserIdentityContext(
-  interaction: DiscordRoutedInteraction
-): DiscordUserContext | undefined {
-  const user = getUserContext(interaction);
-  if (!user) return undefined;
-  return {
-    id: user.id,
-    displayName: user.displayName
-  };
 }
 
 function getSelectedComponentOptionId(

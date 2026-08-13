@@ -20,7 +20,7 @@ export type DiscordChatRequest = {
   app?: DiscordAppContext;
   appPermissions?: DiscordPermissionContext;
   userId?: string;
-  user?: DiscordUserContext;
+  user?: DiscordUserSnapshot;
   userPermissions?: string;
 };
 
@@ -92,12 +92,23 @@ export type DiscordGeneratedResponseAttachment = Omit<
   artifactKey: string;
 };
 
-export type DiscordUserContext = {
+export type DiscordUserIdentitySnapshot = {
   id: string;
   displayName?: string;
+};
+
+export type PendingDiscordUserSnapshot = DiscordUserIdentitySnapshot & {
   roleIds?: string[];
+  joinedAtUtc?: string;
+};
+
+export type DiscordUserSnapshot = DiscordUserIdentitySnapshot & {
   roles?: string[];
   joinedAtUtc?: string;
+};
+
+export type DiscordChatAdmissionRequest = Omit<DiscordChatRequest, "user"> & {
+  user?: PendingDiscordUserSnapshot | DiscordUserSnapshot;
 };
 
 export type DiscordChannelContext = {

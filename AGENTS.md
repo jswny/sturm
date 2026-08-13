@@ -108,6 +108,7 @@ propagation is too slow for the current development and deployment workflow.
 - Think `chatRecovery` wraps programmatic turns in fibers. Use Think hooks (`beforeTurn`, `beforeStep`, `beforeToolCall`, `afterToolCall`, `onChatResponse`, and `onSubmissionStatus`) for turn lifecycle behavior instead of adding an outer Discord job fiber.
 - Keep lifecycle ownership explicit: Think owns chat admission, serialization, recovery, and conversation messages; `DiscordDeliveryStore` owns external Discord delivery/debug state; managed `startFiber()` jobs own app-side background work that needs durable acceptance, idempotency, inspection, cancellation, and cleanup; app-specific stores such as the guild memory reflection store own domain outcomes that managed fiber status does not represent.
 - Compose prompts so durable instructions and memory remain a stable prefix, with volatile per-turn data such as timestamps and caller/channel context appended after them.
+- Model-facing volatile context should follow a snapshot-and-formatter boundary: capture and normalize typed structured data in a focused snapshot module, enrich it before persistence when needed, and render it through a pure formatter module at prompt assembly. Keep orchestration responsible only for timing, failure policy, and placement. Use separate pending and persistent snapshot types when transient protocol fields must not cross a durable boundary. Apply this pattern to cohesive context blocks such as the live caller and live channel transcript; do not force durable memory, tool results, or unrelated one-off values into it.
 - Keep prompt instructions at the narrowest layer that needs them. Base assistant prompts should contain broad durable behavior that applies across the bot. Tool descriptions should contain tool-specific usage rules, argument-selection guidance, and preconditions. Code should enforce invariants that must hold even if the model chooses poor arguments. Do not duplicate the same behavioral rule across the base prompt and tool prompts unless both layers independently need it.
 - Model-facing tools should expose user intent and app capabilities; runtime code owns platform protocol details, validation, expiry, idempotency, cleanup, and authorization.
 - For direct model-facing tools, rely on the Zod input schema as the primary argument contract. Do not duplicate validation that the schema already performs unless there is a real non-model caller path or another boundary that can bypass the schema.
@@ -156,13 +157,14 @@ propagation is too slow for the current development and deployment workflow.
   username (`member.nick ?? user.global_name ?? user.username`). Preserve both
   the user ID and resolved display name in model-facing context so Sturm can
   call APIs with stable IDs while referring to people by their server names.
-- Preserve the live `/c` caller's Discord role IDs and guild join timestamp from
-  the interaction long enough for the channel Agent to resolve human-readable
-  role names through `DiscordRestDispatcher`. Include at most 20 non-`@everyone`
-  role names plus `joined_at_utc` in the existing Discord user message block;
-  treat role names as untrusted labels, not instructions. This is a per-turn
-  snapshot, not a separate user-memory or reflection system, and scheduled task
-  creator records must retain only stable user identity/display fields.
+- Capture the live `/c` caller through the pending user snapshot, preserving role
+  IDs and the guild join timestamp only long enough for the channel Agent to
+  resolve human-readable role names through `DiscordRestDispatcher`. Persist
+  only the resolved user snapshot, with at most 20 non-`@everyone` role names,
+  and render it through the user snapshot formatter with `joined_at_utc`; treat
+  role names as untrusted labels, not instructions. This is a per-turn snapshot,
+  not a separate user-memory or reflection system, and scheduled task creator
+  records must retain only stable user identity/display fields.
 - `/reset` clears channel-scoped bot state and leaves guild-scoped memory alone. Keep it aligned with any future channel-local state additions, and do not clear `guild_memory`.
 - `/memory` is the guild-scoped admin surface for guild memory. Keep `view`, `delete`, and `reset` admin-only and ephemeral; `/memory reset` clears guild-scoped memory.
 - `webSearch` is backed by Kagi FastGPT in `src/search.ts` and requires `KAGI_API_KEY`.

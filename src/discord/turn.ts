@@ -272,7 +272,6 @@ function getDiscordUserMetadata(value: unknown) {
   const user = value as {
     id?: unknown;
     displayName?: unknown;
-    roleIds?: unknown;
     roles?: unknown;
     joinedAtUtc?: unknown;
   };
@@ -281,7 +280,6 @@ function getDiscordUserMetadata(value: unknown) {
     id: user.id,
     displayName:
       typeof user.displayName === "string" ? user.displayName : undefined,
-    roleIds: getStringArray(user.roleIds),
     roles: getStringArray(user.roles),
     joinedAtUtc:
       typeof user.joinedAtUtc === "string" ? user.joinedAtUtc : undefined

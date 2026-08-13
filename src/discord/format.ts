@@ -1,6 +1,7 @@
 import type { ModelMessage } from "ai";
 import { formatModelArtifactReferences } from "./artifact-references";
 import type { DiscordChatRequest } from "./types";
+import { formatDiscordUserSnapshot } from "./user-snapshot-formatter";
 import type { ResponseArtifact } from "../artifacts";
 
 /**
@@ -26,24 +27,12 @@ export function inlineDataUrls(messages: ModelMessage[]): ModelMessage[] {
 }
 
 export function formatDiscordUserMessage(request: DiscordChatRequest) {
-  const lines = ["Discord user:"];
-  if (request.user?.id) lines.push(`id: ${request.user.id}`);
-  if (request.user?.displayName) {
-    lines.push(`display_name: ${request.user.displayName}`);
-  }
-  if (request.user?.roles?.length) {
-    lines.push(`roles: ${JSON.stringify(request.user.roles)}`);
-  }
-  if (request.user?.joinedAtUtc) {
-    lines.push(`joined_at_utc: ${request.user.joinedAtUtc}`);
-  }
-
   const artifacts = formatModelArtifactReferences(request.artifacts, {
     heading: "Artifact references:"
   });
   const attachments = formatUnstoredDiscordAttachments(request);
 
-  return `${lines.join("\n")}
+  return `${formatDiscordUserSnapshot(request.user)}
 User message:
 ${request.text}${artifacts ? `\n\n${artifacts}` : ""}${attachments ? `\n\n${attachments}` : ""}`;
 }
