@@ -18,7 +18,7 @@ export type GuildMemoryRecord = {
 
 export type GuildMemoryCatalog = {
   records: GuildMemoryRecord[];
-  version: number;
+  revision: number;
   epoch: number;
   updatedAt: string | null;
 };
@@ -51,7 +51,7 @@ export type GuildMemoryCommitResult = {
   changed: boolean;
   addedCount: number;
   deletedCount: number;
-  version: number;
+  revision: number;
   updatedAt: string | null;
 };
 
@@ -70,11 +70,11 @@ export type GuildMemoryDeleteResult = GuildMemoryCatalog & {
 export type GuildMemoryResetResult = GuildMemoryCatalog & {
   changed: boolean;
   deletedCount: number;
-  previousVersion: number;
+  previousRevision: number;
 };
 
 type StoredCatalogRow = {
-  version: number;
+  revision: number;
   epoch: number;
   next_ordinal: number;
   updated_at: string | null;
@@ -120,13 +120,13 @@ export class GuildMemoryProvider {
     return catalog;
   }
 
-  async getCurrentVersion() {
+  async getCurrentRevision() {
     const guildId = this.requireGuildId();
-    return this.getObject(guildId).getMemoryVersion();
+    return this.getObject(guildId).getMemoryRevision();
   }
 
-  getLastReadVersion() {
-    return this.lastRead?.version;
+  getLastReadRevision() {
+    return this.lastRead?.revision;
   }
 
   async commit(input: GuildMemoryCommitInput) {
@@ -157,8 +157,8 @@ export class GuildMemoryObject extends DurableObject<Env> {
     return this.readCatalog();
   }
 
-  async getMemoryVersion(): Promise<number> {
-    return this.readCatalogRow().version;
+  async getMemoryRevision(): Promise<number> {
+    return this.readCatalogRow().revision;
   }
 
   async commitMemoryChanges(
@@ -171,7 +171,7 @@ export class GuildMemoryObject extends DurableObject<Env> {
       )
       .toArray()[0];
     if (existingCommit) {
-      return JSON.parse(existingCommit.result_json) as GuildMemoryCommitResult;
+      return parseStoredCommitResult(existingCommit.result_json);
     }
 
     const catalog = this.readCatalogRow();
@@ -243,14 +243,14 @@ export class GuildMemoryObject extends DurableObject<Env> {
     }
 
     const changed = addedCount > 0 || deletedCount > 0;
-    const nextVersion = changed ? catalog.version + 1 : catalog.version;
+    const nextRevision = changed ? catalog.revision + 1 : catalog.revision;
     const updatedAt = changed ? now : catalog.updated_at;
     if (changed) {
       this.ctx.storage.sql.exec(
         `UPDATE guild_memory_catalog
          SET version = ?, next_ordinal = ?, updated_at = ?
          WHERE id = ?`,
-        nextVersion,
+        nextRevision,
         nextOrdinal,
         updatedAt,
         GUILD_MEMORY_CATALOG_ID
@@ -262,7 +262,7 @@ export class GuildMemoryObject extends DurableObject<Env> {
       changed,
       addedCount,
       deletedCount,
-      version: nextVersion,
+      revision: nextRevision,
       updatedAt
     } satisfies GuildMemoryCommitResult;
     this.ctx.storage.sql.exec(
@@ -300,7 +300,7 @@ export class GuildMemoryObject extends DurableObject<Env> {
       `UPDATE guild_memory_catalog
        SET version = ?, updated_at = ?
        WHERE id = ?`,
-      current.version + 1,
+      current.revision + 1,
       updatedAt,
       GUILD_MEMORY_CATALOG_ID
     );
@@ -323,13 +323,13 @@ export class GuildMemoryObject extends DurableObject<Env> {
     this.ctx.storage.sql.exec("DELETE FROM guild_memory_records");
 
     const changed = deletedCount > 0;
-    const nextVersion = changed ? current.version + 1 : current.version;
+    const nextRevision = changed ? current.revision + 1 : current.revision;
     const updatedAt = changed ? new Date().toISOString() : current.updated_at;
     this.ctx.storage.sql.exec(
       `UPDATE guild_memory_catalog
        SET version = ?, epoch = ?, updated_at = ?
        WHERE id = ?`,
-      nextVersion,
+      nextRevision,
       current.epoch + 1,
       updatedAt,
       GUILD_MEMORY_CATALOG_ID
@@ -339,7 +339,7 @@ export class GuildMemoryObject extends DurableObject<Env> {
       ...(await this.readCatalog()),
       changed,
       deletedCount,
-      previousVersion: current.version
+      previousRevision: current.revision
     };
   }
 
@@ -452,7 +452,7 @@ export class GuildMemoryObject extends DurableObject<Env> {
       .map(parseStoredMemoryRow);
     return {
       records,
-      version: catalog.version,
+      revision: catalog.revision,
       epoch: catalog.epoch,
       updatedAt: catalog.updated_at
     };
@@ -461,7 +461,7 @@ export class GuildMemoryObject extends DurableObject<Env> {
   private readCatalogRow() {
     return this.ctx.storage.sql
       .exec<StoredCatalogRow>(
-        `SELECT version, epoch, next_ordinal, updated_at
+        `SELECT version AS revision, epoch, next_ordinal, updated_at
          FROM guild_memory_catalog
          WHERE id = ?`,
         GUILD_MEMORY_CATALOG_ID
@@ -547,6 +547,37 @@ function parseStoredMemoryRow(row: StoredMemoryRow): GuildMemoryRecord {
       ? { sourceCorrelationId: row.source_correlation_id }
       : {}),
     createdAt: row.created_at
+  };
+}
+
+function parseStoredCommitResult(resultJson: string): GuildMemoryCommitResult {
+  const stored = JSON.parse(resultJson) as Partial<GuildMemoryCommitResult> & {
+    version?: unknown;
+  };
+  const revision =
+    typeof stored.revision === "number"
+      ? stored.revision
+      : typeof stored.version === "number"
+        ? stored.version
+        : undefined;
+  if (
+    stored.status !== "committed" ||
+    typeof stored.changed !== "boolean" ||
+    typeof stored.addedCount !== "number" ||
+    typeof stored.deletedCount !== "number" ||
+    revision === undefined ||
+    (stored.updatedAt !== null && typeof stored.updatedAt !== "string")
+  ) {
+    throw new Error("Invalid stored guild memory commit result.");
+  }
+
+  return {
+    status: "committed",
+    changed: stored.changed,
+    addedCount: stored.addedCount,
+    deletedCount: stored.deletedCount,
+    revision,
+    updatedAt: stored.updatedAt
   };
 }
 

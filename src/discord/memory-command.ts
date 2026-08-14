@@ -173,7 +173,7 @@ async function deliverMemoryCommandResult(
 function formatMemoryView(result: GuildMemoryCatalog) {
   const lines = [
     `Guild memory: ${result.records.length} records`,
-    `version: ${result.version}`,
+    `revision: ${result.revision}`,
     `updated_at_utc: ${result.updatedAt ?? "never"}`
   ];
 
@@ -200,7 +200,7 @@ function formatMemoryDeleteResult(result: GuildMemoryDeleteResult) {
 
   return [
     `Deleted guild memory record ${result.deleted.memoryId}.`,
-    `version: ${result.version}`,
+    `revision: ${result.revision}`,
     `remaining_records: ${result.records.length}`,
     "",
     "Deleted record:",
@@ -212,14 +212,14 @@ function formatMemoryResetResult(result: GuildMemoryResetResult) {
   if (!result.changed) {
     return [
       "Guild memory was already empty.",
-      `version: ${result.version}`,
+      `revision: ${result.revision}`,
       "deleted_entries: 0"
     ].join("\n");
   }
 
   return [
     "Guild memory reset.",
-    `version: ${result.previousVersion} -> ${result.version}`,
+    `revision: ${result.previousRevision} -> ${result.revision}`,
     `deleted_entries: ${result.deletedCount}`
   ].join("\n");
 }

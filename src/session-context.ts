@@ -1,5 +1,6 @@
 import { AgentContextProvider } from "agents/experimental/memory/session";
 import type { Session, SqlProvider } from "agents/experimental/memory/session";
+import { GUILD_MEMORY_CONTEXT_FORMAT_REVISION } from "./guild-memory-formatter";
 import { createBaseSystemPrompt, createRuntimeSystemPrompt } from "./prompts";
 
 export const GUILD_MEMORY_CONTEXT_LABEL = "guild_memory";
@@ -13,6 +14,7 @@ const SESSION_CONTEXT_PROMPT_RENDERER_NAME = "sturm-session-context-prompt";
 const SESSION_CONTEXT_PROMPT_STORAGE_KEY = `session-context-prompt:${stableHash(
   JSON.stringify({
     rendererName: SESSION_CONTEXT_PROMPT_RENDERER_NAME,
+    guildMemoryContextFormatRevision: GUILD_MEMORY_CONTEXT_FORMAT_REVISION,
     contexts: [
       {
         label: GUILD_MEMORY_CONTEXT_LABEL,
@@ -23,11 +25,11 @@ const SESSION_CONTEXT_PROMPT_STORAGE_KEY = `session-context-prompt:${stableHash(
     ]
   })
 )}`;
-const GUILD_MEMORY_PROMPT_VERSION_KEY = "guild-memory-prompt-version";
+const GUILD_MEMORY_PROMPT_REVISION_KEY = `guild-memory-prompt-revision:${GUILD_MEMORY_CONTEXT_FORMAT_REVISION}`;
 
-type VersionedMemoryProvider = {
-  getCurrentVersion(): Promise<number>;
-  getLastReadVersion(): number | undefined;
+type RevisionedMemoryProvider = {
+  getCurrentRevision(): Promise<number>;
+  getLastReadRevision(): number | undefined;
 };
 
 export function createSessionContextPromptProvider(agent: SqlProvider) {
@@ -37,22 +39,22 @@ export function createSessionContextPromptProvider(agent: SqlProvider) {
 export async function getFreshSessionContextPrompt(
   session: Session,
   storage: DurableObjectStorage,
-  provider: VersionedMemoryProvider | undefined
+  provider: RevisionedMemoryProvider | undefined
 ) {
   if (!provider) return session.freezeSystemPrompt();
 
-  const currentVersion = await provider.getCurrentVersion();
-  const cachedVersion = await storage.get<number>(
-    GUILD_MEMORY_PROMPT_VERSION_KEY
+  const currentRevision = await provider.getCurrentRevision();
+  const cachedRevision = await storage.get<number>(
+    GUILD_MEMORY_PROMPT_REVISION_KEY
   );
-  if (cachedVersion === currentVersion) {
+  if (cachedRevision === currentRevision) {
     return session.freezeSystemPrompt();
   }
 
   const prompt = await session.refreshSystemPrompt();
   await storage.put(
-    GUILD_MEMORY_PROMPT_VERSION_KEY,
-    provider.getLastReadVersion() ?? currentVersion
+    GUILD_MEMORY_PROMPT_REVISION_KEY,
+    provider.getLastReadRevision() ?? currentRevision
   );
   return prompt;
 }

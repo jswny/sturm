@@ -1,5 +1,8 @@
 import type { GuildMemoryCatalog, GuildMemoryRecord } from "./memory";
 
+// Increment whenever formatGuildMemoryContext changes its model-facing contract.
+export const GUILD_MEMORY_CONTEXT_FORMAT_REVISION = 1;
+
 export function formatGuildMemoryContext(records: GuildMemoryRecord[]) {
   const sections = [
     formatRecordGroup(
@@ -27,16 +30,10 @@ export function formatGuildMemoryReflectionContext(
   catalog: GuildMemoryCatalog
 ) {
   if (catalog.records.length === 0) {
-    return [
-      `catalogVersion: ${catalog.version}`,
-      `catalogEpoch: ${catalog.epoch}`,
-      "records: []"
-    ].join("\n");
+    return "records: []";
   }
 
   return [
-    `catalogVersion: ${catalog.version}`,
-    `catalogEpoch: ${catalog.epoch}`,
     "records:",
     ...catalog.records.map((record) =>
       JSON.stringify({
