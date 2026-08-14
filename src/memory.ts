@@ -1,44 +1,107 @@
-import type { WritableContextProvider } from "agents/experimental/memory/session";
 import { DurableObject } from "cloudflare:workers";
-import { logWarn } from "./logging";
+import { formatGuildMemoryContext } from "./guild-memory-formatter";
 
-const GUILD_MEMORY_STATE_KEY = "guild-memory";
+const LEGACY_GUILD_MEMORY_STATE_KEY = "guild-memory";
+const GUILD_MEMORY_CATALOG_ID = 1;
 
-export type GuildMemorySnapshot = {
+export type GuildMemoryKind = "legacy" | "guild" | "user" | "relationship";
+
+export type GuildMemoryRecord = {
+  memoryId: string;
+  kind: GuildMemoryKind;
   content: string;
+  subjectUserIds: string[];
+  assertedByUserId?: string;
+  sourceCorrelationId?: string;
+  createdAt: string;
+};
+
+export type GuildMemoryCatalog = {
+  records: GuildMemoryRecord[];
+  version: number;
+  epoch: number;
+  updatedAt: string | null;
+};
+
+export type GuildMemoryAddMutation = {
+  type: "add";
+  kind: Exclude<GuildMemoryKind, "legacy">;
+  content: string;
+  subjectUserIds: string[];
+};
+
+export type GuildMemoryDeleteMutation = {
+  type: "delete";
+  memoryId: string;
+};
+
+export type GuildMemoryMutation =
+  | GuildMemoryAddMutation
+  | GuildMemoryDeleteMutation;
+
+export type GuildMemoryCommitInput = {
+  correlationId: string;
+  baseEpoch: number;
+  assertedByUserId: string;
+  mutations: GuildMemoryMutation[];
+};
+
+export type GuildMemoryCommitResult = {
+  status: "committed";
+  changed: boolean;
+  addedCount: number;
+  deletedCount: number;
   version: number;
   updatedAt: string | null;
 };
 
-export type GuildMemoryEntry = {
-  index: number;
-  content: string;
+export type GuildMemoryCommitConflict = {
+  status: "conflict";
+  reason: "reset" | "missing_records";
+  missingMemoryIds?: string[];
 };
 
-export type GuildMemoryList = GuildMemorySnapshot & {
-  entries: GuildMemoryEntry[];
-};
-
-export type GuildMemoryDeleteResult = GuildMemoryList & {
+export type GuildMemoryDeleteResult = GuildMemoryCatalog & {
   changed: boolean;
-  deleted?: GuildMemoryEntry;
-  requestedIndex: number;
+  deleted?: GuildMemoryRecord;
+  requestedMemoryId: string;
 };
 
-export type GuildMemoryResetResult = GuildMemoryList & {
+export type GuildMemoryResetResult = GuildMemoryCatalog & {
   changed: boolean;
   deletedCount: number;
   previousVersion: number;
 };
 
-type GuildMemoryUpdate = {
-  baseContent: string;
-  baseVersion: number;
-  nextContent: string;
+type StoredCatalogRow = {
+  version: number;
+  epoch: number;
+  next_ordinal: number;
+  updated_at: string | null;
 };
 
-export class GuildMemoryProvider implements WritableContextProvider {
-  private lastRead: GuildMemorySnapshot | null = null;
+type StoredMemoryRow = {
+  memory_id: string;
+  kind: GuildMemoryKind;
+  content: string;
+  subject_user_ids: string;
+  asserted_by_user_id: string | null;
+  source_correlation_id: string | null;
+  created_at: string;
+};
+
+type StoredCommitRow = {
+  result_json: string;
+};
+
+type LegacyGuildMemorySnapshot = {
+  content: string;
+  version: number;
+  updatedAt: string | null;
+};
+
+export class GuildMemoryProvider {
+  private lastRead: GuildMemoryCatalog | null = null;
 
   constructor(
     private namespace: DurableObjectNamespace<GuildMemoryObject>,
@@ -46,10 +109,15 @@ export class GuildMemoryProvider implements WritableContextProvider {
   ) {}
 
   async get(): Promise<string | null> {
+    const catalog = await this.getCatalog();
+    return formatGuildMemoryContext(catalog.records);
+  }
+
+  async getCatalog() {
     const guildId = this.requireGuildId();
-    const snapshot = await this.getObject(guildId).getMemory();
-    this.lastRead = snapshot;
-    return snapshot.content;
+    const catalog = await this.getObject(guildId).getMemoryCatalog();
+    this.lastRead = catalog;
+    return catalog;
   }
 
   async getCurrentVersion() {
@@ -61,16 +129,9 @@ export class GuildMemoryProvider implements WritableContextProvider {
     return this.lastRead?.version;
   }
 
-  async set(content: string): Promise<void> {
+  async commit(input: GuildMemoryCommitInput) {
     const guildId = this.requireGuildId();
-    const object = this.getObject(guildId);
-    const base = this.lastRead ?? (await object.getMemory());
-    const snapshot = await object.setMemory({
-      baseContent: base.content,
-      baseVersion: base.version,
-      nextContent: content
-    });
-    this.lastRead = snapshot;
+    return this.getObject(guildId).commitMemoryChanges(input);
   }
 
   private getObject(guildId: string) {
@@ -87,157 +148,414 @@ export class GuildMemoryProvider implements WritableContextProvider {
 }
 
 export class GuildMemoryObject extends DurableObject<Env> {
-  async getMemory(): Promise<GuildMemorySnapshot> {
-    return this.readMemory();
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    ctx.blockConcurrencyWhile(async () => this.initializeStorage());
   }
 
-  async getMemoryList(): Promise<GuildMemoryList> {
-    return createGuildMemoryList(await this.readMemory());
+  async getMemoryCatalog(): Promise<GuildMemoryCatalog> {
+    return this.readCatalog();
   }
 
   async getMemoryVersion(): Promise<number> {
-    const snapshot = await this.readMemory();
-    return snapshot.version;
+    return this.readCatalogRow().version;
   }
 
-  async setMemory(update: GuildMemoryUpdate): Promise<GuildMemorySnapshot> {
-    const current = await this.readMemory();
-    const baseContent = normalizeMemory(update.baseContent);
-    const nextContent = normalizeMemory(update.nextContent);
-
-    if (current.version === update.baseVersion) {
-      return this.writeMemory(current, nextContent);
+  async commitMemoryChanges(
+    input: GuildMemoryCommitInput
+  ): Promise<GuildMemoryCommitResult | GuildMemoryCommitConflict> {
+    const existingCommit = this.ctx.storage.sql
+      .exec<StoredCommitRow>(
+        "SELECT result_json FROM guild_memory_commits WHERE correlation_id = ?",
+        input.correlationId
+      )
+      .toArray()[0];
+    if (existingCommit) {
+      return JSON.parse(existingCommit.result_json) as GuildMemoryCommitResult;
     }
 
-    if (nextContent.startsWith(baseContent)) {
-      const suffix = nextContent.slice(baseContent.length);
-      const mergedContent = appendMemorySuffix(current.content, suffix);
-      return this.writeMemory(current, mergedContent);
+    const catalog = this.readCatalogRow();
+    if (catalog.epoch !== input.baseEpoch) {
+      return { status: "conflict", reason: "reset" };
     }
 
-    logWarn("Guild memory write conflict", {
-      currentVersion: current.version,
-      baseVersion: update.baseVersion,
-      currentLength: current.content.length,
-      baseLength: baseContent.length,
-      nextLength: nextContent.length
-    });
-
-    throw new Error(
-      "Guild memory changed while this turn was running. Reload memory and retry the edit."
+    const deleteIds = [
+      ...new Set(
+        input.mutations
+          .filter(
+            (mutation): mutation is GuildMemoryDeleteMutation =>
+              mutation.type === "delete"
+          )
+          .map((mutation) => mutation.memoryId)
+      )
+    ];
+    const missingMemoryIds = deleteIds.filter(
+      (memoryId) => !this.getStoredMemoryRow(memoryId)
     );
-  }
-
-  async deleteMemoryEntry(index: number): Promise<GuildMemoryDeleteResult> {
-    const current = await this.readMemory();
-    const currentList = createGuildMemoryList(current);
-    const deleted = currentList.entries[index - 1];
-
-    if (!Number.isInteger(index) || !deleted) {
+    if (missingMemoryIds.length > 0) {
       return {
-        ...currentList,
-        changed: false,
-        requestedIndex: index
+        status: "conflict",
+        reason: "missing_records",
+        missingMemoryIds
       };
     }
 
-    const nextContent = currentList.entries
-      .filter((entry) => entry.index !== index)
-      .map((entry) => entry.content)
-      .join("\n");
-    const snapshot = await this.writeMemory(current, nextContent);
+    let deletedCount = 0;
+    for (const memoryId of deleteIds) {
+      deletedCount += this.ctx.storage.sql.exec(
+        "DELETE FROM guild_memory_records WHERE memory_id = ?",
+        memoryId
+      ).rowsWritten;
+    }
+
+    let nextOrdinal = catalog.next_ordinal;
+    let addedCount = 0;
+    const now = new Date().toISOString();
+    for (const mutation of input.mutations) {
+      if (mutation.type !== "add") continue;
+      const prepared = prepareAddMutation(mutation);
+      const result = this.ctx.storage.sql.exec(
+        `INSERT OR IGNORE INTO guild_memory_records (
+          memory_id,
+          ordinal,
+          kind,
+          content,
+          subject_user_ids,
+          asserted_by_user_id,
+          source_correlation_id,
+          created_at,
+          dedupe_key
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        crypto.randomUUID(),
+        nextOrdinal,
+        prepared.kind,
+        prepared.content,
+        JSON.stringify(prepared.subjectUserIds),
+        input.assertedByUserId,
+        input.correlationId,
+        now,
+        createMemoryDedupeKey(prepared)
+      );
+      if (result.rowsWritten > 0) {
+        nextOrdinal += 1;
+        addedCount += 1;
+      }
+    }
+
+    const changed = addedCount > 0 || deletedCount > 0;
+    const nextVersion = changed ? catalog.version + 1 : catalog.version;
+    const updatedAt = changed ? now : catalog.updated_at;
+    if (changed) {
+      this.ctx.storage.sql.exec(
+        `UPDATE guild_memory_catalog
+         SET version = ?, next_ordinal = ?, updated_at = ?
+         WHERE id = ?`,
+        nextVersion,
+        nextOrdinal,
+        updatedAt,
+        GUILD_MEMORY_CATALOG_ID
+      );
+    }
+
+    const result = {
+      status: "committed",
+      changed,
+      addedCount,
+      deletedCount,
+      version: nextVersion,
+      updatedAt
+    } satisfies GuildMemoryCommitResult;
+    this.ctx.storage.sql.exec(
+      `INSERT INTO guild_memory_commits (
+        correlation_id,
+        result_json,
+        committed_at
+      ) VALUES (?, ?, ?)`,
+      input.correlationId,
+      JSON.stringify(result),
+      now
+    );
+    return result;
+  }
+
+  async deleteMemoryRecord(memoryId: string): Promise<GuildMemoryDeleteResult> {
+    const requestedMemoryId = memoryId.trim();
+    const current = this.readCatalogRow();
+    const stored = this.getStoredMemoryRow(requestedMemoryId);
+    if (!stored) {
+      return {
+        ...(await this.readCatalog()),
+        changed: false,
+        requestedMemoryId
+      };
+    }
+
+    const deleted = parseStoredMemoryRow(stored);
+    this.ctx.storage.sql.exec(
+      "DELETE FROM guild_memory_records WHERE memory_id = ?",
+      requestedMemoryId
+    );
+    const updatedAt = new Date().toISOString();
+    this.ctx.storage.sql.exec(
+      `UPDATE guild_memory_catalog
+       SET version = ?, updated_at = ?
+       WHERE id = ?`,
+      current.version + 1,
+      updatedAt,
+      GUILD_MEMORY_CATALOG_ID
+    );
 
     return {
-      ...createGuildMemoryList(snapshot),
-      changed: snapshot.version !== current.version,
+      ...(await this.readCatalog()),
+      changed: true,
       deleted,
-      requestedIndex: index
+      requestedMemoryId
     };
   }
 
   async resetMemory(): Promise<GuildMemoryResetResult> {
-    const current = await this.readMemory();
-    const deletedCount = createGuildMemoryEntries(current.content).length;
-    const snapshot = await this.writeMemory(current, "");
+    const current = this.readCatalogRow();
+    const deletedCount = this.ctx.storage.sql
+      .exec<{ count: number }>(
+        "SELECT COUNT(*) AS count FROM guild_memory_records"
+      )
+      .one().count;
+    this.ctx.storage.sql.exec("DELETE FROM guild_memory_records");
+
+    const changed = deletedCount > 0;
+    const nextVersion = changed ? current.version + 1 : current.version;
+    const updatedAt = changed ? new Date().toISOString() : current.updated_at;
+    this.ctx.storage.sql.exec(
+      `UPDATE guild_memory_catalog
+       SET version = ?, epoch = ?, updated_at = ?
+       WHERE id = ?`,
+      nextVersion,
+      current.epoch + 1,
+      updatedAt,
+      GUILD_MEMORY_CATALOG_ID
+    );
 
     return {
-      ...createGuildMemoryList(snapshot),
-      changed: snapshot.version !== current.version,
+      ...(await this.readCatalog()),
+      changed,
       deletedCount,
       previousVersion: current.version
     };
   }
 
-  private async readMemory(): Promise<GuildMemorySnapshot> {
-    const stored = await this.ctx.storage.get<GuildMemorySnapshot>(
-      GUILD_MEMORY_STATE_KEY
+  private async initializeStorage() {
+    this.ctx.storage.sql.exec(`
+      CREATE TABLE IF NOT EXISTS guild_memory_catalog (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        version INTEGER NOT NULL,
+        epoch INTEGER NOT NULL,
+        next_ordinal INTEGER NOT NULL,
+        updated_at TEXT
+      );
+      CREATE TABLE IF NOT EXISTS guild_memory_records (
+        memory_id TEXT PRIMARY KEY,
+        ordinal INTEGER NOT NULL UNIQUE,
+        kind TEXT NOT NULL CHECK (kind IN ('legacy', 'guild', 'user', 'relationship')),
+        content TEXT NOT NULL,
+        subject_user_ids TEXT NOT NULL,
+        asserted_by_user_id TEXT,
+        source_correlation_id TEXT,
+        created_at TEXT NOT NULL,
+        dedupe_key TEXT NOT NULL UNIQUE
+      );
+      CREATE TABLE IF NOT EXISTS guild_memory_commits (
+        correlation_id TEXT PRIMARY KEY,
+        result_json TEXT NOT NULL,
+        committed_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS guild_memory_schema_migrations (
+        id INTEGER PRIMARY KEY,
+        applied_at TEXT NOT NULL
+      );
+      INSERT OR IGNORE INTO guild_memory_catalog (
+        id,
+        version,
+        epoch,
+        next_ordinal,
+        updated_at
+      ) VALUES (1, 0, 0, 1, NULL);
+    `);
+
+    const migrated = this.ctx.storage.sql
+      .exec<{ migrated: number }>(
+        "SELECT COUNT(*) AS migrated FROM guild_memory_schema_migrations WHERE id = 1"
+      )
+      .one().migrated;
+    if (migrated > 0) return;
+
+    const legacy = await this.ctx.storage.get<LegacyGuildMemorySnapshot>(
+      LEGACY_GUILD_MEMORY_STATE_KEY
     );
-    return {
-      content: stored?.content ?? "",
-      version: stored?.version ?? 0,
-      updatedAt: stored?.updatedAt ?? null
-    };
-  }
-
-  private async writeMemory(
-    current: GuildMemorySnapshot,
-    content: string
-  ): Promise<GuildMemorySnapshot> {
-    const normalized = normalizeMemory(content);
-
-    if (normalized === current.content) {
-      return current;
+    const entries = createLegacyEntries(legacy?.content ?? "");
+    let ordinal = 1;
+    const createdAt = legacy?.updatedAt ?? new Date().toISOString();
+    for (const content of entries) {
+      const memoryId = crypto.randomUUID();
+      this.ctx.storage.sql.exec(
+        `INSERT OR IGNORE INTO guild_memory_records (
+          memory_id,
+          ordinal,
+          kind,
+          content,
+          subject_user_ids,
+          asserted_by_user_id,
+          source_correlation_id,
+          created_at,
+          dedupe_key
+        ) VALUES (?, ?, 'legacy', ?, '[]', NULL, NULL, ?, ?)`,
+        memoryId,
+        ordinal,
+        content,
+        createdAt,
+        JSON.stringify(["legacy", ordinal, content])
+      );
+      ordinal += 1;
     }
 
-    const snapshot = {
-      content: normalized,
-      version: current.version + 1,
-      updatedAt: new Date().toISOString()
+    this.ctx.storage.sql.exec(
+      `UPDATE guild_memory_catalog
+       SET version = ?, next_ordinal = ?, updated_at = ?
+       WHERE id = ?`,
+      legacy?.version ?? 0,
+      ordinal,
+      legacy?.updatedAt ?? null,
+      GUILD_MEMORY_CATALOG_ID
+    );
+    this.ctx.storage.sql.exec(
+      "INSERT INTO guild_memory_schema_migrations (id, applied_at) VALUES (1, ?)",
+      new Date().toISOString()
+    );
+    await this.ctx.storage.delete(LEGACY_GUILD_MEMORY_STATE_KEY);
+  }
+
+  private readCatalog(): GuildMemoryCatalog {
+    const catalog = this.readCatalogRow();
+    const records = this.ctx.storage.sql
+      .exec<StoredMemoryRow>(
+        `SELECT
+          memory_id,
+          kind,
+          content,
+          subject_user_ids,
+          asserted_by_user_id,
+          source_correlation_id,
+          created_at
+         FROM guild_memory_records
+         ORDER BY ordinal ASC`
+      )
+      .toArray()
+      .map(parseStoredMemoryRow);
+    return {
+      records,
+      version: catalog.version,
+      epoch: catalog.epoch,
+      updatedAt: catalog.updated_at
     };
-    await this.ctx.storage.put(GUILD_MEMORY_STATE_KEY, snapshot);
-    return snapshot;
+  }
+
+  private readCatalogRow() {
+    return this.ctx.storage.sql
+      .exec<StoredCatalogRow>(
+        `SELECT version, epoch, next_ordinal, updated_at
+         FROM guild_memory_catalog
+         WHERE id = ?`,
+        GUILD_MEMORY_CATALOG_ID
+      )
+      .one();
+  }
+
+  private getStoredMemoryRow(memoryId: string) {
+    return this.ctx.storage.sql
+      .exec<StoredMemoryRow>(
+        `SELECT
+          memory_id,
+          kind,
+          content,
+          subject_user_ids,
+          asserted_by_user_id,
+          source_correlation_id,
+          created_at
+         FROM guild_memory_records
+         WHERE memory_id = ?`,
+        memoryId
+      )
+      .toArray()[0];
   }
 }
 
-function appendMemorySuffix(content: string, suffix: string) {
-  const normalizedContent = normalizeMemory(content);
-  const normalizedSuffix = suffix.trim();
+function prepareAddMutation(mutation: GuildMemoryAddMutation) {
+  const content = mutation.content.trim();
+  if (!content) throw new Error("Guild memory content cannot be empty.");
+  const subjectUserIds = [
+    ...new Set(mutation.subjectUserIds.map((userId) => userId.trim()))
+  ].filter(Boolean);
 
-  if (!normalizedSuffix) {
-    return normalizedContent;
+  if (mutation.kind === "guild" && subjectUserIds.length !== 0) {
+    throw new Error("Guild memory cannot have subject user IDs.");
+  }
+  if (mutation.kind === "user" && subjectUserIds.length !== 1) {
+    throw new Error("User memory requires exactly one subject user ID.");
+  }
+  if (mutation.kind === "relationship" && subjectUserIds.length < 2) {
+    throw new Error(
+      "Relationship memory requires at least two subject user IDs."
+    );
   }
 
-  if (!normalizedContent) {
-    return normalizedSuffix;
-  }
-
-  if (suffix.startsWith("\n")) {
-    return normalizeMemory(`${normalizedContent}${suffix}`);
-  }
-
-  return normalizeMemory(`${normalizedContent}\n${suffix}`);
-}
-
-function normalizeMemory(content: string) {
-  return content.trim();
-}
-
-function createGuildMemoryList(snapshot: GuildMemorySnapshot): GuildMemoryList {
   return {
-    ...snapshot,
-    entries: createGuildMemoryEntries(snapshot.content)
+    kind: mutation.kind,
+    content,
+    subjectUserIds
   };
 }
 
-function createGuildMemoryEntries(content: string): GuildMemoryEntry[] {
-  return normalizeMemory(content)
+function createMemoryDedupeKey(input: {
+  kind: GuildMemoryKind;
+  content: string;
+  subjectUserIds: string[];
+}) {
+  return JSON.stringify([
+    input.kind,
+    [...input.subjectUserIds].sort(),
+    input.content.trim().toLocaleLowerCase()
+  ]);
+}
+
+function parseStoredMemoryRow(row: StoredMemoryRow): GuildMemoryRecord {
+  const parsedSubjectUserIds = JSON.parse(row.subject_user_ids) as unknown;
+  if (
+    !Array.isArray(parsedSubjectUserIds) ||
+    !parsedSubjectUserIds.every((value) => typeof value === "string")
+  ) {
+    throw new Error(`Invalid subject user IDs for memory ${row.memory_id}.`);
+  }
+
+  return {
+    memoryId: row.memory_id,
+    kind: row.kind,
+    content: row.content,
+    subjectUserIds: parsedSubjectUserIds,
+    ...(row.asserted_by_user_id
+      ? { assertedByUserId: row.asserted_by_user_id }
+      : {}),
+    ...(row.source_correlation_id
+      ? { sourceCorrelationId: row.source_correlation_id }
+      : {}),
+    createdAt: row.created_at
+  };
+}
+
+function createLegacyEntries(content: string) {
+  return content
+    .trim()
     .split("\n")
     .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line, index) => ({
-      index: index + 1,
-      content: line
-    }));
+    .filter(Boolean);
 }
 
 export function getGuildMemoryObjectName(guildId: string) {
@@ -256,15 +574,15 @@ export async function listGuildMemory(
   namespace: DurableObjectNamespace<GuildMemoryObject>,
   guildId: string
 ) {
-  return getGuildMemoryObject(namespace, guildId).getMemoryList();
+  return getGuildMemoryObject(namespace, guildId).getMemoryCatalog();
 }
 
-export async function deleteGuildMemoryEntry(
+export async function deleteGuildMemoryRecord(
   namespace: DurableObjectNamespace<GuildMemoryObject>,
   guildId: string,
-  index: number
+  memoryId: string
 ) {
-  return getGuildMemoryObject(namespace, guildId).deleteMemoryEntry(index);
+  return getGuildMemoryObject(namespace, guildId).deleteMemoryRecord(memoryId);
 }
 
 export async function resetGuildMemory(

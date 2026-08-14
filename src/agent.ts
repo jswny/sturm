@@ -105,6 +105,7 @@ import {
   parseGuildMemoryReflectionSnapshot,
   type GuildMemoryReflectionRecord
 } from "./memory-reflection";
+import { searchGuildMembers } from "./nickname";
 import {
   CHAT_STREAM_STALL_TIMEOUT_MS,
   COMPACTION_PROVIDER_OPTIONS,
@@ -529,6 +530,8 @@ export class ChatAgent extends Think<Env> {
           agentName: this.name,
           correlationId,
           operation: reflection.operation,
+          addedCount: reflection.addedCount,
+          deletedCount: reflection.deletedCount,
           attempts: reflection.attempts
         });
       }
@@ -1539,6 +1542,8 @@ export class ChatAgent extends Think<Env> {
               agentName: this.name,
               ...getDeliveryLogContext(record),
               operation: reflection.operation,
+              addedCount: reflection.addedCount,
+              deletedCount: reflection.deletedCount,
               attempts: reflection.attempts
             });
           }
@@ -1717,6 +1722,16 @@ export class ChatAgent extends Think<Env> {
           CHAT_AI_GATEWAY_FLOWS.memoryReflection,
           createChatAiGatewayCorrelation(snapshot.request),
           this.sessionAffinity
+        ),
+      searchGuildMembers: (snapshot, query) =>
+        searchGuildMembers(
+          this.env,
+          {
+            guildId: snapshot.request.guildId,
+            userId: snapshot.request.user?.id ?? snapshot.request.userId,
+            userPermissions: snapshot.request.userPermissions
+          },
+          query
         ),
       providerOptions: MEMORY_REFLECTION_PROVIDER_OPTIONS
     });
@@ -2008,7 +2023,10 @@ function createDebugMemoryReflectionStatus(
     status: reflection?.status,
     changed: reflection?.changed,
     operation: reflection?.operation,
+    addedCount: reflection?.addedCount,
+    deletedCount: reflection?.deletedCount,
     attempts: reflection?.attempts,
+    reason: reflection?.reason,
     error: reflection?.error,
     createdAt: reflection?.createdAt,
     updatedAt: reflection?.updatedAt,

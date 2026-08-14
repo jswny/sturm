@@ -1,39 +1,86 @@
-import { generateText, tool, type LanguageModel } from "ai";
+import {
+  generateText,
+  hasToolCall,
+  stepCountIs,
+  tool,
+  type LanguageModel
+} from "ai";
 import { z } from "zod";
 import type { DiscordChatRequest } from "./discord/types";
+import { formatGuildMemoryReflectionContext } from "./guild-memory-formatter";
+import type {
+  GuildMemoryCatalog,
+  GuildMemoryCommitResult,
+  GuildMemoryMutation
+} from "./memory";
 import {
   MEMORY_REFLECTION_PROVIDER_OPTIONS,
   type ModelProviderOptions
 } from "./model";
+import type { GuildMemberSearchResult } from "./nickname";
 import { isTimestampBefore, pruneDurableStorageRecords } from "./storage-prune";
 
 const GUILD_MEMORY_REFLECTION_PREFIX = "guild-memory-reflection:";
 const MEMORY_REFLECTION_RECORD_PRUNE_BATCH_SIZE = 100;
 const MEMORY_REFLECTION_MODEL_ATTEMPTS = 2;
+const MEMORY_REFLECTION_MAX_STEPS = 8;
+const MEMORY_CONTENT_MAX_LENGTH = 500;
+const MEMORY_RELATIONSHIP_MAX_USERS = 8;
 
-const appendGuildMemoryInputSchema = z.object({
-  memories: z
-    .array(z.string().min(1))
-    .min(1)
-    .describe("Concise complete memory entries to append.")
+const memoryContentSchema = z
+  .string()
+  .min(1)
+  .max(MEMORY_CONTENT_MAX_LENGTH)
+  .describe(
+    `Concise complete memory content, from 1 to ${MEMORY_CONTENT_MAX_LENGTH} characters.`
+  );
+
+const rememberGuildFactInputSchema = z.object({
+  content: memoryContentSchema
 });
 
-const replaceGuildMemoryInputSchema = z.object({
-  content: z
+const rememberUserFactInputSchema = z.object({
+  subjectUserId: z
     .string()
     .min(1)
-    .describe(
-      "The complete replacement guild_memory text, preserving unrelated existing entries."
-    )
+    .describe("Stable Discord user ID for the person this memory is about."),
+  content: memoryContentSchema
 });
 
-const noMemoryUpdateInputSchema = z.object({});
+const rememberRelationshipFactInputSchema = z.object({
+  subjectUserIds: z
+    .array(z.string().min(1))
+    .min(2)
+    .max(MEMORY_RELATIONSHIP_MAX_USERS)
+    .describe(
+      `Two to ${MEMORY_RELATIONSHIP_MAX_USERS} distinct stable Discord user IDs involved in the relationship.`
+    ),
+  content: memoryContentSchema
+});
 
-export type GuildMemoryReflectionOperation = "no_change" | "append" | "replace";
+const forgetMemoryInputSchema = z.object({
+  memoryId: z
+    .string()
+    .min(1)
+    .describe("Exact memoryId of an existing memory record to remove.")
+});
 
-export type GuildMemoryReflectionDecision = {
-  appendMemories: string[];
-  replaceMemory?: string;
+const resolveGuildMemberInputSchema = z.object({
+  query: z
+    .string()
+    .min(1)
+    .max(100)
+    .describe("Discord username, global display name, or guild nickname.")
+});
+
+const terminalInputSchema = z.object({});
+
+export type GuildMemoryReflectionOperation = "no_change" | "commit";
+
+export type GuildMemoryReflectionPlan = {
+  decision: GuildMemoryReflectionOperation;
+  mutations: GuildMemoryMutation[];
+  attempts: number;
 };
 
 export type GuildMemoryReflectionRecord = {
@@ -44,22 +91,21 @@ export type GuildMemoryReflectionRecord = {
   updatedAt: string;
   changed?: boolean;
   operation?: GuildMemoryReflectionOperation;
+  addedCount?: number;
+  deletedCount?: number;
   attempts?: number;
+  reason?: string;
   error?: string;
 };
 
-export type GuildMemoryReflectionResult = {
+export type GuildMemoryReflectionSummary = {
   changed: boolean;
   operation: GuildMemoryReflectionOperation;
-  nextMemory?: string;
-  reason?: string;
+  addedCount?: number;
+  deletedCount?: number;
   attempts?: number;
+  reason?: string;
 };
-
-export type GuildMemoryReflectionSummary = Pick<
-  GuildMemoryReflectionResult,
-  "changed" | "operation" | "reason" | "attempts"
->;
 
 export type GuildMemoryReflectionFiberPhase =
   | "input"
@@ -80,9 +126,10 @@ export type GuildMemoryReflectionSnapshot = {
 
 export type ReflectGuildMemoryInput = {
   model: LanguageModel;
-  currentMemory: string;
+  currentCatalog: GuildMemoryCatalog;
   request: DiscordChatRequest;
   assistantText: string;
+  searchGuildMembers?: (query: string) => Promise<GuildMemberSearchResult>;
   providerOptions?: ModelProviderOptions;
 };
 
@@ -119,15 +166,16 @@ export class GuildMemoryReflectionStore {
 
   async complete(
     correlationId: string,
-    changed: boolean,
-    operation: GuildMemoryReflectionOperation,
-    attempts: number | undefined
+    reflection: GuildMemoryReflectionSummary
   ) {
     await this.writeTerminalRecord(correlationId, {
       status: "completed",
-      changed,
-      operation,
-      attempts
+      changed: reflection.changed,
+      operation: reflection.operation,
+      addedCount: reflection.addedCount,
+      deletedCount: reflection.deletedCount,
+      attempts: reflection.attempts,
+      reason: reflection.reason
     });
   }
 
@@ -177,7 +225,7 @@ export class GuildMemoryReflectionStore {
 
 export async function reflectGuildMemoryAfterTurn(
   input: ReflectGuildMemoryInput
-): Promise<GuildMemoryReflectionResult> {
+): Promise<GuildMemoryReflectionPlan> {
   let lastError: unknown;
 
   for (
@@ -186,11 +234,8 @@ export async function reflectGuildMemoryAfterTurn(
     attempt++
   ) {
     try {
-      const decision = await generateMemoryReflectionDecision(input);
-      return withReflectionAttempts(
-        applyGuildMemoryReflectionDecision(input.currentMemory, decision),
-        attempt
-      );
+      const plan = await generateMemoryReflectionPlan(input);
+      return { ...plan, attempts: attempt };
     } catch (error) {
       lastError = error;
     }
@@ -199,38 +244,28 @@ export async function reflectGuildMemoryAfterTurn(
   throw lastError ?? new Error("Guild memory reflection failed.");
 }
 
-export function applyGuildMemoryReflectionDecision(
-  currentMemory: string,
-  decision: GuildMemoryReflectionDecision
-): GuildMemoryReflectionResult {
-  const current = normalizeMemory(currentMemory);
-  const replacement = normalizeMemory(decision.replaceMemory ?? "");
-
-  if (replacement) {
+export function getGuildMemoryReflectionSummary(
+  plan: GuildMemoryReflectionPlan,
+  commit?: GuildMemoryCommitResult
+): GuildMemoryReflectionSummary {
+  if (plan.decision === "no_change") {
     return {
-      changed: replacement !== current,
-      operation: "replace",
-      nextMemory: replacement
+      changed: false,
+      operation: "no_change",
+      attempts: plan.attempts
     };
   }
 
-  const entries = getAppendMemoryEntries(decision);
-  if (entries.length > 0) {
-    const newEntries = entries.filter((entry) => !current.includes(entry));
-    if (newEntries.length > 0) {
-      const appended = newEntries.join("\n");
-      const nextMemory = current ? `${current}\n${appended}` : appended;
-      return {
-        changed: nextMemory !== current,
-        operation: "append",
-        nextMemory
-      };
-    }
-  }
-
   return {
-    changed: false,
-    operation: "no_change"
+    changed: commit?.changed ?? plan.mutations.length > 0,
+    operation: "commit",
+    ...(commit
+      ? {
+          addedCount: commit.addedCount,
+          deletedCount: commit.deletedCount
+        }
+      : {}),
+    attempts: plan.attempts
   };
 }
 
@@ -290,81 +325,187 @@ export function parseGuildMemoryReflectionSnapshot(
   };
 }
 
-export function getGuildMemoryReflectionSummary(
-  reflection: GuildMemoryReflectionResult
-): GuildMemoryReflectionSummary {
-  return {
-    changed: reflection.changed,
-    operation: reflection.operation,
-    ...(reflection.reason ? { reason: reflection.reason } : {}),
-    ...(reflection.attempts !== undefined
-      ? { attempts: reflection.attempts }
-      : {})
-  };
-}
-
-async function generateMemoryReflectionDecision(
-  input: ReflectGuildMemoryInput
-) {
-  const decisions: GuildMemoryReflectionDecision[] = [];
-  const recordDecision = (decision: GuildMemoryReflectionDecision) => {
-    decisions.push(decision);
-  };
+async function generateMemoryReflectionPlan(input: ReflectGuildMemoryInput) {
+  const mutations: GuildMemoryMutation[] = [];
+  const terminalDecisions: GuildMemoryReflectionOperation[] = [];
+  const currentRecordsById = new Map(
+    input.currentCatalog.records.map((record) => [record.memoryId, record])
+  );
+  const knownUserIds = getKnownUserIds(input);
 
   await generateText({
     model: input.model,
     system: MEMORY_REFLECTION_SYSTEM_PROMPT,
     prompt: createMemoryReflectionPrompt(input),
-    tools: createMemoryReflectionTools(input.currentMemory, recordDecision),
+    tools: createMemoryReflectionTools({
+      input,
+      mutations,
+      terminalDecisions,
+      currentRecordsById,
+      knownUserIds
+    }),
     toolChoice: "required",
+    stopWhen: [
+      hasToolCall("commitMemoryChanges"),
+      hasToolCall("noMemoryUpdate"),
+      stepCountIs(MEMORY_REFLECTION_MAX_STEPS)
+    ],
     providerOptions: input.providerOptions ?? MEMORY_REFLECTION_PROVIDER_OPTIONS
   });
 
-  if (decisions.length !== 1) {
+  if (terminalDecisions.length !== 1) {
     throw new Error(
-      `Guild memory reflection expected exactly one tool call, received ${decisions.length}.`
+      `Guild memory reflection expected exactly one terminal tool call, received ${terminalDecisions.length}.`
     );
   }
 
-  return decisions[0];
+  const normalizedMutations = normalizeMutations(mutations);
+  const decision = terminalDecisions[0];
+  if (decision === "commit" && normalizedMutations.length === 0) {
+    throw new Error(
+      "Guild memory reflection committed without proposing any memory changes."
+    );
+  }
+  if (decision === "no_change" && normalizedMutations.length > 0) {
+    throw new Error(
+      "Guild memory reflection proposed memory changes and then selected noMemoryUpdate."
+    );
+  }
+
+  return {
+    decision,
+    mutations: normalizedMutations
+  } satisfies Omit<GuildMemoryReflectionPlan, "attempts">;
 }
 
-function createMemoryReflectionTools(
-  currentMemory: string,
-  recordDecision: (decision: GuildMemoryReflectionDecision) => void
-) {
-  const baseTools = {
-    appendGuildMemory: tool({
+function createMemoryReflectionTools(context: {
+  input: ReflectGuildMemoryInput;
+  mutations: GuildMemoryMutation[];
+  terminalDecisions: GuildMemoryReflectionOperation[];
+  currentRecordsById: Map<string, GuildMemoryCatalog["records"][number]>;
+  knownUserIds: Set<string>;
+}) {
+  return {
+    resolveGuildMember: tool({
       description:
-        "Append new durable guild memory entries. Use this for explicit remember requests and new stable facts not already present.",
-      inputSchema: appendGuildMemoryInputSchema,
-      execute: ({ memories }) => {
-        recordDecision({ appendMemories: memories });
-        return "Memory append proposal recorded.";
+        "Resolve one Discord username or nickname into a stable user ID before proposing user or relationship memory. A result is usable only when there is one sole or exact member match. Do not guess from ambiguous results.",
+      inputSchema: resolveGuildMemberInputSchema,
+      execute: async ({ query }) => {
+        if (!context.input.searchGuildMembers) {
+          return {
+            ok: false,
+            query,
+            error: "Guild member resolution is unavailable."
+          };
+        }
+
+        const result = await context.input.searchGuildMembers(query);
+        const matches = result.results ?? [];
+        const resolved = getUnambiguousMemberMatch(query, matches);
+        if (result.ok && resolved) {
+          context.knownUserIds.add(resolved.id);
+          return {
+            ok: true,
+            query: result.query,
+            resolvedUserId: resolved.id,
+            displayName: resolved.displayName
+          };
+        }
+
+        return {
+          ok: result.ok,
+          query: result.query,
+          matches: matches.map((match) => ({
+            userId: match.id,
+            displayName: match.displayName,
+            username: match.username
+          })),
+          error:
+            result.error ??
+            (matches.length === 0
+              ? "No guild members matched."
+              : "Multiple guild members matched; no stable identity was resolved.")
+        };
+      }
+    }),
+    rememberGuildFact: tool({
+      description:
+        "Stage one durable guild-wide fact, convention, preference, or piece of server lore that is not owned by a specific person.",
+      inputSchema: rememberGuildFactInputSchema,
+      execute: ({ content }) => {
+        context.mutations.push({
+          type: "add",
+          kind: "guild",
+          content,
+          subjectUserIds: []
+        });
+        return "Guild memory proposal staged.";
+      }
+    }),
+    rememberUserFact: tool({
+      description:
+        "Stage one durable fact or preference about exactly one Discord user. subjectUserId must be the caller, an explicit Discord mention, an existing memory subject, or an ID returned by resolveGuildMember.",
+      inputSchema: rememberUserFactInputSchema,
+      execute: ({ subjectUserId, content }) => {
+        requireKnownUserIds([subjectUserId], context.knownUserIds);
+        context.mutations.push({
+          type: "add",
+          kind: "user",
+          content,
+          subjectUserIds: [subjectUserId]
+        });
+        return "User memory proposal staged.";
+      }
+    }),
+    rememberRelationshipFact: tool({
+      description:
+        "Stage one durable relationship or attributed piece of lore involving at least two Discord users. Every subject must use a stable ID already known from the turn, existing memory, or resolveGuildMember.",
+      inputSchema: rememberRelationshipFactInputSchema,
+      execute: ({ subjectUserIds, content }) => {
+        const distinctUserIds = [...new Set(subjectUserIds)];
+        if (distinctUserIds.length < 2) {
+          throw new Error(
+            "Relationship memory requires at least two distinct Discord user IDs."
+          );
+        }
+        requireKnownUserIds(distinctUserIds, context.knownUserIds);
+        context.mutations.push({
+          type: "add",
+          kind: "relationship",
+          content,
+          subjectUserIds: distinctUserIds
+        });
+        return "Relationship memory proposal staged.";
+      }
+    }),
+    forgetMemory: tool({
+      description:
+        "Stage deletion of one exact existing memory record. Corrections require forgetting the outdated record and staging a complete replacement with the appropriate remember tool.",
+      inputSchema: forgetMemoryInputSchema,
+      execute: ({ memoryId }) => {
+        if (!context.currentRecordsById.has(memoryId)) {
+          throw new Error(`No current guild memory has memoryId ${memoryId}.`);
+        }
+        context.mutations.push({ type: "delete", memoryId });
+        return "Guild memory deletion proposal staged.";
+      }
+    }),
+    commitMemoryChanges: tool({
+      description:
+        "Finish reflection and atomically commit all staged add and delete proposals. Call this exactly once after staging every necessary change.",
+      inputSchema: terminalInputSchema,
+      execute: () => {
+        context.terminalDecisions.push("commit");
+        return "Guild memory proposals ready for atomic commit.";
       }
     }),
     noMemoryUpdate: tool({
       description:
-        "Record that this turn should not change guild memory because it is ordinary chat, excluded, transient, or already present.",
-      inputSchema: noMemoryUpdateInputSchema,
+        "Finish reflection without changing guild memory. Call this exactly once only when no memory proposals were staged.",
+      inputSchema: terminalInputSchema,
       execute: () => {
-        recordDecision({ appendMemories: [] });
+        context.terminalDecisions.push("no_change");
         return "No guild memory update recorded.";
-      }
-    })
-  };
-
-  if (!normalizeMemory(currentMemory)) return baseTools;
-
-  return {
-    ...baseTools,
-    replaceGuildMemory: tool({
-      description:
-        "Replace the complete guild_memory text to correct, update, consolidate, or remove existing memory. Preserve unrelated existing entries. Never write placeholders like old, current, or unchanged.",
-      inputSchema: replaceGuildMemoryInputSchema,
-      execute: ({ content }) => {
-        recordDecision({ appendMemories: [], replaceMemory: content });
-        return "Memory replacement proposal recorded.";
       }
     })
   };
@@ -372,8 +513,8 @@ function createMemoryReflectionTools(
 
 function createMemoryReflectionPrompt(input: ReflectGuildMemoryInput) {
   return [
-    "Current guild_memory:",
-    fence(input.currentMemory || "(empty)"),
+    "Current guild memory records:",
+    fence(formatGuildMemoryReflectionContext(input.currentCatalog)),
     "",
     "Latest completed Discord turn:",
     fence(formatLatestTurn(input.request, input.assistantText))
@@ -399,6 +540,70 @@ function formatLatestTurn(request: DiscordChatRequest, assistantText: string) {
     .join("\n");
 }
 
+function getKnownUserIds(input: ReflectGuildMemoryInput) {
+  const knownUserIds = new Set<string>();
+  const callerUserId = input.request.user?.id ?? input.request.userId;
+  if (callerUserId) knownUserIds.add(callerUserId);
+  for (const record of input.currentCatalog.records) {
+    for (const userId of record.subjectUserIds) knownUserIds.add(userId);
+    if (record.assertedByUserId) knownUserIds.add(record.assertedByUserId);
+  }
+  for (const match of input.request.text.matchAll(/<@!?(\d+)>/g)) {
+    if (match[1]) knownUserIds.add(match[1]);
+  }
+  return knownUserIds;
+}
+
+function requireKnownUserIds(userIds: string[], knownUserIds: Set<string>) {
+  const unknownUserIds = userIds.filter((userId) => !knownUserIds.has(userId));
+  if (unknownUserIds.length === 0) return;
+  throw new Error(
+    `Unknown Discord user IDs: ${unknownUserIds.join(", ")}. Resolve names before proposing memory.`
+  );
+}
+
+function getUnambiguousMemberMatch(
+  query: string,
+  matches: NonNullable<GuildMemberSearchResult["results"]>
+) {
+  if (matches.length === 1) return matches[0];
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  const exactMatches = matches.filter((match) =>
+    [match.username, match.globalName, match.nickname, match.displayName].some(
+      (label) => label?.trim().toLocaleLowerCase() === normalizedQuery
+    )
+  );
+  return exactMatches.length === 1 ? exactMatches[0] : undefined;
+}
+
+function normalizeMutations(mutations: GuildMemoryMutation[]) {
+  const seen = new Set<string>();
+  const normalized: GuildMemoryMutation[] = [];
+  for (const mutation of mutations) {
+    const key =
+      mutation.type === "delete"
+        ? `delete:${mutation.memoryId}`
+        : JSON.stringify([
+            "add",
+            mutation.kind,
+            [...mutation.subjectUserIds].sort(),
+            mutation.content.trim().toLocaleLowerCase()
+          ]);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    normalized.push(
+      mutation.type === "delete"
+        ? mutation
+        : {
+            ...mutation,
+            content: mutation.content.trim(),
+            subjectUserIds: [...new Set(mutation.subjectUserIds)]
+          }
+    );
+  }
+  return normalized;
+}
+
 function fence(value: string) {
   return `<content>\n${value}\n</content>`;
 }
@@ -407,26 +612,6 @@ function truncateForReflection(value: string, maxLength = 4000) {
   const trimmed = value.trim();
   if (trimmed.length <= maxLength) return trimmed;
   return `${trimmed.slice(0, maxLength)}\n[truncated]`;
-}
-
-function normalizeMemory(content: string) {
-  return content.trim();
-}
-
-function withReflectionAttempts(
-  result: GuildMemoryReflectionResult,
-  attempts: number
-) {
-  return {
-    ...result,
-    attempts
-  } satisfies GuildMemoryReflectionResult;
-}
-
-function getAppendMemoryEntries(decision: GuildMemoryReflectionDecision) {
-  return decision.appendMemories
-    .map((entry) => normalizeMemory(entry))
-    .filter((entry) => entry.length > 0);
 }
 
 function getMemoryReflectionRecordKey(correlationId: string) {
@@ -440,28 +625,43 @@ function parseGuildMemoryReflectionSummary(value: unknown) {
 
   const operation = parseGuildMemoryReflectionOperation(value.operation);
   if (!operation) return null;
-  if (value.reason !== undefined && typeof value.reason !== "string") {
+  if (value.attempts !== undefined && typeof value.attempts !== "number") {
     return null;
   }
-  if (value.attempts !== undefined && typeof value.attempts !== "number") {
+  if (value.addedCount !== undefined && typeof value.addedCount !== "number") {
+    return null;
+  }
+  if (
+    value.deletedCount !== undefined &&
+    typeof value.deletedCount !== "number"
+  ) {
+    return null;
+  }
+  if (value.reason !== undefined && typeof value.reason !== "string") {
     return null;
   }
 
   return {
     changed: value.changed,
     operation,
-    ...(typeof value.reason === "string" ? { reason: value.reason } : {}),
-    ...(typeof value.attempts === "number" ? { attempts: value.attempts } : {})
+    ...(typeof value.addedCount === "number"
+      ? { addedCount: value.addedCount }
+      : {}),
+    ...(typeof value.deletedCount === "number"
+      ? { deletedCount: value.deletedCount }
+      : {}),
+    ...(typeof value.attempts === "number" ? { attempts: value.attempts } : {}),
+    ...(typeof value.reason === "string" ? { reason: value.reason } : {})
   } satisfies GuildMemoryReflectionSummary;
 }
 
 function parseGuildMemoryReflectionOperation(
   value: unknown
 ): GuildMemoryReflectionOperation | null {
-  if (value === "no_change" || value === "append" || value === "replace") {
-    return value;
+  if (value === "no_change") return "no_change";
+  if (value === "commit" || value === "append" || value === "replace") {
+    return "commit";
   }
-
   return null;
 }
 
@@ -480,30 +680,36 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-const MEMORY_REFLECTION_SYSTEM_PROMPT = `You are Sturm's private guild memory extractor. The main assistant has already replied to the Discord user. Extract durable guild_memory updates for future turns.
+const MEMORY_REFLECTION_SYSTEM_PROMPT = `You are Sturm's private guild memory extractor. The main assistant has already replied to the Discord user. Maintain concise durable memory shared across channels in this Discord guild.
 
-guild_memory is concise, durable context shared across channels in one Discord guild. It should contain stable preferences, personal settings, identities, aliases, server conventions, server lore, running jokes, and durable facts that will likely help future turns.
+Memory records are immutable. You may stage zero or more typed add/delete proposals across multiple tool turns, then you must finish with exactly one terminal tool:
+- Call commitMemoryChanges after staging every necessary change.
+- Call noMemoryUpdate only when you staged no changes.
+- To correct, reclassify, consolidate, or remove a record, call forgetMemory for the exact old memoryId. If corrected information should remain, also call the appropriate remember tool with a complete replacement record.
 
-Call exactly one memory decision tool. Use noMemoryUpdate for ordinary chat. An explicit request to remember, store, keep in mind, or use a fact later is not ordinary chat. For those turns, call appendGuildMemory with one or more entries unless the requested content is excluded below or already present in current guild_memory. If the assistant acknowledged remembering a user-provided fact, treat that as confirmation that an update is needed; do not assume the assistant response already persisted the memory.
+Choose the narrowest memory type:
+- rememberGuildFact: guild-wide conventions, shared settings, server lore, running jokes, or durable facts with no specific person as the subject.
+- rememberUserFact: a stable preference, identity, alias, or low-sensitivity durable fact about exactly one Discord user.
+- rememberRelationshipFact: a relationship or attributed piece of lore involving two or more Discord users.
 
-Do not skip a memory update because the fact is mundane, playful, synthetic-looking, test data, or phrased as a guild motto, inside joke, nickname, preference, or casual server lore. The user's request to remember is the durable signal. This includes low-sensitivity user-specific facts volunteered in the chat.
+Identity rules:
+- Discord user IDs are the only durable person identity. Never put a nickname or display name into subjectUserIds.
+- The caller, explicit Discord mentions, and existing record subjects are already resolvable. For a person mentioned only by name, call resolveGuildMember first.
+- Use a resolved ID only when resolveGuildMember returns resolvedUserId for one unambiguous sole or exact match. If resolution is ambiguous or unavailable, do not store person-specific memory.
+- Do not repeat IDs or provenance in content; Sturm attaches subjects, the asserting caller, timestamps, and source correlation automatically.
+
+Store stable preferences, personal settings, identities, aliases, server conventions, server lore, running jokes, and durable facts likely to help future turns. An explicit request to remember, store, keep in mind, or use a fact later is a strong durable signal. If the assistant acknowledged remembering a user-provided fact, do not assume that acknowledgement already persisted it.
 
 Do not store:
 - One-off requests, transient task details, secrets, private or high-sensitivity personal data, channel-local state, facts from other guilds, or assistant guesses.
-- Instructions, facts, or content that the assistant is only supposed to apply, execute, edit, schedule, remind about, send, generate, search, fetch, moderate, or otherwise use as tool/action input. Treat those as transient task state, not guild_memory, even when they contain durable-sounding wording or words like remember or update.
+- Instructions or content that the assistant is merely supposed to apply, execute, edit, schedule, send, generate, search, fetch, moderate, or otherwise use as action input.
 - Facts from a tool/action turn unless the user separately asks to remember them as future guild context independent of the action.
 
-Sensitivity handling:
-- Do not treat ordinary volunteered preferences, aliases, time zones, casual server lore, or friend-server banter as sensitive by default.
-- Store subjective or teasing claims about people only as user-provided lore, not verified facts.
-
-Use appendGuildMemory for new durable facts that are not already present. Each entry must be complete and independently understandable. Use replaceGuildMemory only to correct, update, consolidate, or remove existing memory. When replacing, pass the complete new guild_memory text and preserve unrelated existing entries. Do not rewrite memory just for style. If memory is user-specific, include the Discord user ID. If memory is guild-wide, write it as guild-wide. Normalize clear aliases into concise future-useful wording.
+Treat ordinary volunteered preferences, aliases, time zones, casual server lore, and friend-server banter as non-sensitive by default. Store subjective or teasing claims about people only as attributed user-provided lore, not verified facts. Content must be complete and independently understandable.
 
 Examples:
-- User u1 says "please remember that my favorite color is green" and the assistant says it will remember. Call appendGuildMemory with memories ["User u1's favorite color is green."].
-- User u1 says "please remember that the guild test motto is silver sunrise" and the assistant says it will remember. Call appendGuildMemory with memories ["The guild test motto is silver sunrise."].
-- User u1 says "remember that Chris is the server movie-night villain" and the assistant says it will remember. Call appendGuildMemory with memories ["User u1 said that Chris is the server movie-night villain."]. This records user-provided server lore, not a verified fact.
-- Existing memory says "The guild raid night is Tuesday." User says "Actually, update that: the guild raid night is Thursday." Call replaceGuildMemory with content "The guild raid night is Thursday.".
-- User u1 asks "what is 2 + 2?" and the assistant answers. Call noMemoryUpdate.
-
-For no change, call noMemoryUpdate.`;
+- Caller u1 says "remember that my favorite color is green." Stage rememberUserFact with subjectUserId "u1" and content "Favorite color is green.", then commitMemoryChanges.
+- Caller u1 says "remember that the guild motto is silver sunrise." Stage rememberGuildFact with content "The guild motto is silver sunrise.", then commitMemoryChanges.
+- Existing guild record m1 says raid night is Tuesday; the caller corrects it to Thursday. Stage forgetMemory for m1, stage rememberGuildFact with the Thursday fact, then commitMemoryChanges.
+- Caller u1 says "remember that Chris is the movie-night villain." Resolve Chris. If exactly one member resolves to u2, stage rememberRelationshipFact with subjectUserIds ["u1", "u2"] and content "The caller described the other user as the server movie-night villain.", then commitMemoryChanges. If Chris cannot be resolved unambiguously, call noMemoryUpdate.
+- For ordinary chat with no durable update, call noMemoryUpdate.`;

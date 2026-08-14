@@ -10,12 +10,12 @@ import type {
   DiscordWebhookResponseTarget
 } from "./types";
 import {
-  deleteGuildMemoryEntry,
+  deleteGuildMemoryRecord,
   listGuildMemory,
   resetGuildMemory,
+  type GuildMemoryCatalog,
   type GuildMemoryDeleteResult,
-  type GuildMemoryEntry,
-  type GuildMemoryList,
+  type GuildMemoryRecord,
   type GuildMemoryResetResult
 } from "../memory";
 
@@ -50,19 +50,31 @@ export async function runMemoryCommand(
   }
 
   if (subcommand === "delete") {
-    const index = getIntegerSubcommandOption(interaction, "index");
-    if (index === undefined) {
+    let memoryId = getStringSubcommandOption(interaction, "id");
+    const legacyIndex = getIntegerSubcommandOption(interaction, "index");
+    if (!memoryId && legacyIndex !== undefined) {
+      const catalog = await listGuildMemory(env.GuildMemory, guildId);
+      memoryId = catalog.records[legacyIndex - 1]?.memoryId;
+      if (!memoryId) {
+        await editOriginalInteractionResponse(
+          responseTarget,
+          `No guild memory record exists at legacy index ${legacyIndex}. Run /memory view to see current records.`
+        );
+        return;
+      }
+    }
+    if (!memoryId) {
       await editOriginalInteractionResponse(
         responseTarget,
-        "Missing memory entry index."
+        "Missing memory ID."
       );
       return;
     }
 
-    const result = await deleteGuildMemoryEntry(
+    const result = await deleteGuildMemoryRecord(
       env.GuildMemory,
       guildId,
-      index
+      memoryId
     );
     await deliverMemoryCommandResult(
       responseTarget,
@@ -90,6 +102,17 @@ function getSubcommandName(
   interaction: APIChatInputApplicationCommandInteraction
 ) {
   return getSubcommandOption(interaction)?.name ?? "";
+}
+
+function getStringSubcommandOption(
+  interaction: APIChatInputApplicationCommandInteraction,
+  name: string
+) {
+  const option = getSubcommandOption(interaction)?.options?.find(
+    (item) => item.name === name
+  );
+  if (option?.type !== ApplicationCommandOptionType.String) return undefined;
+  return option.value;
 }
 
 function getIntegerSubcommandOption(
@@ -147,38 +170,41 @@ async function deliverMemoryCommandResult(
   );
 }
 
-function formatMemoryView(result: GuildMemoryList) {
+function formatMemoryView(result: GuildMemoryCatalog) {
   const lines = [
-    `Guild memory: ${result.entries.length} entries`,
+    `Guild memory: ${result.records.length} records`,
     `version: ${result.version}`,
     `updated_at_utc: ${result.updatedAt ?? "never"}`
   ];
 
-  if (result.entries.length === 0) {
-    lines.push("", "No guild memory entries.");
+  if (result.records.length === 0) {
+    lines.push("", "No guild memory records.");
     return lines.join("\n");
   }
 
-  lines.push("", ...result.entries.map(formatMemoryEntry));
+  lines.push(
+    "",
+    ...result.records.map((record, index) => formatMemoryRecord(record, index))
+  );
   return lines.join("\n");
 }
 
 function formatMemoryDeleteResult(result: GuildMemoryDeleteResult) {
   if (!result.deleted) {
     return [
-      `No guild memory entry exists at index ${result.requestedIndex}.`,
-      `current_entries: ${result.entries.length}`,
-      "Run /memory view to see current indexes."
+      `No guild memory record exists with ID ${result.requestedMemoryId}.`,
+      `current_records: ${result.records.length}`,
+      "Run /memory view to see current IDs."
     ].join("\n");
   }
 
   return [
-    `Deleted guild memory entry ${result.deleted.index}.`,
+    `Deleted guild memory record ${result.deleted.memoryId}.`,
     `version: ${result.version}`,
-    `remaining_entries: ${result.entries.length}`,
+    `remaining_records: ${result.records.length}`,
     "",
-    "Deleted entry:",
-    formatMemoryEntry(result.deleted)
+    "Deleted record:",
+    formatMemoryRecord(result.deleted)
   ].join("\n");
 }
 
@@ -198,12 +224,20 @@ function formatMemoryResetResult(result: GuildMemoryResetResult) {
   ].join("\n");
 }
 
-function formatMemoryEntry(entry: GuildMemoryEntry) {
-  return `${entry.index}. ${entry.content}`;
+function formatMemoryRecord(record: GuildMemoryRecord, index?: number) {
+  const prefix = index === undefined ? "" : `${index + 1}. `;
+  const subjects =
+    record.subjectUserIds.length > 0
+      ? ` subjects=${record.subjectUserIds.join(",")}`
+      : "";
+  const assertedBy = record.assertedByUserId
+    ? ` assertedBy=${record.assertedByUserId}`
+    : "";
+  return `${prefix}[${record.memoryId}] [${record.kind}${subjects}${assertedBy}] ${record.content}`;
 }
 
 function createMemoryAttachmentSummary() {
-  return "Guild memory is too long for one Discord message. Attached the full view as guild-memory.txt.";
+  return "Guild memory is too long for one Discord message. Attached the full record view as guild-memory.txt.";
 }
 
 function utf8ToBase64(content: string) {

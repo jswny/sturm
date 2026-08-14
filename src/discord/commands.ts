@@ -45,14 +45,13 @@ export const MEMORY_COMMAND = {
     },
     {
       name: "delete",
-      description: "Delete a guild memory entry by index",
+      description: "Delete a guild memory record by ID",
       type: ApplicationCommandOptionType.Subcommand,
       options: [
         {
-          name: "index",
-          description: "One-based memory entry index to delete",
-          type: ApplicationCommandOptionType.Integer,
-          min_value: 1,
+          name: "id",
+          description: "Memory ID shown by /memory view",
+          type: ApplicationCommandOptionType.String,
           required: true
         }
       ]

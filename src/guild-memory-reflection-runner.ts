@@ -11,11 +11,18 @@ import {
   type GuildMemoryReflectionSummary
 } from "./memory-reflection";
 import type { ModelProviderOptions } from "./model";
+import type { GuildMemberSearchResult } from "./nickname";
+
+const GUILD_MEMORY_COMMIT_ATTEMPTS = 2;
 
 export type GuildMemoryReflectionRunnerOptions = {
   store: GuildMemoryReflectionStore;
   getProvider(): GuildMemoryProvider;
   createModel(snapshot: GuildMemoryReflectionSnapshot): LanguageModel;
+  searchGuildMembers?(
+    snapshot: GuildMemoryReflectionSnapshot,
+    query: string
+  ): Promise<GuildMemberSearchResult>;
   providerOptions?: ModelProviderOptions;
 };
 
@@ -53,29 +60,87 @@ export class GuildMemoryReflectionRunner {
       }
 
       const provider = this.options.getProvider();
-      assertNotAborted(fiber, "before reading guild memory");
-      const currentMemory = (await provider.get()) ?? "";
-      assertNotAborted(fiber, "before reflecting on guild memory");
-      const reflection = await reflectGuildMemoryAfterTurn({
-        model: this.options.createModel(snapshot),
-        currentMemory,
-        request: snapshot.request,
-        assistantText: snapshot.assistantText,
-        providerOptions: this.options.providerOptions
-      });
-      const reflectionSummary = getGuildMemoryReflectionSummary(reflection);
-      stash("reflected", reflectionSummary);
+      let totalModelAttempts = 0;
+      for (
+        let commitAttempt = 1;
+        commitAttempt <= GUILD_MEMORY_COMMIT_ATTEMPTS;
+        commitAttempt++
+      ) {
+        assertNotAborted(fiber, "before reading guild memory");
+        const currentCatalog = await provider.getCatalog();
+        assertNotAborted(fiber, "before reflecting on guild memory");
+        const plan = await reflectGuildMemoryAfterTurn({
+          model: this.options.createModel(snapshot),
+          currentCatalog,
+          request: snapshot.request,
+          assistantText: snapshot.assistantText,
+          searchGuildMembers: this.options.searchGuildMembers
+            ? (query) => this.options.searchGuildMembers!(snapshot, query)
+            : undefined,
+          providerOptions: this.options.providerOptions
+        });
+        totalModelAttempts += plan.attempts;
+        const planWithAttempts = {
+          ...plan,
+          attempts: totalModelAttempts
+        };
+        const provisionalSummary =
+          getGuildMemoryReflectionSummary(planWithAttempts);
+        stash("reflected", provisionalSummary);
 
-      if (reflection.changed && reflection.nextMemory !== undefined) {
+        if (plan.decision === "no_change") {
+          assertNotAborted(fiber, "before completing");
+          await this.complete(snapshot.correlationId, provisionalSummary);
+          stash("completed", provisionalSummary);
+          return provisionalSummary;
+        }
+
+        const assertedByUserId =
+          snapshot.request.user?.id ?? snapshot.request.userId;
+        if (!assertedByUserId) {
+          throw new Error(
+            "Guild memory reflection cannot commit without a Discord caller user ID."
+          );
+        }
+
         assertNotAborted(fiber, "before writing guild memory");
-        await provider.set(reflection.nextMemory);
-        stash("written", reflectionSummary);
+        const commit = await provider.commit({
+          correlationId: snapshot.correlationId,
+          baseEpoch: currentCatalog.epoch,
+          assertedByUserId,
+          mutations: plan.mutations
+        });
+        if (commit.status === "conflict") {
+          if (commit.reason === "reset") {
+            const resetSummary = {
+              changed: false,
+              operation: "no_change",
+              attempts: totalModelAttempts,
+              reason: "guild_memory_reset"
+            } satisfies GuildMemoryReflectionSummary;
+            await this.complete(snapshot.correlationId, resetSummary);
+            stash("completed", resetSummary);
+            return resetSummary;
+          }
+
+          if (commitAttempt < GUILD_MEMORY_COMMIT_ATTEMPTS) continue;
+          throw new Error(
+            `Guild memory changed while reflection was running. Missing memory IDs: ${commit.missingMemoryIds?.join(", ") ?? "unknown"}.`
+          );
+        }
+
+        const committedSummary = getGuildMemoryReflectionSummary(
+          planWithAttempts,
+          commit
+        );
+        stash("written", committedSummary);
+        assertNotAborted(fiber, "before completing");
+        await this.complete(snapshot.correlationId, committedSummary);
+        stash("completed", committedSummary);
+        return committedSummary;
       }
 
-      assertNotAborted(fiber, "before completing");
-      await this.complete(snapshot.correlationId, reflectionSummary);
-      stash("completed", reflectionSummary);
-      return reflectionSummary;
+      throw new Error("Guild memory reflection exhausted commit attempts.");
     } catch (error) {
       const message = getErrorMessage(error);
       if (error instanceof GuildMemoryReflectionAbortError) {
@@ -91,12 +156,7 @@ export class GuildMemoryReflectionRunner {
     correlationId: string,
     reflection: GuildMemoryReflectionSummary
   ) {
-    await this.options.store.complete(
-      correlationId,
-      reflection.changed,
-      reflection.operation,
-      reflection.attempts
-    );
+    await this.options.store.complete(correlationId, reflection);
   }
 }
 
