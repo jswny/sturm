@@ -50,19 +50,7 @@ export async function runMemoryCommand(
   }
 
   if (subcommand === "delete") {
-    let memoryId = getStringSubcommandOption(interaction, "id");
-    const legacyIndex = getIntegerSubcommandOption(interaction, "index");
-    if (!memoryId && legacyIndex !== undefined) {
-      const catalog = await listGuildMemory(env.GuildMemory, guildId);
-      memoryId = catalog.records[legacyIndex - 1]?.memoryId;
-      if (!memoryId) {
-        await editOriginalInteractionResponse(
-          responseTarget,
-          `No guild memory record exists at legacy index ${legacyIndex}. Run /memory view to see current records.`
-        );
-        return;
-      }
-    }
+    const memoryId = getStringSubcommandOption(interaction, "id");
     if (!memoryId) {
       await editOriginalInteractionResponse(
         responseTarget,
@@ -112,17 +100,6 @@ function getStringSubcommandOption(
     (item) => item.name === name
   );
   if (option?.type !== ApplicationCommandOptionType.String) return undefined;
-  return option.value;
-}
-
-function getIntegerSubcommandOption(
-  interaction: APIChatInputApplicationCommandInteraction,
-  name: string
-) {
-  const option = getSubcommandOption(interaction)?.options?.find(
-    (item) => item.name === name
-  );
-  if (option?.type !== ApplicationCommandOptionType.Integer) return undefined;
   return option.value;
 }
 

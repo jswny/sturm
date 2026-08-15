@@ -1,10 +1,9 @@
 import { DurableObject } from "cloudflare:workers";
 import { formatGuildMemoryContext } from "./guild-memory-formatter";
 
-const LEGACY_GUILD_MEMORY_STATE_KEY = "guild-memory";
 const GUILD_MEMORY_CATALOG_ID = 1;
 
-export type GuildMemoryKind = "legacy" | "guild" | "user" | "relationship";
+export type GuildMemoryKind = "guild" | "user" | "relationship";
 
 export type GuildMemoryRecord = {
   memoryId: string;
@@ -25,7 +24,7 @@ export type GuildMemoryCatalog = {
 
 export type GuildMemoryAddMutation = {
   type: "add";
-  kind: Exclude<GuildMemoryKind, "legacy">;
+  kind: GuildMemoryKind;
   content: string;
   subjectUserIds: string[];
 };
@@ -90,12 +89,6 @@ type StoredMemoryRow = {
 
 type StoredCommitRow = {
   result_json: string;
-};
-
-type LegacyGuildMemorySnapshot = {
-  content: string;
-  version: number;
-  updatedAt: string | null;
 };
 
 export class GuildMemoryProvider {
@@ -339,7 +332,7 @@ export class GuildMemoryObject extends DurableObject<Env> {
     };
   }
 
-  private async initializeStorage() {
+  private initializeStorage() {
     this.ctx.storage.sql.exec(`
       CREATE TABLE IF NOT EXISTS guild_memory_catalog (
         id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -351,7 +344,7 @@ export class GuildMemoryObject extends DurableObject<Env> {
       CREATE TABLE IF NOT EXISTS guild_memory_records (
         memory_id TEXT PRIMARY KEY,
         ordinal INTEGER NOT NULL UNIQUE,
-        kind TEXT NOT NULL CHECK (kind IN ('legacy', 'guild', 'user', 'relationship')),
+        kind TEXT NOT NULL CHECK (kind IN ('guild', 'user', 'relationship')),
         content TEXT NOT NULL,
         subject_user_ids TEXT NOT NULL,
         asserted_by_user_id TEXT,
@@ -364,10 +357,6 @@ export class GuildMemoryObject extends DurableObject<Env> {
         result_json TEXT NOT NULL,
         committed_at TEXT NOT NULL
       );
-      CREATE TABLE IF NOT EXISTS guild_memory_schema_migrations (
-        id INTEGER PRIMARY KEY,
-        applied_at TEXT NOT NULL
-      );
       INSERT OR IGNORE INTO guild_memory_catalog (
         id,
         version,
@@ -376,57 +365,6 @@ export class GuildMemoryObject extends DurableObject<Env> {
         updated_at
       ) VALUES (1, 0, 0, 1, NULL);
     `);
-
-    const migrated = this.ctx.storage.sql
-      .exec<{ migrated: number }>(
-        "SELECT COUNT(*) AS migrated FROM guild_memory_schema_migrations WHERE id = 1"
-      )
-      .one().migrated;
-    if (migrated > 0) return;
-
-    const legacy = await this.ctx.storage.get<LegacyGuildMemorySnapshot>(
-      LEGACY_GUILD_MEMORY_STATE_KEY
-    );
-    const entries = createLegacyEntries(legacy?.content ?? "");
-    let ordinal = 1;
-    const createdAt = legacy?.updatedAt ?? new Date().toISOString();
-    for (const content of entries) {
-      const memoryId = crypto.randomUUID();
-      this.ctx.storage.sql.exec(
-        `INSERT OR IGNORE INTO guild_memory_records (
-          memory_id,
-          ordinal,
-          kind,
-          content,
-          subject_user_ids,
-          asserted_by_user_id,
-          source_correlation_id,
-          created_at,
-          dedupe_key
-        ) VALUES (?, ?, 'legacy', ?, '[]', NULL, NULL, ?, ?)`,
-        memoryId,
-        ordinal,
-        content,
-        createdAt,
-        JSON.stringify(["legacy", ordinal, content])
-      );
-      ordinal += 1;
-    }
-
-    this.ctx.storage.sql.exec(
-      `UPDATE guild_memory_catalog
-       SET version = ?, next_ordinal = ?, updated_at = ?
-       WHERE id = ?`,
-      legacy?.version ?? 0,
-      ordinal,
-      legacy?.updatedAt ?? null,
-      GUILD_MEMORY_CATALOG_ID
-    );
-    this.ctx.storage.sql.exec(
-      "INSERT INTO guild_memory_schema_migrations (id, applied_at) VALUES (1, ?)",
-      new Date().toISOString()
-    );
-    await this.ctx.storage.delete(LEGACY_GUILD_MEMORY_STATE_KEY);
   }
 
   private readCatalog(): GuildMemoryCatalog {
@@ -563,14 +501,6 @@ function parseStoredCommitResult(resultJson: string): GuildMemoryCommitResult {
     addedCount: stored.addedCount,
     deletedCount: stored.deletedCount
   };
-}
-
-function createLegacyEntries(content: string) {
-  return content
-    .trim()
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean);
 }
 
 export function getGuildMemoryObjectName(guildId: string) {

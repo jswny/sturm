@@ -1,7 +1,7 @@
 import type { GuildMemoryRecord } from "./memory";
 
 // Increment whenever formatGuildMemoryContext changes its model-facing contract.
-export const GUILD_MEMORY_CONTEXT_FORMAT_REVISION = 1;
+export const GUILD_MEMORY_CONTEXT_FORMAT_REVISION = 2;
 
 export function formatGuildMemoryContext(records: GuildMemoryRecord[]) {
   const sections = [
@@ -16,10 +16,6 @@ export function formatGuildMemoryContext(records: GuildMemoryRecord[]) {
     formatRecordGroup(
       "Relationship facts",
       records.filter((record) => record.kind === "relationship")
-    ),
-    formatRecordGroup(
-      "Legacy memory",
-      records.filter((record) => record.kind === "legacy")
     )
   ].filter(Boolean);
 
@@ -67,9 +63,5 @@ function formatRecord(record: GuildMemoryRecord) {
     return `discordUserIds ${record.subjectUserIds.join(", ")}: ${record.content}${provenance}`;
   }
 
-  if (record.kind === "guild") {
-    return `${record.content}${provenance}`;
-  }
-
-  return record.content;
+  return `${record.content}${provenance}`;
 }
