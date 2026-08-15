@@ -51,8 +51,6 @@ export type GuildMemoryCommitResult = {
   changed: boolean;
   addedCount: number;
   deletedCount: number;
-  revision: number;
-  updatedAt: string | null;
 };
 
 export type GuildMemoryCommitConflict = {
@@ -261,9 +259,7 @@ export class GuildMemoryObject extends DurableObject<Env> {
       status: "committed",
       changed,
       addedCount,
-      deletedCount,
-      revision: nextRevision,
-      updatedAt
+      deletedCount
     } satisfies GuildMemoryCommitResult;
     this.ctx.storage.sql.exec(
       `INSERT INTO guild_memory_commits (
@@ -551,22 +547,12 @@ function parseStoredMemoryRow(row: StoredMemoryRow): GuildMemoryRecord {
 }
 
 function parseStoredCommitResult(resultJson: string): GuildMemoryCommitResult {
-  const stored = JSON.parse(resultJson) as Partial<GuildMemoryCommitResult> & {
-    version?: unknown;
-  };
-  const revision =
-    typeof stored.revision === "number"
-      ? stored.revision
-      : typeof stored.version === "number"
-        ? stored.version
-        : undefined;
+  const stored = JSON.parse(resultJson) as Partial<GuildMemoryCommitResult>;
   if (
     stored.status !== "committed" ||
     typeof stored.changed !== "boolean" ||
     typeof stored.addedCount !== "number" ||
-    typeof stored.deletedCount !== "number" ||
-    revision === undefined ||
-    (stored.updatedAt !== null && typeof stored.updatedAt !== "string")
+    typeof stored.deletedCount !== "number"
   ) {
     throw new Error("Invalid stored guild memory commit result.");
   }
@@ -575,9 +561,7 @@ function parseStoredCommitResult(resultJson: string): GuildMemoryCommitResult {
     status: "committed",
     changed: stored.changed,
     addedCount: stored.addedCount,
-    deletedCount: stored.deletedCount,
-    revision,
-    updatedAt: stored.updatedAt
+    deletedCount: stored.deletedCount
   };
 }
 

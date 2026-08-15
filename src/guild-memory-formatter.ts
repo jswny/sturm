@@ -1,4 +1,4 @@
-import type { GuildMemoryCatalog, GuildMemoryRecord } from "./memory";
+import type { GuildMemoryRecord } from "./memory";
 
 // Increment whenever formatGuildMemoryContext changes its model-facing contract.
 export const GUILD_MEMORY_CONTEXT_FORMAT_REVISION = 1;
@@ -27,15 +27,15 @@ export function formatGuildMemoryContext(records: GuildMemoryRecord[]) {
 }
 
 export function formatGuildMemoryReflectionContext(
-  catalog: GuildMemoryCatalog
+  records: GuildMemoryRecord[]
 ) {
-  if (catalog.records.length === 0) {
+  if (records.length === 0) {
     return "records: []";
   }
 
   return [
     "records:",
-    ...catalog.records.map((record) =>
+    ...records.map((record) =>
       JSON.stringify({
         memoryId: record.memoryId,
         kind: record.kind,

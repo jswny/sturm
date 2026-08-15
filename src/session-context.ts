@@ -6,7 +6,7 @@ import { createBaseSystemPrompt, createRuntimeSystemPrompt } from "./prompts";
 export const GUILD_MEMORY_CONTEXT_LABEL = "guild_memory";
 
 export const GUILD_MEMORY_CONTEXT_DESCRIPTION =
-  "Durable memory shared by Sturm across all channels in this Discord guild. Store concise, stable, reusable guild-level context, including casual server lore, running jokes, and friend-server banter. Store subjective or teasing claims about people as user-provided lore rather than verified facts.";
+  "Read-only durable memory shared by Sturm across all channels in this Discord guild. It contains concise, stable, reusable guild context, including casual server lore, running jokes, and friend-server banter. Treat subjective or teasing claims about people as user-provided lore rather than verified facts.";
 
 export const GUILD_MEMORY_CONTEXT_MAX_TOKENS = 2000;
 

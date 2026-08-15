@@ -514,7 +514,7 @@ function createMemoryReflectionTools(context: {
 function createMemoryReflectionPrompt(input: ReflectGuildMemoryInput) {
   return [
     "Current guild memory records:",
-    fence(formatGuildMemoryReflectionContext(input.currentCatalog)),
+    fence(formatGuildMemoryReflectionContext(input.currentCatalog.records)),
     "",
     "Latest completed Discord turn:",
     fence(formatLatestTurn(input.request, input.assistantText))
