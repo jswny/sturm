@@ -1,9 +1,12 @@
 import type { RESTGetAPIChannelMessagesResult } from "discord-api-types/v10";
 import type { GuildMemoryChannelMessageEvidence } from "./guild-memory-reflection-evidence-snapshot";
 
-export const CHANNEL_REFLECTION_MAX_MESSAGES = 50;
-const CHANNEL_REFLECTION_MAX_CONTENT_CHARS = 24_000;
-const CHANNEL_REFLECTION_MAX_MESSAGE_CHARS = 2_000;
+export const CHANNEL_REFLECTION_CHUNK_POLICY = {
+  maxMessages: 50,
+  maxContentChars: 24_000,
+  maxMessageChars: 2_000,
+  truncationMarker: "\n[truncated]"
+} as const;
 
 export type GuildMemoryStoredChannelMessage = {
   message_id: string;
@@ -40,13 +43,15 @@ export function selectChannelReflectionEvidence(
   const evidence: GuildMemoryChannelMessageEvidence[] = [];
   let contentChars = 0;
   for (const row of rows) {
+    if (evidence.length >= CHANNEL_REFLECTION_CHUNK_POLICY.maxMessages) break;
     const content = truncateContent(
       row.content,
-      CHANNEL_REFLECTION_MAX_MESSAGE_CHARS
+      CHANNEL_REFLECTION_CHUNK_POLICY.maxMessageChars
     );
     if (
       evidence.length > 0 &&
-      contentChars + content.length > CHANNEL_REFLECTION_MAX_CONTENT_CHARS
+      contentChars + content.length >
+        CHANNEL_REFLECTION_CHUNK_POLICY.maxContentChars
     ) {
       break;
     }
@@ -83,5 +88,5 @@ function truncateContent(content: string, maxLength: number) {
   const trimmed = content.trim();
   return trimmed.length <= maxLength
     ? trimmed
-    : `${trimmed.slice(0, maxLength)}\n[truncated]`;
+    : `${trimmed.slice(0, maxLength)}${CHANNEL_REFLECTION_CHUNK_POLICY.truncationMarker}`;
 }

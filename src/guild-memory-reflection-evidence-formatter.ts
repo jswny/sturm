@@ -1,4 +1,5 @@
 import type { DiscordChatRequest } from "./discord/types";
+import { CHANNEL_REFLECTION_CHUNK_POLICY } from "./guild-memory-channel-evidence";
 import type {
   GuildMemoryAmbientBatchEvidence,
   GuildMemoryBackfillBatchEvidence,
@@ -83,7 +84,13 @@ function formatChannelBatchEvidence(input: {
           : "",
         `  sent_at_utc: ${message.sentAtUtc}`,
         "  content:",
-        indent(truncateForReflection(message.content, 2_000), 4)
+        indent(
+          truncateForReflection(
+            message.content,
+            CHANNEL_REFLECTION_CHUNK_POLICY.maxMessageChars
+          ),
+          4
+        )
       ]
         .filter((line) => line !== "")
         .join("\n")
@@ -94,7 +101,7 @@ function formatChannelBatchEvidence(input: {
 function truncateForReflection(value: string, maxLength = 4_000) {
   const trimmed = value.trim();
   if (trimmed.length <= maxLength) return trimmed;
-  return `${trimmed.slice(0, maxLength)}\n[truncated]`;
+  return `${trimmed.slice(0, maxLength)}${CHANNEL_REFLECTION_CHUNK_POLICY.truncationMarker}`;
 }
 
 function indent(value: string, spaces: number) {

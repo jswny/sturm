@@ -7,7 +7,7 @@ import {
   readDiscordMessagesBeforeCursor
 } from "./discord/channel-message-pagination";
 import {
-  CHANNEL_REFLECTION_MAX_MESSAGES,
+  CHANNEL_REFLECTION_CHUNK_POLICY,
   createChannelMessageEvidence,
   createChannelReflectionCorrelationId,
   selectChannelReflectionEvidence,
@@ -29,9 +29,8 @@ import {
 } from "./model";
 import { searchGuildMembers } from "./nickname";
 
-const OBSERVER_POLL_INTERVAL_SECONDS = 10 * 60;
-const OBSERVER_REFLECTION_MESSAGE_THRESHOLD = 30;
-const OBSERVER_REFLECTION_MAX_WAIT_MS = 60 * 60 * 1_000;
+const OBSERVER_POLL_INTERVAL_SECONDS = 60;
+const OBSERVER_REFLECTION_MAX_WAIT_MS = 10 * 60 * 1_000;
 const OBSERVER_MAX_POLL_PAGES = 10;
 const OBSERVER_REFLECTION_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000;
 export const MEMORY_BACKFILL_DEFAULT_MESSAGE_LIMIT = 500;
@@ -67,7 +66,8 @@ type ObserverPendingMessageRow = GuildMemoryStoredChannelMessage & {
 type PendingChannelSummaryRow = {
   channel_id: string;
   pending_count: number;
-  oldest_observed_at_utc: string;
+  pending_content_chars: number;
+  oldest_sent_at_utc: string;
 };
 
 type ChannelReflectionInput = {
@@ -162,10 +162,7 @@ export class GuildMemoryObserverAgent extends Agent<Env> {
     await super.onStart(props);
     this.initializeStorage();
     try {
-      await this.scheduleEvery(
-        OBSERVER_POLL_INTERVAL_SECONDS,
-        "pollMemorySources"
-      );
+      await this.ensureObserverPollSchedule();
     } catch (error) {
       logError("Guild memory observer schedule registration failed", error, {
         agentName: this.name
@@ -609,7 +606,7 @@ export class GuildMemoryObserverAgent extends Agent<Env> {
         generation = ${metadata.generation}
         AND channel_id = ${readyChannel.channel_id}
       ORDER BY sent_at_utc ASC, message_id ASC
-      LIMIT ${CHANNEL_REFLECTION_MAX_MESSAGES}
+      LIMIT ${CHANNEL_REFLECTION_CHUNK_POLICY.maxMessages}
     `;
     const evidence = selectChannelReflectionEvidence(rows);
     if (evidence.length === 0) return;
@@ -693,14 +690,22 @@ export class GuildMemoryObserverAgent extends Agent<Env> {
       SELECT
         channel_id,
         COUNT(*) AS pending_count,
-        MIN(observed_at_utc) AS oldest_observed_at_utc
+        SUM(
+          CASE
+            WHEN LENGTH(TRIM(content)) <= ${CHANNEL_REFLECTION_CHUNK_POLICY.maxMessageChars}
+              THEN LENGTH(TRIM(content))
+            ELSE ${CHANNEL_REFLECTION_CHUNK_POLICY.maxMessageChars + CHANNEL_REFLECTION_CHUNK_POLICY.truncationMarker.length}
+          END
+        ) AS pending_content_chars,
+        MIN(sent_at_utc) AS oldest_sent_at_utc
       FROM guild_memory_observer_messages
       WHERE generation = ${generation}
       GROUP BY channel_id
       HAVING
-        COUNT(*) >= ${OBSERVER_REFLECTION_MESSAGE_THRESHOLD}
-        OR MIN(observed_at_utc) <= ${cutoffUtc}
-      ORDER BY oldest_observed_at_utc ASC, channel_id ASC
+        COUNT(*) >= ${CHANNEL_REFLECTION_CHUNK_POLICY.maxMessages}
+        OR pending_content_chars >= ${CHANNEL_REFLECTION_CHUNK_POLICY.maxContentChars}
+        OR MIN(sent_at_utc) <= ${cutoffUtc}
+      ORDER BY oldest_sent_at_utc ASC, channel_id ASC
       LIMIT 1
     `[0];
   }
@@ -936,7 +941,7 @@ export class GuildMemoryObserverAgent extends Agent<Env> {
         backfill_id = ${job.backfill_id}
         AND generation = ${job.generation}
       ORDER BY sent_at_utc ASC, message_id ASC
-      LIMIT ${CHANNEL_REFLECTION_MAX_MESSAGES}
+      LIMIT ${CHANNEL_REFLECTION_CHUNK_POLICY.maxMessages}
     `;
     const evidence = selectChannelReflectionEvidence(rows);
     if (evidence.length === 0) {
@@ -1082,6 +1087,23 @@ export class GuildMemoryObserverAgent extends Agent<Env> {
 
   private async scheduleBackfill(backfillId: string, delaySeconds: number) {
     await this.schedule(delaySeconds, "processBackfill", { backfillId });
+  }
+
+  private async ensureObserverPollSchedule() {
+    const intervalSchedules = await this.listSchedules({ type: "interval" });
+    for (const schedule of intervalSchedules) {
+      if (
+        schedule.type === "interval" &&
+        schedule.callback === "pollMemorySources" &&
+        schedule.intervalSeconds !== OBSERVER_POLL_INTERVAL_SECONDS
+      ) {
+        await this.cancelSchedule(schedule.id);
+      }
+    }
+    await this.scheduleEvery(
+      OBSERVER_POLL_INTERVAL_SECONDS,
+      "pollMemorySources"
+    );
   }
 
   private markBackfillReflecting(backfillId: string) {
