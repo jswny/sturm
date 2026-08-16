@@ -49,6 +49,10 @@
         "name": "GuildMemory"
       },
       {
+        "class_name": "GuildMemoryObserverAgent",
+        "name": "GuildMemoryObserver"
+      },
+      {
         "class_name": "DiscordRestDispatcher",
         "name": "DiscordRest"
       }
@@ -66,6 +70,10 @@
     {
       "new_sqlite_classes": ["DiscordRestDispatcher"],
       "tag": "v3"
+    },
+    {
+      "new_sqlite_classes": ["GuildMemoryObserverAgent"],
+      "tag": "v4"
     }
   ],
   "observability": {

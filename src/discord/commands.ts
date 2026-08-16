@@ -1,6 +1,7 @@
 import {
   ApplicationCommandOptionType,
   ApplicationCommandType,
+  ChannelType,
   PermissionFlagsBits,
   type RESTPutAPIApplicationGuildCommandsJSONBody
 } from "discord-api-types/v10";
@@ -60,6 +61,59 @@ export const MEMORY_COMMAND = {
       name: "reset",
       description: "Reset guild memory",
       type: ApplicationCommandOptionType.Subcommand
+    },
+    {
+      name: "source",
+      description: "Manage ambient memory source channels",
+      type: ApplicationCommandOptionType.SubcommandGroup,
+      options: [
+        {
+          name: "enable",
+          description: "Build memory from new messages in a channel",
+          type: ApplicationCommandOptionType.Subcommand,
+          options: [
+            {
+              name: "channel",
+              description: "Channel to observe; defaults to this channel",
+              type: ApplicationCommandOptionType.Channel,
+              channel_types: [
+                ChannelType.GuildText,
+                ChannelType.GuildAnnouncement,
+                ChannelType.AnnouncementThread,
+                ChannelType.PublicThread,
+                ChannelType.PrivateThread
+              ],
+              required: false
+            }
+          ]
+        },
+        {
+          name: "disable",
+          description: "Stop building memory from a channel",
+          type: ApplicationCommandOptionType.Subcommand,
+          options: [
+            {
+              name: "channel",
+              description:
+                "Channel to stop observing; defaults to this channel",
+              type: ApplicationCommandOptionType.Channel,
+              channel_types: [
+                ChannelType.GuildText,
+                ChannelType.GuildAnnouncement,
+                ChannelType.AnnouncementThread,
+                ChannelType.PublicThread,
+                ChannelType.PrivateThread
+              ],
+              required: false
+            }
+          ]
+        },
+        {
+          name: "view",
+          description: "View ambient memory source channels",
+          type: ApplicationCommandOptionType.Subcommand
+        }
+      ]
     }
   ]
 } as const satisfies RESTPutAPIApplicationGuildCommandsJSONBody[number];

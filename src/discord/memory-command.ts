@@ -3,6 +3,7 @@ import {
   PermissionFlagsBits,
   type APIChatInputApplicationCommandInteraction
 } from "discord-api-types/v10";
+import { getAgentByName } from "agents";
 import { editOriginalInteractionResponse } from "./api";
 import { hasDiscordPermission } from "./permissions";
 import type {
@@ -18,13 +19,19 @@ import {
   type GuildMemoryRecord,
   type GuildMemoryResetResult
 } from "../memory";
+import {
+  getGuildMemoryObserverName,
+  type GuildMemorySourceMutationResult,
+  type GuildMemorySourceStatus
+} from "../guild-memory-observer";
 
 type MemoryCommandEnv = Env;
 
 export async function runMemoryCommand(
   interaction: APIChatInputApplicationCommandInteraction,
   env: MemoryCommandEnv,
-  guildId: string
+  guildId: string,
+  currentChannelId: string
 ) {
   const responseTarget = getResponseTarget(interaction);
 
@@ -42,6 +49,45 @@ export async function runMemoryCommand(
   }
 
   const subcommand = getSubcommandName(interaction);
+  const subcommandGroup = getSubcommandGroupName(interaction);
+
+  if (subcommandGroup === "source") {
+    const sourceCommand = getNestedSubcommandName(interaction);
+    const observer = await getGuildMemoryObserver(env, guildId);
+    if (sourceCommand === "view") {
+      const sources = await observer.listSources(guildId);
+      await deliverMemoryCommandResult(
+        responseTarget,
+        formatMemorySourceView(sources)
+      );
+      return;
+    }
+
+    if (sourceCommand === "enable" || sourceCommand === "disable") {
+      const channel = getSourceChannelOption(interaction, currentChannelId);
+      const input = {
+        guildId,
+        channelId: channel.id,
+        ...(channel.name ? { channelName: channel.name } : {}),
+        boundarySnowflake: interaction.id
+      };
+      const result =
+        sourceCommand === "enable"
+          ? await observer.enableSource(input)
+          : await observer.disableSource(input);
+      await editOriginalInteractionResponse(
+        responseTarget,
+        formatMemorySourceMutationResult(result)
+      );
+      return;
+    }
+
+    await editOriginalInteractionResponse(
+      responseTarget,
+      "Unknown memory source subcommand."
+    );
+    return;
+  }
 
   if (subcommand === "view") {
     const result = await listGuildMemory(env.GuildMemory, guildId);
@@ -72,6 +118,11 @@ export async function runMemoryCommand(
   }
 
   if (subcommand === "reset") {
+    const observer = await getGuildMemoryObserver(env, guildId);
+    await observer.resetObservationBoundary({
+      guildId,
+      boundarySnowflake: interaction.id
+    });
     const result = await resetGuildMemory(env.GuildMemory, guildId);
     await editOriginalInteractionResponse(
       responseTarget,
@@ -90,6 +141,21 @@ function getSubcommandName(
   interaction: APIChatInputApplicationCommandInteraction
 ) {
   return getSubcommandOption(interaction)?.name ?? "";
+}
+
+function getSubcommandGroupName(
+  interaction: APIChatInputApplicationCommandInteraction
+) {
+  const option = interaction.data.options?.[0];
+  return option?.type === ApplicationCommandOptionType.SubcommandGroup
+    ? option.name
+    : "";
+}
+
+function getNestedSubcommandName(
+  interaction: APIChatInputApplicationCommandInteraction
+) {
+  return getNestedSubcommandOption(interaction)?.name ?? "";
 }
 
 function getStringSubcommandOption(
@@ -112,6 +178,47 @@ function getSubcommandOption(
   }
 
   return option;
+}
+
+function getNestedSubcommandOption(
+  interaction: APIChatInputApplicationCommandInteraction
+) {
+  const group = interaction.data.options?.[0];
+  if (group?.type !== ApplicationCommandOptionType.SubcommandGroup) {
+    return undefined;
+  }
+  const option = group.options?.[0];
+  return option?.type === ApplicationCommandOptionType.Subcommand
+    ? option
+    : undefined;
+}
+
+function getSourceChannelOption(
+  interaction: APIChatInputApplicationCommandInteraction,
+  currentChannelId: string
+) {
+  const option = getNestedSubcommandOption(interaction)?.options?.find(
+    (item) => item.name === "channel"
+  );
+  if (option?.type !== ApplicationCommandOptionType.Channel) {
+    return {
+      id: currentChannelId,
+      ...(interaction.channel?.name ? { name: interaction.channel.name } : {})
+    };
+  }
+  const id = String(option.value);
+  const resolved = interaction.data.resolved?.channels?.[id];
+  return {
+    id,
+    ...(resolved?.name ? { name: resolved.name } : {})
+  };
+}
+
+async function getGuildMemoryObserver(env: Env, guildId: string) {
+  return getAgentByName(
+    env.GuildMemoryObserver,
+    getGuildMemoryObserverName(guildId)
+  );
 }
 
 function getResponseTarget(
@@ -190,14 +297,52 @@ function formatMemoryResetResult(result: GuildMemoryResetResult) {
     return [
       "Guild memory was already empty.",
       `revision: ${result.revision}`,
-      "deleted_entries: 0"
+      "deleted_entries: 0",
+      "Pending ambient observations were cleared; enabled sources will resume from this reset boundary."
     ].join("\n");
   }
 
   return [
     "Guild memory reset.",
     `revision: ${result.previousRevision} -> ${result.revision}`,
-    `deleted_entries: ${result.deletedCount}`
+    `deleted_entries: ${result.deletedCount}`,
+    "Pending ambient observations were cleared; enabled sources will resume from this reset boundary."
+  ].join("\n");
+}
+
+function formatMemorySourceMutationResult(
+  result: GuildMemorySourceMutationResult
+) {
+  const channel = `<#${result.channelId}>`;
+  switch (result.status) {
+    case "enabled":
+      return `${channel} is now an ambient memory source. Sturm will observe only new human messages.`;
+    case "already_enabled":
+      return `${channel} is already an ambient memory source.`;
+    case "disabled":
+      return `${channel} is no longer an ambient memory source. Its pending observations were discarded.`;
+    case "not_enabled":
+      return `${channel} was not an ambient memory source.`;
+  }
+}
+
+function formatMemorySourceView(sources: GuildMemorySourceStatus[]) {
+  if (sources.length === 0) {
+    return "No ambient memory source channels are enabled.";
+  }
+  return [
+    `Ambient memory sources: ${sources.length}`,
+    "",
+    ...sources.map((source) => {
+      const status = source.lastError
+        ? `error=${source.lastError}`
+        : `last_polled_at_utc=${source.lastPolledAtUtc ?? "never"}`;
+      return [
+        `<#${source.channelId}>`,
+        `pending_messages=${source.pendingMessageCount}`,
+        status
+      ].join(" | ");
+    })
   ].join("\n");
 }
 

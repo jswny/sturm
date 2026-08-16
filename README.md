@@ -80,7 +80,14 @@ registers guild-scoped commands.
 - `/reset` clears the current channel context only; it does not clear guild
   memory. Discord limits it by default to members with Manage Messages.
 - `/memory view`, `/memory delete id:<memory-id>`, and `/memory reset` manage
-  guild memory. Discord limits them by default to members with Manage Server.
+  guild memory.
+- `/memory source enable` and `/memory source disable` manage ambient memory
+  sources. Their optional channel picker defaults to the current channel.
+  `/memory source view` lists enabled sources. Ambient sources require the bot
+  to have View Channel and Read Message History there, plus Message Content
+  access in the Discord Developer Portal.
+- Discord limits all `/memory` commands by default to members with Manage
+  Server.
 
 ## License
 

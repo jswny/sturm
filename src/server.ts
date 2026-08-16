@@ -6,6 +6,7 @@ import { logError } from "./logging";
 export { ChatAgent } from "./agent";
 export { CodemodeRuntime } from "@cloudflare/codemode";
 export { DiscordRestDispatcher } from "./discord/rest-dispatcher";
+export { GuildMemoryObserverAgent } from "./guild-memory-observer";
 export { GuildMemoryObject } from "./memory";
 
 type ServerEnv = Env & {

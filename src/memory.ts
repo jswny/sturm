@@ -41,7 +41,7 @@ export type GuildMemoryMutation =
 export type GuildMemoryCommitInput = {
   correlationId: string;
   baseEpoch: number;
-  assertedByUserId: string;
+  assertedByUserId?: string;
   mutations: GuildMemoryMutation[];
 };
 
@@ -222,7 +222,7 @@ export class GuildMemoryObject extends DurableObject<Env> {
         prepared.kind,
         prepared.content,
         JSON.stringify(prepared.subjectUserIds),
-        input.assertedByUserId,
+        input.assertedByUserId ?? null,
         input.correlationId,
         now,
         createMemoryDedupeKey(prepared)

@@ -5,7 +5,7 @@ import type { GuildMemoryProvider } from "./memory";
 import {
   getGuildMemoryReflectionSummary,
   GuildMemoryReflectionStore,
-  reflectGuildMemoryAfterTurn,
+  reflectGuildMemory,
   type GuildMemoryReflectionFiberPhase,
   type GuildMemoryReflectionSnapshot,
   type GuildMemoryReflectionSummary
@@ -23,6 +23,7 @@ export type GuildMemoryReflectionRunnerOptions = {
     snapshot: GuildMemoryReflectionSnapshot,
     query: string
   ): Promise<GuildMemberSearchResult>;
+  assertCanCommit?(snapshot: GuildMemoryReflectionSnapshot): void;
   providerOptions?: ModelProviderOptions;
 };
 
@@ -69,11 +70,10 @@ export class GuildMemoryReflectionRunner {
         assertNotAborted(fiber, "before reading guild memory");
         const currentCatalog = await provider.getCatalog();
         assertNotAborted(fiber, "before reflecting on guild memory");
-        const plan = await reflectGuildMemoryAfterTurn({
+        const plan = await reflectGuildMemory({
           model: this.options.createModel(snapshot),
           currentCatalog,
-          request: snapshot.request,
-          assistantText: snapshot.assistantText,
+          evidence: snapshot.evidence,
           searchGuildMembers: this.options.searchGuildMembers
             ? (query) => this.options.searchGuildMembers!(snapshot, query)
             : undefined,
@@ -96,14 +96,18 @@ export class GuildMemoryReflectionRunner {
         }
 
         const assertedByUserId =
-          snapshot.request.user?.id ?? snapshot.request.userId;
-        if (!assertedByUserId) {
+          snapshot.evidence.kind === "completed_turn"
+            ? (snapshot.evidence.request.user?.id ??
+              snapshot.evidence.request.userId)
+            : undefined;
+        if (snapshot.evidence.kind === "completed_turn" && !assertedByUserId) {
           throw new Error(
-            "Guild memory reflection cannot commit without a Discord caller user ID."
+            "Completed-turn guild memory reflection cannot commit without a Discord caller user ID."
           );
         }
 
         assertNotAborted(fiber, "before writing guild memory");
+        this.options.assertCanCommit?.(snapshot);
         const commit = await provider.commit({
           correlationId: snapshot.correlationId,
           baseEpoch: currentCatalog.epoch,

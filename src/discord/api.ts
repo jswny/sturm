@@ -65,13 +65,26 @@ export class DiscordApiError extends Error {
 export async function getChannelMessages(
   env: DiscordApiEnv,
   channelId: string,
-  options: { limit: number; beforeMessageId?: string; maxWaitMs?: number }
+  options: {
+    limit: number;
+    beforeMessageId?: string;
+    afterMessageId?: string;
+    maxWaitMs?: number;
+  }
 ): Promise<RESTGetAPIChannelMessagesResult> {
+  if (options.beforeMessageId && options.afterMessageId) {
+    throw new Error(
+      "Discord channel message reads cannot combine before and after cursors."
+    );
+  }
   const params = new URLSearchParams({
     limit: String(clampDiscordMessageLimit(options.limit))
   });
   if (options.beforeMessageId) {
     params.set("before", options.beforeMessageId);
+  }
+  if (options.afterMessageId) {
+    params.set("after", options.afterMessageId);
   }
   return discordApiFetch<RESTGetAPIChannelMessagesResult>(
     env,

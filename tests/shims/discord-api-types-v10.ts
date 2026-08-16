@@ -1,5 +1,9 @@
 export const ApplicationCommandOptionType = {
-  String: 3
+  Subcommand: 1,
+  SubcommandGroup: 2,
+  String: 3,
+  Channel: 7,
+  Attachment: 11
 } as const;
 
 export const ApplicationCommandType = {
@@ -42,6 +46,7 @@ export const MessageSearchSortMode = {
 
 export const PermissionFlagsBits = {
   Administrator: 8n,
+  ManageGuild: 32n,
   ManageMessages: 8192n,
   ManageNicknames: 134217728n,
   ModerateMembers: 1099511627776n

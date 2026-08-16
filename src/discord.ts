@@ -182,7 +182,7 @@ export async function handleDiscordRequest(
     }
 
     deferDiscordWork(ctx, interaction, "Discord /memory command failed", () =>
-      runMemoryCommand(interaction, env, location.guildId)
+      runMemoryCommand(interaction, env, location.guildId, location.channelId)
     );
 
     return interactionJson({

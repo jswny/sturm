@@ -103,7 +103,8 @@ import {
   getGuildMemoryReflectionFiberName,
   GuildMemoryReflectionStore,
   parseGuildMemoryReflectionSnapshot,
-  type GuildMemoryReflectionRecord
+  type GuildMemoryReflectionRecord,
+  type GuildMemoryReflectionSnapshot
 } from "./memory-reflection";
 import { searchGuildMembers } from "./nickname";
 import {
@@ -537,7 +538,9 @@ export class ChatAgent extends Think<Env> {
       }
       return {
         status: "completed",
-        metadata: createGuildMemoryReflectionFiberMetadata(snapshot.request)
+        metadata: createGuildMemoryReflectionFiberMetadata(
+          requireCompletedTurnMemoryRequest(snapshot)
+        )
       };
     } catch (error) {
       const message = getErrorMessage(error);
@@ -1716,23 +1719,27 @@ export class ChatAgent extends Think<Env> {
     return new GuildMemoryReflectionRunner({
       store: this.memoryReflections,
       getProvider: () => this.requireGuildMemoryProvider(),
-      createModel: (snapshot) =>
-        createChatModel(
+      createModel: (snapshot) => {
+        const request = requireCompletedTurnMemoryRequest(snapshot);
+        return createChatModel(
           this.env,
           CHAT_AI_GATEWAY_FLOWS.memoryReflection,
-          createChatAiGatewayCorrelation(snapshot.request),
+          createChatAiGatewayCorrelation(request),
           this.sessionAffinity
-        ),
-      searchGuildMembers: (snapshot, query) =>
-        searchGuildMembers(
+        );
+      },
+      searchGuildMembers: (snapshot, query) => {
+        const request = requireCompletedTurnMemoryRequest(snapshot);
+        return searchGuildMembers(
           this.env,
           {
-            guildId: snapshot.request.guildId,
-            userId: snapshot.request.user?.id ?? snapshot.request.userId,
-            userPermissions: snapshot.request.userPermissions
+            guildId: request.guildId,
+            userId: request.user?.id ?? request.userId,
+            userPermissions: request.userPermissions
           },
           query
-        ),
+        );
+      },
       providerOptions: MEMORY_REFLECTION_PROVIDER_OPTIONS
     });
   }
@@ -2060,6 +2067,17 @@ function createGuildMemoryReflectionFiberMetadata(
     channelId: request.channelId,
     userId: request.userId
   };
+}
+
+function requireCompletedTurnMemoryRequest(
+  snapshot: GuildMemoryReflectionSnapshot
+) {
+  if (snapshot.evidence.kind !== "completed_turn") {
+    throw new Error(
+      "Channel chat Agent received non-turn guild memory evidence."
+    );
+  }
+  return snapshot.evidence.request;
 }
 
 function createChannelContextReflectionFiberMetadata(
