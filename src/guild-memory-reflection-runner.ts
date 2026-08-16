@@ -61,6 +61,7 @@ export class GuildMemoryReflectionRunner {
       }
 
       const provider = this.options.getProvider();
+      const provenance = getMemoryCommitProvenance(snapshot);
       let totalModelAttempts = 0;
       for (
         let commitAttempt = 1;
@@ -95,24 +96,12 @@ export class GuildMemoryReflectionRunner {
           return provisionalSummary;
         }
 
-        const assertedByUserId =
-          snapshot.evidence.kind === "completed_turn"
-            ? (snapshot.evidence.request.user?.id ??
-              snapshot.evidence.request.userId)
-            : undefined;
-        if (snapshot.evidence.kind === "completed_turn" && !assertedByUserId) {
-          throw new Error(
-            "Completed-turn guild memory reflection cannot commit without a Discord caller user ID."
-          );
-        }
-
         assertNotAborted(fiber, "before writing guild memory");
         this.options.assertCanCommit?.(snapshot);
         const commit = await provider.commit({
           correlationId: snapshot.correlationId,
           baseEpoch: currentCatalog.epoch,
-          source: getMemorySource(snapshot),
-          assertedByUserId,
+          ...provenance,
           mutations: plan.mutations
         });
         if (commit.status === "conflict") {
@@ -165,12 +154,30 @@ export class GuildMemoryReflectionRunner {
   }
 }
 
-function getMemorySource(
-  snapshot: GuildMemoryReflectionSnapshot
-): GuildMemorySource {
-  return snapshot.evidence.kind === "completed_turn"
-    ? "discord_turn"
-    : "ambient_channel";
+function getMemoryCommitProvenance(snapshot: GuildMemoryReflectionSnapshot): {
+  source: GuildMemorySource;
+  assertedByUserId?: string;
+} {
+  switch (snapshot.evidence.kind) {
+    case "completed_turn": {
+      const assertedByUserId =
+        snapshot.evidence.request.user?.id ?? snapshot.evidence.request.userId;
+      if (!assertedByUserId) {
+        throw new Error(
+          "Completed-turn guild memory reflection cannot commit without a Discord caller user ID."
+        );
+      }
+      return { source: "discord_turn", assertedByUserId };
+    }
+    case "ambient_batch":
+      return { source: "ambient_channel" };
+    default:
+      return assertNever(snapshot.evidence);
+  }
+}
+
+function assertNever(value: never): never {
+  throw new Error(`Unsupported guild memory evidence: ${String(value)}`);
 }
 
 class GuildMemoryReflectionAbortError extends Error {
