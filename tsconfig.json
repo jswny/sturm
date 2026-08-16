@@ -1,6 +1,6 @@
 {
   "extends": "agents/tsconfig",
   "compilerOptions": {
-    "types": ["node", "./env.d.ts"]
+    "types": ["node", "@cloudflare/vitest-pool-workers/types", "./env.d.ts"]
   }
 }

@@ -359,24 +359,7 @@ export class GuildMemoryObserverAgent extends Agent<Env> {
       DELETE FROM guild_memory_observer_sources
       WHERE channel_id = ${input.channelId}
     `;
-    this.sql`
-      UPDATE guild_memory_observer_messages
-      SET generation = ${nextGeneration}
-      WHERE generation = ${metadata.generation}
-    `;
-    this.sql`
-      UPDATE guild_memory_backfill_jobs
-      SET generation = ${nextGeneration}
-      WHERE
-        channel_id <> ${input.channelId}
-        AND generation = ${metadata.generation}
-        AND status IN ('collecting', 'reflecting')
-    `;
-    this.sql`
-      UPDATE guild_memory_observer_metadata
-      SET generation = ${nextGeneration}
-      WHERE id = 1
-    `;
+    this.advanceObservationGeneration(metadata.generation, nextGeneration);
     logInfo("Guild memory observation source disabled", {
       agentName: this.name,
       guildId: input.guildId,
@@ -789,39 +772,50 @@ export class GuildMemoryObserverAgent extends Agent<Env> {
     } catch (error) {
       const current = this.getBackfill(initial.backfill_id);
       if (!current || !isActiveBackfill(current.status)) return;
-      const failureCount = current.failure_count + 1;
-      const message = truncateError(getErrorMessage(error));
-      const now = new Date().toISOString();
-      if (failureCount >= MEMORY_BACKFILL_MAX_FAILURES) {
-        this.sql`
-          UPDATE guild_memory_backfill_jobs
-          SET
-            status = 'failed',
-            failure_count = ${failureCount},
-            updated_at_utc = ${now},
-            completed_at_utc = ${now},
-            last_error = ${message}
-          WHERE backfill_id = ${current.backfill_id}
-        `;
+      if (current.generation !== initial.generation) {
+        nextDelaySeconds = MEMORY_BACKFILL_NEXT_STEP_SECONDS;
+        logInfo("Guild memory channel backfill generation advanced", {
+          agentName: this.name,
+          backfillId: current.backfill_id,
+          channelId: current.channel_id,
+          previousGeneration: initial.generation,
+          generation: current.generation
+        });
       } else {
-        this.sql`
-          UPDATE guild_memory_backfill_jobs
-          SET
-            failure_count = ${failureCount},
-            updated_at_utc = ${now},
-            last_error = ${message}
-          WHERE backfill_id = ${current.backfill_id}
-        `;
-        nextDelaySeconds = MEMORY_BACKFILL_REFLECTION_DELAY_SECONDS;
+        const failureCount = current.failure_count + 1;
+        const message = truncateError(getErrorMessage(error));
+        const now = new Date().toISOString();
+        if (failureCount >= MEMORY_BACKFILL_MAX_FAILURES) {
+          this.sql`
+            UPDATE guild_memory_backfill_jobs
+            SET
+              status = 'failed',
+              failure_count = ${failureCount},
+              updated_at_utc = ${now},
+              completed_at_utc = ${now},
+              last_error = ${message}
+            WHERE backfill_id = ${current.backfill_id}
+          `;
+        } else {
+          this.sql`
+            UPDATE guild_memory_backfill_jobs
+            SET
+              failure_count = ${failureCount},
+              updated_at_utc = ${now},
+              last_error = ${message}
+            WHERE backfill_id = ${current.backfill_id}
+          `;
+          nextDelaySeconds = MEMORY_BACKFILL_REFLECTION_DELAY_SECONDS;
+        }
+        logWarn("Guild memory channel backfill step failed", {
+          agentName: this.name,
+          backfillId: current.backfill_id,
+          channelId: current.channel_id,
+          failureCount,
+          terminal: failureCount >= MEMORY_BACKFILL_MAX_FAILURES,
+          error: message
+        });
       }
-      logWarn("Guild memory channel backfill step failed", {
-        agentName: this.name,
-        backfillId: current.backfill_id,
-        channelId: current.channel_id,
-        failureCount,
-        terminal: failureCount >= MEMORY_BACKFILL_MAX_FAILURES,
-        error: message
-      });
     } finally {
       this.releaseBackfillStepLease(initial.backfill_id, stepOwner);
     }
@@ -1086,7 +1080,50 @@ export class GuildMemoryObserverAgent extends Agent<Env> {
   }
 
   private async scheduleBackfill(backfillId: string, delaySeconds: number) {
-    await this.schedule(delaySeconds, "processBackfill", { backfillId });
+    await this.schedule(
+      delaySeconds,
+      "processBackfill",
+      { backfillId },
+      { idempotent: true }
+    );
+  }
+
+  private advanceObservationGeneration(
+    currentGeneration: number,
+    nextGeneration: number
+  ) {
+    this.ctx.storage.transactionSync(() => {
+      this.sql`
+        UPDATE guild_memory_observer_messages
+        SET generation = ${nextGeneration}
+        WHERE generation = ${currentGeneration}
+      `;
+      this.sql`
+        UPDATE guild_memory_backfill_messages
+        SET generation = ${nextGeneration}
+        WHERE
+          generation = ${currentGeneration}
+          AND backfill_id IN (
+            SELECT backfill_id
+            FROM guild_memory_backfill_jobs
+            WHERE
+              generation = ${currentGeneration}
+              AND status IN ('collecting', 'reflecting')
+          )
+      `;
+      this.sql`
+        UPDATE guild_memory_backfill_jobs
+        SET generation = ${nextGeneration}
+        WHERE
+          generation = ${currentGeneration}
+          AND status IN ('collecting', 'reflecting')
+      `;
+      this.sql`
+        UPDATE guild_memory_observer_metadata
+        SET generation = ${nextGeneration}
+        WHERE id = 1 AND generation = ${currentGeneration}
+      `;
+    });
   }
 
   private async ensureObserverPollSchedule() {
