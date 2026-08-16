@@ -171,6 +171,8 @@ function getMemoryCommitProvenance(snapshot: GuildMemoryReflectionSnapshot): {
     }
     case "ambient_batch":
       return { source: "ambient_channel" };
+    case "backfill_batch":
+      return { source: "channel_backfill" };
     default:
       return assertNever(snapshot.evidence);
   }

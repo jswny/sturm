@@ -6,7 +6,7 @@ export type GuildMemoryCompletedTurnEvidence = {
   assistantText: string;
 };
 
-export type GuildMemoryAmbientMessageEvidence = {
+export type GuildMemoryChannelMessageEvidence = {
   messageId: string;
   channelId: string;
   channelName?: string;
@@ -19,12 +19,20 @@ export type GuildMemoryAmbientMessageEvidence = {
 export type GuildMemoryAmbientBatchEvidence = {
   kind: "ambient_batch";
   guildId: string;
-  messages: GuildMemoryAmbientMessageEvidence[];
+  messages: GuildMemoryChannelMessageEvidence[];
+};
+
+export type GuildMemoryBackfillBatchEvidence = {
+  kind: "backfill_batch";
+  guildId: string;
+  backfillId: string;
+  messages: GuildMemoryChannelMessageEvidence[];
 };
 
 export type GuildMemoryReflectionEvidence =
   | GuildMemoryCompletedTurnEvidence
-  | GuildMemoryAmbientBatchEvidence;
+  | GuildMemoryAmbientBatchEvidence
+  | GuildMemoryBackfillBatchEvidence;
 
 export function createCompletedTurnMemoryEvidence(
   request: DiscordChatRequest,
@@ -39,11 +47,24 @@ export function createCompletedTurnMemoryEvidence(
 
 export function createAmbientBatchMemoryEvidence(
   guildId: string,
-  messages: GuildMemoryAmbientMessageEvidence[]
+  messages: GuildMemoryChannelMessageEvidence[]
 ): GuildMemoryAmbientBatchEvidence {
   return {
     kind: "ambient_batch",
     guildId,
+    messages
+  };
+}
+
+export function createBackfillBatchMemoryEvidence(
+  guildId: string,
+  backfillId: string,
+  messages: GuildMemoryChannelMessageEvidence[]
+): GuildMemoryBackfillBatchEvidence {
+  return {
+    kind: "backfill_batch",
+    guildId,
+    backfillId,
     messages
   };
 }
@@ -61,15 +82,25 @@ export function parseGuildMemoryReflectionEvidence(
     );
   }
 
-  if (value.kind !== "ambient_batch") return null;
+  if (value.kind !== "ambient_batch" && value.kind !== "backfill_batch") {
+    return null;
+  }
   if (typeof value.guildId !== "string") return null;
   if (!Array.isArray(value.messages) || value.messages.length === 0)
     return null;
   const messages = value.messages.map(parseAmbientMessageEvidence);
   if (messages.some((message) => message === null)) return null;
-  return createAmbientBatchMemoryEvidence(
+  if (value.kind === "ambient_batch") {
+    return createAmbientBatchMemoryEvidence(
+      value.guildId,
+      messages as GuildMemoryChannelMessageEvidence[]
+    );
+  }
+  if (typeof value.backfillId !== "string") return null;
+  return createBackfillBatchMemoryEvidence(
     value.guildId,
-    messages as GuildMemoryAmbientMessageEvidence[]
+    value.backfillId,
+    messages as GuildMemoryChannelMessageEvidence[]
   );
 }
 
@@ -83,7 +114,7 @@ export function parseLegacyCompletedTurnMemoryEvidence(
 
 function parseAmbientMessageEvidence(
   value: unknown
-): GuildMemoryAmbientMessageEvidence | null {
+): GuildMemoryChannelMessageEvidence | null {
   if (!isObject(value)) return null;
   if (typeof value.messageId !== "string") return null;
   if (typeof value.channelId !== "string") return null;

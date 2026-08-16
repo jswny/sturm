@@ -83,9 +83,12 @@ registers guild-scoped commands.
   guild memory.
 - `/memory source enable` and `/memory source disable` manage ambient memory
   sources. Their optional channel picker defaults to the current channel.
-  `/memory source view` lists enabled sources. Ambient sources require the bot
-  to have View Channel and Read Message History there, plus Message Content
-  access in the Discord Developer Portal.
+  `/memory source backfill` manually scans older messages from an enabled
+  source; its optional channel picker defaults to the current channel and its
+  optional message cap defaults to 500. `/memory source view` lists enabled
+  sources and the latest backfill progress. Ambient sources and backfills
+  require the bot to have View Channel and Read Message History there, plus
+  Message Content access in the Discord Developer Portal.
 - Discord limits all `/memory` commands by default to members with Manage
   Server.
 

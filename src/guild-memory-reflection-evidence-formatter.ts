@@ -1,15 +1,25 @@
 import type { DiscordChatRequest } from "./discord/types";
 import type {
   GuildMemoryAmbientBatchEvidence,
+  GuildMemoryBackfillBatchEvidence,
+  GuildMemoryChannelMessageEvidence,
   GuildMemoryReflectionEvidence
 } from "./guild-memory-reflection-evidence-snapshot";
 
 export function formatGuildMemoryReflectionEvidence(
   evidence: GuildMemoryReflectionEvidence
 ) {
-  return evidence.kind === "completed_turn"
-    ? formatCompletedTurnEvidence(evidence.request, evidence.assistantText)
-    : formatAmbientBatchEvidence(evidence);
+  switch (evidence.kind) {
+    case "completed_turn":
+      return formatCompletedTurnEvidence(
+        evidence.request,
+        evidence.assistantText
+      );
+    case "ambient_batch":
+      return formatAmbientBatchEvidence(evidence);
+    case "backfill_batch":
+      return formatBackfillBatchEvidence(evidence);
+  }
 }
 
 function formatCompletedTurnEvidence(
@@ -35,12 +45,34 @@ function formatCompletedTurnEvidence(
 }
 
 function formatAmbientBatchEvidence(evidence: GuildMemoryAmbientBatchEvidence) {
+  return formatChannelBatchEvidence({
+    source: "ambient_channel_observer",
+    guildId: evidence.guildId,
+    messages: evidence.messages
+  });
+}
+
+function formatBackfillBatchEvidence(
+  evidence: GuildMemoryBackfillBatchEvidence
+) {
+  return formatChannelBatchEvidence({
+    source: "historical_channel_messages",
+    guildId: evidence.guildId,
+    messages: evidence.messages
+  });
+}
+
+function formatChannelBatchEvidence(input: {
+  source: "ambient_channel_observer" | "historical_channel_messages";
+  guildId: string;
+  messages: GuildMemoryChannelMessageEvidence[];
+}) {
   return [
-    "source: ambient_channel_observer",
-    `guild_id: ${evidence.guildId}`,
-    `message_count: ${evidence.messages.length}`,
+    `source: ${input.source}`,
+    `guild_id: ${input.guildId}`,
+    `message_count: ${input.messages.length}`,
     "messages:",
-    ...evidence.messages.map((message) =>
+    ...input.messages.map((message) =>
       [
         `- message_id: ${message.messageId}`,
         `  channel_id: ${message.channelId}`,

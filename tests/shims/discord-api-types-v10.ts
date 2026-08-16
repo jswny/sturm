@@ -2,6 +2,7 @@ export const ApplicationCommandOptionType = {
   Subcommand: 1,
   SubcommandGroup: 2,
   String: 3,
+  Integer: 4,
   Channel: 7,
   Attachment: 11
 } as const;

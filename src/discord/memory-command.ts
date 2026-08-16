@@ -21,6 +21,8 @@ import {
 } from "../memory";
 import {
   getGuildMemoryObserverName,
+  MEMORY_BACKFILL_DEFAULT_MESSAGE_LIMIT,
+  type StartGuildMemoryBackfillResult,
   type GuildMemorySourceMutationResult,
   type GuildMemorySourceStatus
 } from "../guild-memory-observer";
@@ -78,6 +80,24 @@ export async function runMemoryCommand(
       await editOriginalInteractionResponse(
         responseTarget,
         formatMemorySourceMutationResult(result)
+      );
+      return;
+    }
+
+    if (sourceCommand === "backfill") {
+      const channel = getSourceChannelOption(interaction, currentChannelId);
+      const messageLimit =
+        getNestedIntegerOption(interaction, "messages") ??
+        MEMORY_BACKFILL_DEFAULT_MESSAGE_LIMIT;
+      const result = await observer.startBackfill({
+        guildId,
+        channelId: channel.id,
+        ...(channel.name ? { channelName: channel.name } : {}),
+        messageLimit
+      });
+      await editOriginalInteractionResponse(
+        responseTarget,
+        formatMemoryBackfillResult(result)
       );
       return;
     }
@@ -214,6 +234,17 @@ function getSourceChannelOption(
   };
 }
 
+function getNestedIntegerOption(
+  interaction: APIChatInputApplicationCommandInteraction,
+  name: string
+) {
+  const option = getNestedSubcommandOption(interaction)?.options?.find(
+    (item) => item.name === name
+  );
+  if (option?.type !== ApplicationCommandOptionType.Integer) return undefined;
+  return option.value;
+}
+
 async function getGuildMemoryObserver(env: Env, guildId: string) {
   return getAgentByName(
     env.GuildMemoryObserver,
@@ -333,16 +364,54 @@ function formatMemorySourceView(sources: GuildMemorySourceStatus[]) {
   return [
     `Ambient memory sources: ${sources.length}`,
     "",
-    ...sources.map((source) => {
+    ...sources.flatMap((source) => {
       const status = source.lastError
         ? `error=${source.lastError}`
         : `last_polled_at_utc=${source.lastPolledAtUtc ?? "never"}`;
-      return [
+      const lines = [
         `<#${source.channelId}>`,
         `pending_messages=${source.pendingMessageCount}`,
         status
       ].join(" | ");
+      if (!source.latestBackfill) return [lines];
+      const backfill = source.latestBackfill;
+      const backfillStatus = [
+        `backfill=${backfill.status}`,
+        `scanned=${backfill.scannedMessageCount}/${backfill.messageLimit}`,
+        `eligible=${backfill.collectedMessageCount}`,
+        `reflected=${backfill.reflectedMessageCount}`,
+        backfill.lastError ? `error=${backfill.lastError}` : ""
+      ]
+        .filter(Boolean)
+        .join(" | ");
+      return [lines, `  ${backfillStatus}`];
     })
+  ].join("\n");
+}
+
+function formatMemoryBackfillResult(result: StartGuildMemoryBackfillResult) {
+  const channel = `<#${result.channelId}>`;
+  if (result.status === "source_not_enabled") {
+    return `${channel} is not an ambient memory source. Enable it first with /memory source enable.`;
+  }
+  const backfill = result.backfill;
+  if (!backfill) {
+    return `${channel} backfill status is unavailable.`;
+  }
+  if (result.status === "already_running") {
+    return [
+      `${channel} already has a memory backfill in progress.`,
+      `status: ${backfill.status}`,
+      `scanned_messages: ${backfill.scannedMessageCount}/${backfill.messageLimit}`,
+      `eligible_messages: ${backfill.collectedMessageCount}`,
+      `reflected_messages: ${backfill.reflectedMessageCount}`
+    ].join("\n");
+  }
+  return [
+    `Started a memory backfill for ${channel}.`,
+    `message_cap: ${backfill.messageLimit}`,
+    "Collection pages backward, then reflects the captured messages oldest-to-newest.",
+    "Run /memory source view to check progress."
   ].join("\n");
 }
 

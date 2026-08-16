@@ -4,7 +4,10 @@ import { formatGuildMemoryContext } from "./guild-memory-formatter";
 const GUILD_MEMORY_CATALOG_ID = 1;
 
 export type GuildMemoryKind = "guild" | "user" | "relationship";
-export type GuildMemorySource = "discord_turn" | "ambient_channel";
+export type GuildMemorySource =
+  | "discord_turn"
+  | "ambient_channel"
+  | "channel_backfill";
 
 export type GuildMemoryRecord = {
   memoryId: string;
@@ -405,6 +408,56 @@ export class GuildMemoryObject extends DurableObject<Env> {
         VALUES (2, datetime('now'));
       `);
     }
+
+    if (schemaVersion < 3) {
+      this.ctx.storage.transactionSync(() => {
+        this.ctx.storage.sql.exec(`
+          DROP TABLE IF EXISTS guild_memory_records_v3;
+          CREATE TABLE guild_memory_records_v3 (
+            memory_id TEXT PRIMARY KEY,
+            ordinal INTEGER NOT NULL UNIQUE,
+            kind TEXT NOT NULL CHECK (kind IN ('guild', 'user', 'relationship')),
+            content TEXT NOT NULL,
+            subject_user_ids TEXT NOT NULL,
+            asserted_by_user_id TEXT,
+            source_correlation_id TEXT,
+            created_at TEXT NOT NULL,
+            dedupe_key TEXT NOT NULL UNIQUE,
+            source TEXT NOT NULL CHECK (
+              source IN ('discord_turn', 'ambient_channel', 'channel_backfill')
+            )
+          );
+          INSERT INTO guild_memory_records_v3 (
+            memory_id,
+            ordinal,
+            kind,
+            content,
+            subject_user_ids,
+            asserted_by_user_id,
+            source_correlation_id,
+            created_at,
+            dedupe_key,
+            source
+          )
+          SELECT
+            memory_id,
+            ordinal,
+            kind,
+            content,
+            subject_user_ids,
+            asserted_by_user_id,
+            source_correlation_id,
+            created_at,
+            dedupe_key,
+            source
+          FROM guild_memory_records;
+          DROP TABLE guild_memory_records;
+          ALTER TABLE guild_memory_records_v3 RENAME TO guild_memory_records;
+          INSERT INTO _sql_schema_migrations (id, applied_at)
+          VALUES (3, datetime('now'));
+        `);
+      });
+    }
   }
 
   private readCatalog(): GuildMemoryCatalog {
@@ -531,7 +584,11 @@ function parseStoredMemoryRow(row: StoredMemoryRow): GuildMemoryRecord {
 }
 
 function isGuildMemorySource(value: string): value is GuildMemorySource {
-  return value === "discord_turn" || value === "ambient_channel";
+  return (
+    value === "discord_turn" ||
+    value === "ambient_channel" ||
+    value === "channel_backfill"
+  );
 }
 
 function parseStoredCommitResult(resultJson: string): GuildMemoryCommitResult {

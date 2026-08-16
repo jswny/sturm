@@ -5,6 +5,7 @@ import {
   PermissionFlagsBits,
   type RESTPutAPIApplicationGuildCommandsJSONBody
 } from "discord-api-types/v10";
+import { MEMORY_BACKFILL_MAX_MESSAGE_LIMIT } from "../guild-memory-observer";
 
 export const C_COMMAND = {
   name: "c",
@@ -104,6 +105,35 @@ export const MEMORY_COMMAND = {
                 ChannelType.PublicThread,
                 ChannelType.PrivateThread
               ],
+              required: false
+            }
+          ]
+        },
+        {
+          name: "backfill",
+          description: "Build memory from older messages in a channel",
+          type: ApplicationCommandOptionType.Subcommand,
+          options: [
+            {
+              name: "channel",
+              description: "Channel to backfill; defaults to this channel",
+              type: ApplicationCommandOptionType.Channel,
+              channel_types: [
+                ChannelType.GuildText,
+                ChannelType.GuildAnnouncement,
+                ChannelType.AnnouncementThread,
+                ChannelType.PublicThread,
+                ChannelType.PrivateThread
+              ],
+              required: false
+            },
+            {
+              name: "messages",
+              description:
+                "Maximum historical messages to scan; defaults to 500",
+              type: ApplicationCommandOptionType.Integer,
+              min_value: 1,
+              max_value: MEMORY_BACKFILL_MAX_MESSAGE_LIMIT,
               required: false
             }
           ]
