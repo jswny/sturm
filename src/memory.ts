@@ -4,10 +4,12 @@ import { formatGuildMemoryContext } from "./guild-memory-formatter";
 const GUILD_MEMORY_CATALOG_ID = 1;
 
 export type GuildMemoryKind = "guild" | "user" | "relationship";
+export type GuildMemorySource = "discord_turn" | "ambient_channel";
 
 export type GuildMemoryRecord = {
   memoryId: string;
   kind: GuildMemoryKind;
+  source: GuildMemorySource;
   content: string;
   subjectUserIds: string[];
   assertedByUserId?: string;
@@ -41,6 +43,7 @@ export type GuildMemoryMutation =
 export type GuildMemoryCommitInput = {
   correlationId: string;
   baseEpoch: number;
+  source: GuildMemorySource;
   assertedByUserId?: string;
   mutations: GuildMemoryMutation[];
 };
@@ -80,6 +83,7 @@ type StoredCatalogRow = {
 type StoredMemoryRow = {
   memory_id: string;
   kind: GuildMemoryKind;
+  source: string;
   content: string;
   subject_user_ids: string;
   asserted_by_user_id: string | null;
@@ -155,6 +159,10 @@ export class GuildMemoryObject extends DurableObject<Env> {
   async commitMemoryChanges(
     input: GuildMemoryCommitInput
   ): Promise<GuildMemoryCommitResult | GuildMemoryCommitConflict> {
+    if (!isGuildMemorySource(input.source)) {
+      throw new Error("Guild memory commit requires a valid source.");
+    }
+
     const existingCommit = this.ctx.storage.sql
       .exec<StoredCommitRow>(
         "SELECT result_json FROM guild_memory_commits WHERE correlation_id = ?",
@@ -210,16 +218,18 @@ export class GuildMemoryObject extends DurableObject<Env> {
           memory_id,
           ordinal,
           kind,
+          source,
           content,
           subject_user_ids,
           asserted_by_user_id,
           source_correlation_id,
           created_at,
           dedupe_key
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         crypto.randomUUID(),
         nextOrdinal,
         prepared.kind,
+        input.source,
         prepared.content,
         JSON.stringify(prepared.subjectUserIds),
         input.assertedByUserId ?? null,
@@ -334,37 +344,67 @@ export class GuildMemoryObject extends DurableObject<Env> {
 
   private initializeStorage() {
     this.ctx.storage.sql.exec(`
-      CREATE TABLE IF NOT EXISTS guild_memory_catalog (
-        id INTEGER PRIMARY KEY CHECK (id = 1),
-        version INTEGER NOT NULL,
-        epoch INTEGER NOT NULL,
-        next_ordinal INTEGER NOT NULL,
-        updated_at TEXT
+      CREATE TABLE IF NOT EXISTS _sql_schema_migrations (
+        id INTEGER PRIMARY KEY,
+        applied_at TEXT NOT NULL
       );
-      CREATE TABLE IF NOT EXISTS guild_memory_records (
-        memory_id TEXT PRIMARY KEY,
-        ordinal INTEGER NOT NULL UNIQUE,
-        kind TEXT NOT NULL CHECK (kind IN ('guild', 'user', 'relationship')),
-        content TEXT NOT NULL,
-        subject_user_ids TEXT NOT NULL,
-        asserted_by_user_id TEXT,
-        source_correlation_id TEXT,
-        created_at TEXT NOT NULL,
-        dedupe_key TEXT NOT NULL UNIQUE
-      );
-      CREATE TABLE IF NOT EXISTS guild_memory_commits (
-        correlation_id TEXT PRIMARY KEY,
-        result_json TEXT NOT NULL,
-        committed_at TEXT NOT NULL
-      );
-      INSERT OR IGNORE INTO guild_memory_catalog (
-        id,
-        version,
-        epoch,
-        next_ordinal,
-        updated_at
-      ) VALUES (1, 0, 0, 1, NULL);
     `);
+
+    const schemaVersion = this.ctx.storage.sql
+      .exec<{ version: number }>(
+        "SELECT COALESCE(MAX(id), 0) AS version FROM _sql_schema_migrations"
+      )
+      .one().version;
+
+    if (schemaVersion < 1) {
+      this.ctx.storage.sql.exec(`
+        CREATE TABLE IF NOT EXISTS guild_memory_catalog (
+          id INTEGER PRIMARY KEY CHECK (id = 1),
+          version INTEGER NOT NULL,
+          epoch INTEGER NOT NULL,
+          next_ordinal INTEGER NOT NULL,
+          updated_at TEXT
+        );
+        CREATE TABLE IF NOT EXISTS guild_memory_records (
+          memory_id TEXT PRIMARY KEY,
+          ordinal INTEGER NOT NULL UNIQUE,
+          kind TEXT NOT NULL CHECK (kind IN ('guild', 'user', 'relationship')),
+          content TEXT NOT NULL,
+          subject_user_ids TEXT NOT NULL,
+          asserted_by_user_id TEXT,
+          source_correlation_id TEXT,
+          created_at TEXT NOT NULL,
+          dedupe_key TEXT NOT NULL UNIQUE
+        );
+        CREATE TABLE IF NOT EXISTS guild_memory_commits (
+          correlation_id TEXT PRIMARY KEY,
+          result_json TEXT NOT NULL,
+          committed_at TEXT NOT NULL
+        );
+        INSERT OR IGNORE INTO guild_memory_catalog (
+          id,
+          version,
+          epoch,
+          next_ordinal,
+          updated_at
+        ) VALUES (1, 0, 0, 1, NULL);
+        INSERT INTO _sql_schema_migrations (id, applied_at)
+        VALUES (1, datetime('now'));
+      `);
+    }
+
+    if (schemaVersion < 2) {
+      this.ctx.storage.sql.exec(`
+        ALTER TABLE guild_memory_records
+          ADD COLUMN source TEXT NOT NULL DEFAULT 'discord_turn'
+          CHECK (source IN ('discord_turn', 'ambient_channel'));
+        UPDATE guild_memory_records
+        SET source = 'ambient_channel'
+        WHERE source_correlation_id LIKE 'ambient:%';
+        INSERT INTO _sql_schema_migrations (id, applied_at)
+        VALUES (2, datetime('now'));
+      `);
+    }
   }
 
   private readCatalog(): GuildMemoryCatalog {
@@ -374,6 +414,7 @@ export class GuildMemoryObject extends DurableObject<Env> {
         `SELECT
           memory_id,
           kind,
+          source,
           content,
           subject_user_ids,
           asserted_by_user_id,
@@ -409,6 +450,7 @@ export class GuildMemoryObject extends DurableObject<Env> {
         `SELECT
           memory_id,
           kind,
+          source,
           content,
           subject_user_ids,
           asserted_by_user_id,
@@ -461,6 +503,9 @@ function createMemoryDedupeKey(input: {
 }
 
 function parseStoredMemoryRow(row: StoredMemoryRow): GuildMemoryRecord {
+  if (!isGuildMemorySource(row.source)) {
+    throw new Error(`Invalid source for guild memory ${row.memory_id}.`);
+  }
   const parsedSubjectUserIds = JSON.parse(row.subject_user_ids) as unknown;
   if (
     !Array.isArray(parsedSubjectUserIds) ||
@@ -472,6 +517,7 @@ function parseStoredMemoryRow(row: StoredMemoryRow): GuildMemoryRecord {
   return {
     memoryId: row.memory_id,
     kind: row.kind,
+    source: row.source,
     content: row.content,
     subjectUserIds: parsedSubjectUserIds,
     ...(row.asserted_by_user_id
@@ -482,6 +528,10 @@ function parseStoredMemoryRow(row: StoredMemoryRow): GuildMemoryRecord {
       : {}),
     createdAt: row.created_at
   };
+}
+
+function isGuildMemorySource(value: string): value is GuildMemorySource {
+  return value === "discord_turn" || value === "ambient_channel";
 }
 
 function parseStoredCommitResult(resultJson: string): GuildMemoryCommitResult {

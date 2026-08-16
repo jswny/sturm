@@ -355,7 +355,7 @@ function formatMemoryRecord(record: GuildMemoryRecord, index?: number) {
   const assertedBy = record.assertedByUserId
     ? ` assertedBy=${record.assertedByUserId}`
     : "";
-  return `${prefix}[${record.memoryId}] [${record.kind}${subjects}${assertedBy}] ${record.content}`;
+  return `${prefix}[${record.memoryId}] [${record.kind} source=${record.source}${subjects}${assertedBy}] ${record.content}`;
 }
 
 function createMemoryAttachmentSummary() {

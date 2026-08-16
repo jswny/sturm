@@ -1,7 +1,7 @@
 import type { FiberContext } from "@cloudflare/think";
 import type { LanguageModel } from "ai";
 import { getErrorMessage } from "./logging";
-import type { GuildMemoryProvider } from "./memory";
+import type { GuildMemoryProvider, GuildMemorySource } from "./memory";
 import {
   getGuildMemoryReflectionSummary,
   GuildMemoryReflectionStore,
@@ -111,6 +111,7 @@ export class GuildMemoryReflectionRunner {
         const commit = await provider.commit({
           correlationId: snapshot.correlationId,
           baseEpoch: currentCatalog.epoch,
+          source: getMemorySource(snapshot),
           assertedByUserId,
           mutations: plan.mutations
         });
@@ -162,6 +163,14 @@ export class GuildMemoryReflectionRunner {
   ) {
     await this.options.store.complete(correlationId, reflection);
   }
+}
+
+function getMemorySource(
+  snapshot: GuildMemoryReflectionSnapshot
+): GuildMemorySource {
+  return snapshot.evidence.kind === "completed_turn"
+    ? "discord_turn"
+    : "ambient_channel";
 }
 
 class GuildMemoryReflectionAbortError extends Error {
