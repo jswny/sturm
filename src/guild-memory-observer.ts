@@ -14,6 +14,7 @@ import {
   type GuildMemoryStoredChannelMessage
 } from "./guild-memory-channel-evidence";
 import { GuildMemoryReflectionRunner } from "./guild-memory-reflection-runner";
+import type { GuildMemoryChannelMessageEvidence } from "./guild-memory-reflection-evidence-snapshot";
 import { getErrorMessage, logError, logInfo, logWarn } from "./logging";
 import { GuildMemoryProvider } from "./memory";
 import {
@@ -63,10 +64,18 @@ type ObserverPendingMessageRow = GuildMemoryStoredChannelMessage & {
   generation: number;
 };
 
-type PendingSummaryRow = {
+type PendingChannelSummaryRow = {
+  channel_id: string;
   pending_count: number;
-  oldest_observed_at_utc: string | null;
+  oldest_observed_at_utc: string;
 };
+
+type ChannelReflectionInput = {
+  guildId: string;
+  correlationId: string;
+  evidence: GuildMemoryChannelMessageEvidence[];
+  assertCanCommit(): void;
+} & ({ kind: "ambient" } | { kind: "backfill"; backfillId: string });
 
 export type BackfillStatus =
   | "collecting"
@@ -474,7 +483,7 @@ export class GuildMemoryObserverAgent extends Agent<Env> {
       await this.pollSource(metadata.guild_id, source);
     }
 
-    await this.reflectPendingMessages(metadata.guild_id);
+    await this.reflectNextReadyAmbientChannel(metadata.guild_id);
     const activeBackfill = this.getOldestActiveBackfill();
     if (activeBackfill) {
       await this.processBackfill({ backfillId: activeBackfill.backfill_id });
@@ -579,25 +588,10 @@ export class GuildMemoryObserverAgent extends Agent<Env> {
     }
   }
 
-  private async reflectPendingMessages(guildId: string) {
+  private async reflectNextReadyAmbientChannel(guildId: string) {
     const metadata = this.requireGuild(guildId);
-    const summary = this.sql<PendingSummaryRow>`
-      SELECT
-        COUNT(*) AS pending_count,
-        MIN(observed_at_utc) AS oldest_observed_at_utc
-      FROM guild_memory_observer_messages
-      WHERE generation = ${metadata.generation}
-    `[0];
-    if (!summary || summary.pending_count === 0) return;
-
-    const oldestObservedAtMs = summary.oldest_observed_at_utc
-      ? Date.parse(summary.oldest_observed_at_utc)
-      : Date.now();
-    const readyByCount =
-      summary.pending_count >= OBSERVER_REFLECTION_MESSAGE_THRESHOLD;
-    const readyByAge =
-      Date.now() - oldestObservedAtMs >= OBSERVER_REFLECTION_MAX_WAIT_MS;
-    if (!readyByCount && !readyByAge) return;
+    const readyChannel = this.getReadyAmbientChannel(metadata.generation);
+    if (!readyChannel) return;
 
     const rows = this.sql<ObserverPendingMessageRow>`
       SELECT
@@ -611,64 +605,60 @@ export class GuildMemoryObserverAgent extends Agent<Env> {
         observed_at_utc,
         generation
       FROM guild_memory_observer_messages
-      WHERE generation = ${metadata.generation}
+      WHERE
+        generation = ${metadata.generation}
+        AND channel_id = ${readyChannel.channel_id}
       ORDER BY sent_at_utc ASC, message_id ASC
       LIMIT ${CHANNEL_REFLECTION_MAX_MESSAGES}
     `;
     const evidence = selectChannelReflectionEvidence(rows);
     if (evidence.length === 0) return;
 
-    const leaseOwner = `ambient:${crypto.randomUUID()}`;
-    if (!this.tryAcquireReflectionLease(leaseOwner)) return;
     const correlationId = createChannelReflectionCorrelationId(
       "ambient",
-      guildId,
+      `${guildId}:${readyChannel.channel_id}`,
       evidence
     );
-    const snapshot = createAmbientGuildMemoryReflectionSnapshot(
-      correlationId,
-      guildId,
-      evidence
-    );
-    const runner = new GuildMemoryReflectionRunner({
-      store: this.memoryReflections,
-      getProvider: () =>
-        new GuildMemoryProvider(this.env.GuildMemory, () => guildId),
-      createModel: () =>
-        createChatModel(
-          this.env,
-          CHAT_AI_GATEWAY_FLOWS.memoryReflection,
-          { correlationId, guildId },
-          this.name
-        ),
-      searchGuildMembers: (_snapshot, query) =>
-        searchGuildMembers(this.env, { guildId }, query),
-      assertCanCommit: () => {
-        const current = this.requireGuild(guildId);
-        if (current.generation !== metadata.generation) {
-          throw new Error(
-            "Guild memory observation boundary changed while reflection was running."
-          );
-        }
-      },
-      providerOptions: MEMORY_REFLECTION_PROVIDER_OPTIONS
-    });
+    const assertCanCommit = () => {
+      const current = this.requireGuild(guildId);
+      if (
+        current.generation !== metadata.generation ||
+        !this.getSource(readyChannel.channel_id)
+      ) {
+        throw new Error(
+          "Guild memory observation boundary changed while reflection was running."
+        );
+      }
+    };
 
     try {
-      const reflection = await runner.run(snapshot);
-      const current = this.requireGuild(guildId);
-      if (current.generation !== metadata.generation) return;
+      const result = await this.reflectChannelEvidence({
+        kind: "ambient",
+        guildId,
+        correlationId,
+        evidence,
+        assertCanCommit
+      });
+      if (result.status === "busy") return;
+      try {
+        assertCanCommit();
+      } catch {
+        return;
+      }
       for (const message of evidence) {
         this.sql`
           DELETE FROM guild_memory_observer_messages
           WHERE
             message_id = ${message.messageId}
+            AND channel_id = ${readyChannel.channel_id}
             AND generation = ${metadata.generation}
         `;
       }
+      const reflection = result.reflection;
       logInfo("Guild memory observer reflected ambient messages", {
         agentName: this.name,
         guildId,
+        channelId: readyChannel.channel_id,
         correlationId,
         messageCount: evidence.length,
         changed: reflection?.changed ?? false,
@@ -687,10 +677,74 @@ export class GuildMemoryObserverAgent extends Agent<Env> {
       logWarn("Guild memory observer reflection failed", {
         agentName: this.name,
         guildId,
+        channelId: readyChannel.channel_id,
         correlationId,
         messageCount: evidence.length,
         error: getErrorMessage(error)
       });
+    }
+  }
+
+  private getReadyAmbientChannel(generation: number) {
+    const cutoffUtc = new Date(
+      Date.now() - OBSERVER_REFLECTION_MAX_WAIT_MS
+    ).toISOString();
+    return this.sql<PendingChannelSummaryRow>`
+      SELECT
+        channel_id,
+        COUNT(*) AS pending_count,
+        MIN(observed_at_utc) AS oldest_observed_at_utc
+      FROM guild_memory_observer_messages
+      WHERE generation = ${generation}
+      GROUP BY channel_id
+      HAVING
+        COUNT(*) >= ${OBSERVER_REFLECTION_MESSAGE_THRESHOLD}
+        OR MIN(observed_at_utc) <= ${cutoffUtc}
+      ORDER BY oldest_observed_at_utc ASC, channel_id ASC
+      LIMIT 1
+    `[0];
+  }
+
+  private async reflectChannelEvidence(input: ChannelReflectionInput) {
+    const leaseOwner = `${input.kind}:${crypto.randomUUID()}`;
+    if (!this.tryAcquireReflectionLease(leaseOwner)) {
+      return { status: "busy" } as const;
+    }
+    const snapshot =
+      input.kind === "ambient"
+        ? createAmbientGuildMemoryReflectionSnapshot(
+            input.correlationId,
+            input.guildId,
+            input.evidence
+          )
+        : createBackfillGuildMemoryReflectionSnapshot(
+            input.correlationId,
+            input.guildId,
+            input.backfillId,
+            input.evidence
+          );
+    const runner = new GuildMemoryReflectionRunner({
+      store: this.memoryReflections,
+      getProvider: () =>
+        new GuildMemoryProvider(this.env.GuildMemory, () => input.guildId),
+      createModel: () =>
+        createChatModel(
+          this.env,
+          CHAT_AI_GATEWAY_FLOWS.memoryReflection,
+          { correlationId: input.correlationId, guildId: input.guildId },
+          this.name
+        ),
+      searchGuildMembers: (_snapshot, query) =>
+        searchGuildMembers(this.env, { guildId: input.guildId }, query),
+      assertCanCommit: () => input.assertCanCommit(),
+      providerOptions: MEMORY_REFLECTION_PROVIDER_OPTIONS
+    });
+
+    try {
+      return {
+        status: "completed",
+        reflection: await runner.run(snapshot)
+      } as const;
     } finally {
       this.releaseReflectionLease(leaseOwner);
     }
@@ -863,8 +917,8 @@ export class GuildMemoryObserverAgent extends Agent<Env> {
   }
 
   private async reflectBackfillBatch(guildId: string, job: BackfillJobRow) {
-    if (this.isAmbientReflectionReady(job.generation)) {
-      await this.reflectPendingMessages(guildId);
+    if (this.hasReadyAmbientChannel(job.generation)) {
+      await this.reflectNextReadyAmbientChannel(guildId);
       return MEMORY_BACKFILL_REFLECTION_DELAY_SECONDS;
     }
 
@@ -890,113 +944,77 @@ export class GuildMemoryObserverAgent extends Agent<Env> {
       return undefined;
     }
 
-    const reflectionOwner = `backfill:${job.backfill_id}`;
-    if (!this.tryAcquireReflectionLease(reflectionOwner)) {
-      return MEMORY_BACKFILL_REFLECTION_DELAY_SECONDS;
-    }
     const correlationId = createChannelReflectionCorrelationId(
       "backfill",
       job.backfill_id,
       evidence
     );
-    const snapshot = createBackfillGuildMemoryReflectionSnapshot(
-      correlationId,
-      guildId,
-      job.backfill_id,
-      evidence
-    );
-    const runner = new GuildMemoryReflectionRunner({
-      store: this.memoryReflections,
-      getProvider: () =>
-        new GuildMemoryProvider(this.env.GuildMemory, () => guildId),
-      createModel: () =>
-        createChatModel(
-          this.env,
-          CHAT_AI_GATEWAY_FLOWS.memoryReflection,
-          { correlationId, guildId },
-          this.name
-        ),
-      searchGuildMembers: (_snapshot, query) =>
-        searchGuildMembers(this.env, { guildId }, query),
-      assertCanCommit: () => {
-        const currentMetadata = this.requireGuild(guildId);
-        const currentJob = this.requireBackfill(job.backfill_id);
-        if (
-          currentMetadata.generation !== job.generation ||
-          currentJob.generation !== job.generation ||
-          currentJob.status !== "reflecting" ||
-          !this.getSource(job.channel_id)
-        ) {
-          throw new Error(
-            "Guild memory backfill boundary changed while reflection was running."
-          );
-        }
-      },
-      providerOptions: MEMORY_REFLECTION_PROVIDER_OPTIONS
-    });
-
-    try {
-      const reflection = await runner.run(snapshot);
+    const assertCanCommit = () => {
       const currentMetadata = this.requireGuild(guildId);
       const currentJob = this.requireBackfill(job.backfill_id);
       if (
         currentMetadata.generation !== job.generation ||
         currentJob.generation !== job.generation ||
-        currentJob.status !== "reflecting"
+        currentJob.status !== "reflecting" ||
+        !this.getSource(job.channel_id)
       ) {
-        return undefined;
+        throw new Error(
+          "Guild memory backfill boundary changed while reflection was running."
+        );
       }
-      let reflectedCount = 0;
-      for (const message of evidence) {
-        reflectedCount += this.ctx.storage.sql.exec(
-          `DELETE FROM guild_memory_backfill_messages
-           WHERE backfill_id = ? AND message_id = ? AND generation = ?`,
-          job.backfill_id,
-          message.messageId,
-          job.generation
-        ).rowsWritten;
-      }
-      const now = new Date().toISOString();
-      this.sql`
-        UPDATE guild_memory_backfill_jobs
-        SET
-          reflected_message_count = reflected_message_count + ${reflectedCount},
-          updated_at_utc = ${now}
-        WHERE backfill_id = ${job.backfill_id}
-      `;
-      logInfo("Guild memory channel backfill reflected messages", {
-        agentName: this.name,
-        guildId,
-        backfillId: job.backfill_id,
-        channelId: job.channel_id,
-        correlationId,
-        messageCount: reflectedCount,
-        changed: reflection?.changed ?? false,
-        operation: reflection?.operation,
-        attempts: reflection?.attempts
-      });
-    } finally {
-      this.releaseReflectionLease(reflectionOwner);
+    };
+
+    const result = await this.reflectChannelEvidence({
+      kind: "backfill",
+      guildId,
+      correlationId,
+      backfillId: job.backfill_id,
+      evidence,
+      assertCanCommit
+    });
+    if (result.status === "busy") {
+      return MEMORY_BACKFILL_REFLECTION_DELAY_SECONDS;
     }
+    try {
+      assertCanCommit();
+    } catch {
+      return undefined;
+    }
+    let reflectedCount = 0;
+    for (const message of evidence) {
+      reflectedCount += this.ctx.storage.sql.exec(
+        `DELETE FROM guild_memory_backfill_messages
+         WHERE backfill_id = ? AND message_id = ? AND generation = ?`,
+        job.backfill_id,
+        message.messageId,
+        job.generation
+      ).rowsWritten;
+    }
+    const now = new Date().toISOString();
+    this.sql`
+      UPDATE guild_memory_backfill_jobs
+      SET
+        reflected_message_count = reflected_message_count + ${reflectedCount},
+        updated_at_utc = ${now}
+      WHERE backfill_id = ${job.backfill_id}
+    `;
+    const reflection = result.reflection;
+    logInfo("Guild memory channel backfill reflected messages", {
+      agentName: this.name,
+      guildId,
+      backfillId: job.backfill_id,
+      channelId: job.channel_id,
+      correlationId,
+      messageCount: reflectedCount,
+      changed: reflection?.changed ?? false,
+      operation: reflection?.operation,
+      attempts: reflection?.attempts
+    });
     return MEMORY_BACKFILL_REFLECTION_DELAY_SECONDS;
   }
 
-  private isAmbientReflectionReady(generation: number) {
-    const summary = this.sql<PendingSummaryRow>`
-      SELECT
-        COUNT(*) AS pending_count,
-        MIN(observed_at_utc) AS oldest_observed_at_utc
-      FROM guild_memory_observer_messages
-      WHERE generation = ${generation}
-    `[0];
-    if (!summary || summary.pending_count === 0) return false;
-    const oldestObservedAtMs = summary.oldest_observed_at_utc
-      ? Date.parse(summary.oldest_observed_at_utc)
-      : Date.now();
-    return (
-      summary.pending_count >= OBSERVER_REFLECTION_MESSAGE_THRESHOLD ||
-      Date.now() - oldestObservedAtMs >= OBSERVER_REFLECTION_MAX_WAIT_MS
-    );
+  private hasReadyAmbientChannel(generation: number) {
+    return Boolean(this.getReadyAmbientChannel(generation));
   }
 
   private tryAcquireReflectionLease(owner: string) {
@@ -1149,6 +1167,19 @@ export class GuildMemoryObserverAgent extends Agent<Env> {
         generation,
         observed_at_utc,
         sent_at_utc
+      );
+      CREATE INDEX IF NOT EXISTS guild_memory_observer_messages_channel_time
+      ON guild_memory_observer_messages (
+        generation,
+        channel_id,
+        sent_at_utc,
+        message_id
+      );
+      CREATE INDEX IF NOT EXISTS guild_memory_observer_messages_channel_age
+      ON guild_memory_observer_messages (
+        generation,
+        channel_id,
+        observed_at_utc
       );
       CREATE TABLE IF NOT EXISTS guild_memory_backfill_jobs (
         backfill_id TEXT PRIMARY KEY,
