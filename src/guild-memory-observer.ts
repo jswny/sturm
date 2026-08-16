@@ -33,6 +33,8 @@ const OBSERVER_POLL_INTERVAL_SECONDS = 60;
 const OBSERVER_REFLECTION_MAX_WAIT_MS = 10 * 60 * 1_000;
 const OBSERVER_MAX_POLL_PAGES = 10;
 const OBSERVER_REFLECTION_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000;
+const AMBIENT_REFLECTION_MAX_FAILURES = 3;
+const AMBIENT_REFLECTION_RETRY_BASE_MS = OBSERVER_POLL_INTERVAL_SECONDS * 1_000;
 export const MEMORY_BACKFILL_DEFAULT_MESSAGE_LIMIT = 500;
 export const MEMORY_BACKFILL_MAX_MESSAGE_LIMIT = 1_000;
 const MEMORY_BACKFILL_PAGE_SIZE = 100;
@@ -68,6 +70,16 @@ type PendingChannelSummaryRow = {
   pending_count: number;
   pending_content_chars: number;
   oldest_sent_at_utc: string;
+};
+
+type AmbientRetryRow = {
+  channel_id: string;
+  correlation_id: string;
+  generation: number;
+  failure_count: number;
+  retry_after_utc: string;
+  updated_at_utc: string;
+  last_error: string;
 };
 
 type ChannelReflectionInput = {
@@ -342,6 +354,10 @@ export class GuildMemoryObserverAgent extends Agent<Env> {
       DELETE FROM guild_memory_observer_messages
       WHERE channel_id = ${input.channelId}
     `;
+    this.sql`
+      DELETE FROM guild_memory_ambient_retries
+      WHERE channel_id = ${input.channelId}
+    `;
     const nextGeneration = metadata.generation + 1;
     this.sql`
       DELETE FROM guild_memory_backfill_messages
@@ -418,6 +434,7 @@ export class GuildMemoryObserverAgent extends Agent<Env> {
     const metadata = this.requireGuild(input.guildId);
     const now = new Date().toISOString();
     this.sql`DELETE FROM guild_memory_observer_messages`;
+    this.sql`DELETE FROM guild_memory_ambient_retries`;
     this.sql`DELETE FROM guild_memory_backfill_messages`;
     this.sql`DELETE FROM guild_memory_backfill_jobs`;
     this.sql`
@@ -495,6 +512,8 @@ export class GuildMemoryObserverAgent extends Agent<Env> {
         )
         .sort((left, right) => compareDiscordSnowflakes(left.id, right.id));
       const observedAtUtc = new Date().toISOString();
+      let eligibleCount = 0;
+      let insertedCount = 0;
       for (const message of freshMessages) {
         const evidence = createChannelMessageEvidence(message, {
           channelId: currentSource.channel_id,
@@ -503,8 +522,9 @@ export class GuildMemoryObserverAgent extends Agent<Env> {
             : {})
         });
         if (!evidence) continue;
-        this.sql`
-          INSERT OR IGNORE INTO guild_memory_observer_messages (
+        eligibleCount += 1;
+        insertedCount += this.ctx.storage.sql.exec(
+          `INSERT OR IGNORE INTO guild_memory_observer_messages (
             message_id,
             channel_id,
             channel_name,
@@ -514,18 +534,17 @@ export class GuildMemoryObserverAgent extends Agent<Env> {
             sent_at_utc,
             observed_at_utc,
             generation
-          ) VALUES (
-            ${evidence.messageId},
-            ${evidence.channelId},
-            ${evidence.channelName ?? null},
-            ${evidence.authorUserId},
-            ${evidence.authorDisplayName ?? null},
-            ${evidence.content},
-            ${evidence.sentAtUtc},
-            ${observedAtUtc},
-            ${currentMetadata.generation}
-          )
-        `;
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          evidence.messageId,
+          evidence.channelId,
+          evidence.channelName ?? null,
+          evidence.authorUserId,
+          evidence.authorDisplayName ?? null,
+          evidence.content,
+          evidence.sentAtUtc,
+          observedAtUtc,
+          currentMetadata.generation
+        ).rowsWritten;
       }
 
       const newestMessageId = freshMessages.at(-1)?.id;
@@ -540,13 +559,23 @@ export class GuildMemoryObserverAgent extends Agent<Env> {
         WHERE channel_id = ${source.channel_id}
       `;
       if (freshMessages.length > 0) {
-        logInfo("Guild memory observer ingested Discord messages", {
-          agentName: this.name,
-          guildId,
-          channelId: source.channel_id,
-          fetchedCount: freshMessages.length,
-          cursorMessageId: nextCursor
-        });
+        logInfo(
+          insertedCount > 0
+            ? "Guild memory observer ingested eligible Discord messages"
+            : "Guild memory observer advanced past ineligible Discord messages",
+          {
+            agentName: this.name,
+            guildId,
+            channelId: source.channel_id,
+            fetchedCount: fetched.length,
+            freshCount: freshMessages.length,
+            eligibleCount,
+            insertedCount,
+            ignoredCount: freshMessages.length - eligibleCount,
+            duplicateCount: eligibleCount - insertedCount,
+            cursorMessageId: nextCursor
+          }
+        );
       }
     } catch (error) {
       const now = new Date().toISOString();
@@ -625,15 +654,12 @@ export class GuildMemoryObserverAgent extends Agent<Env> {
       } catch {
         return;
       }
-      for (const message of evidence) {
-        this.sql`
-          DELETE FROM guild_memory_observer_messages
-          WHERE
-            message_id = ${message.messageId}
-            AND channel_id = ${readyChannel.channel_id}
-            AND generation = ${metadata.generation}
-        `;
-      }
+      this.completeAmbientBatch({
+        channelId: readyChannel.channel_id,
+        correlationId,
+        generation: metadata.generation,
+        evidence
+      });
       const reflection = result.reflection;
       logInfo("Guild memory observer reflected ambient messages", {
         agentName: this.name,
@@ -654,14 +680,151 @@ export class GuildMemoryObserverAgent extends Agent<Env> {
         attempts: reflection?.attempts
       });
     } catch (error) {
+      const failure = this.recordAmbientReflectionFailure({
+        channelId: readyChannel.channel_id,
+        correlationId,
+        generation: metadata.generation,
+        evidence,
+        error: truncateError(getErrorMessage(error))
+      });
+      if (!failure) {
+        logInfo("Guild memory observer reflection boundary advanced", {
+          agentName: this.name,
+          guildId,
+          channelId: readyChannel.channel_id,
+          correlationId
+        });
+        return;
+      }
       logWarn("Guild memory observer reflection failed", {
         agentName: this.name,
         guildId,
         channelId: readyChannel.channel_id,
         correlationId,
         messageCount: evidence.length,
-        error: getErrorMessage(error)
+        failureCount: failure.failureCount,
+        terminal: failure.terminal,
+        retryAfterUtc: failure.retryAfterUtc,
+        error: failure.error
       });
+    }
+  }
+
+  private completeAmbientBatch(input: {
+    channelId: string;
+    correlationId: string;
+    generation: number;
+    evidence: GuildMemoryChannelMessageEvidence[];
+  }) {
+    this.ctx.storage.transactionSync(() => {
+      this.deleteAmbientEvidence(
+        input.channelId,
+        input.generation,
+        input.evidence
+      );
+      this.ctx.storage.sql.exec(
+        `DELETE FROM guild_memory_ambient_retries
+         WHERE channel_id = ? AND generation = ? AND correlation_id = ?`,
+        input.channelId,
+        input.generation,
+        input.correlationId
+      );
+    });
+  }
+
+  private recordAmbientReflectionFailure(input: {
+    channelId: string;
+    correlationId: string;
+    generation: number;
+    evidence: GuildMemoryChannelMessageEvidence[];
+    error: string;
+  }) {
+    const metadata = this.getMetadata();
+    if (
+      !metadata ||
+      metadata.generation !== input.generation ||
+      !this.getSource(input.channelId)
+    ) {
+      return null;
+    }
+
+    const existing = this.getAmbientRetry(input.channelId);
+    const failureCount =
+      existing?.correlation_id === input.correlationId &&
+      existing.generation === input.generation
+        ? existing.failure_count + 1
+        : 1;
+    const terminal = failureCount >= AMBIENT_REFLECTION_MAX_FAILURES;
+    const now = new Date();
+    if (terminal) {
+      this.ctx.storage.transactionSync(() => {
+        this.deleteAmbientEvidence(
+          input.channelId,
+          input.generation,
+          input.evidence
+        );
+        this.ctx.storage.sql.exec(
+          "DELETE FROM guild_memory_ambient_retries WHERE channel_id = ?",
+          input.channelId
+        );
+      });
+      return {
+        failureCount,
+        terminal: true,
+        retryAfterUtc: undefined,
+        error: input.error
+      } as const;
+    }
+
+    const retryAfterUtc = new Date(
+      now.getTime() + getAmbientRetryDelayMs(failureCount)
+    ).toISOString();
+    this.ctx.storage.sql.exec(
+      `INSERT INTO guild_memory_ambient_retries (
+        channel_id,
+        correlation_id,
+        generation,
+        failure_count,
+        retry_after_utc,
+        updated_at_utc,
+        last_error
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(channel_id) DO UPDATE SET
+        correlation_id = excluded.correlation_id,
+        generation = excluded.generation,
+        failure_count = excluded.failure_count,
+        retry_after_utc = excluded.retry_after_utc,
+        updated_at_utc = excluded.updated_at_utc,
+        last_error = excluded.last_error`,
+      input.channelId,
+      input.correlationId,
+      input.generation,
+      failureCount,
+      retryAfterUtc,
+      now.toISOString(),
+      input.error
+    );
+    return {
+      failureCount,
+      terminal: false,
+      retryAfterUtc,
+      error: input.error
+    } as const;
+  }
+
+  private deleteAmbientEvidence(
+    channelId: string,
+    generation: number,
+    evidence: GuildMemoryChannelMessageEvidence[]
+  ) {
+    for (const message of evidence) {
+      this.ctx.storage.sql.exec(
+        `DELETE FROM guild_memory_observer_messages
+         WHERE message_id = ? AND channel_id = ? AND generation = ?`,
+        message.messageId,
+        channelId,
+        generation
+      );
     }
   }
 
@@ -669,26 +832,35 @@ export class GuildMemoryObserverAgent extends Agent<Env> {
     const cutoffUtc = new Date(
       Date.now() - OBSERVER_REFLECTION_MAX_WAIT_MS
     ).toISOString();
+    const nowUtc = new Date().toISOString();
     return this.sql<PendingChannelSummaryRow>`
       SELECT
-        channel_id,
+        message.channel_id,
         COUNT(*) AS pending_count,
         SUM(
           CASE
-            WHEN LENGTH(TRIM(content)) <= ${CHANNEL_REFLECTION_CHUNK_POLICY.maxMessageChars}
-              THEN LENGTH(TRIM(content))
+            WHEN LENGTH(TRIM(message.content)) <= ${CHANNEL_REFLECTION_CHUNK_POLICY.maxMessageChars}
+              THEN LENGTH(TRIM(message.content))
             ELSE ${CHANNEL_REFLECTION_CHUNK_POLICY.maxMessageChars + CHANNEL_REFLECTION_CHUNK_POLICY.truncationMarker.length}
           END
         ) AS pending_content_chars,
-        MIN(sent_at_utc) AS oldest_sent_at_utc
-      FROM guild_memory_observer_messages
-      WHERE generation = ${generation}
-      GROUP BY channel_id
+        MIN(message.sent_at_utc) AS oldest_sent_at_utc
+      FROM guild_memory_observer_messages AS message
+      LEFT JOIN guild_memory_ambient_retries AS retry
+        ON retry.channel_id = message.channel_id
+        AND retry.generation = message.generation
+      WHERE
+        message.generation = ${generation}
+        AND (
+          retry.retry_after_utc IS NULL
+          OR retry.retry_after_utc <= ${nowUtc}
+        )
+      GROUP BY message.channel_id
       HAVING
         COUNT(*) >= ${CHANNEL_REFLECTION_CHUNK_POLICY.maxMessages}
         OR pending_content_chars >= ${CHANNEL_REFLECTION_CHUNK_POLICY.maxContentChars}
-        OR MIN(sent_at_utc) <= ${cutoffUtc}
-      ORDER BY oldest_sent_at_utc ASC, channel_id ASC
+        OR MIN(message.sent_at_utc) <= ${cutoffUtc}
+      ORDER BY oldest_sent_at_utc ASC, message.channel_id ASC
       LIMIT 1
     `[0];
   }
@@ -1099,6 +1271,11 @@ export class GuildMemoryObserverAgent extends Agent<Env> {
         WHERE generation = ${currentGeneration}
       `;
       this.sql`
+        UPDATE guild_memory_ambient_retries
+        SET generation = ${nextGeneration}
+        WHERE generation = ${currentGeneration}
+      `;
+      this.sql`
         UPDATE guild_memory_backfill_messages
         SET generation = ${nextGeneration}
         WHERE
@@ -1240,6 +1417,17 @@ export class GuildMemoryObserverAgent extends Agent<Env> {
         channel_id,
         observed_at_utc
       );
+      CREATE TABLE IF NOT EXISTS guild_memory_ambient_retries (
+        channel_id TEXT PRIMARY KEY,
+        correlation_id TEXT NOT NULL,
+        generation INTEGER NOT NULL,
+        failure_count INTEGER NOT NULL,
+        retry_after_utc TEXT NOT NULL,
+        updated_at_utc TEXT NOT NULL,
+        last_error TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS guild_memory_ambient_retries_generation_time
+      ON guild_memory_ambient_retries (generation, retry_after_utc);
       CREATE TABLE IF NOT EXISTS guild_memory_backfill_jobs (
         backfill_id TEXT PRIMARY KEY,
         channel_id TEXT NOT NULL,
@@ -1374,6 +1562,21 @@ export class GuildMemoryObserverAgent extends Agent<Env> {
     `[0];
   }
 
+  private getAmbientRetry(channelId: string) {
+    return this.sql<AmbientRetryRow>`
+      SELECT
+        channel_id,
+        correlation_id,
+        generation,
+        failure_count,
+        retry_after_utc,
+        updated_at_utc,
+        last_error
+      FROM guild_memory_ambient_retries
+      WHERE channel_id = ${channelId}
+    `[0];
+  }
+
   private getBackfill(backfillId: string) {
     return this.sql<BackfillJobRow>`
       SELECT *
@@ -1448,6 +1651,10 @@ export class GuildMemoryObserverAgent extends Agent<Env> {
 
 function truncateError(error: string) {
   return error.length <= 500 ? error : `${error.slice(0, 500)}…`;
+}
+
+function getAmbientRetryDelayMs(failureCount: number) {
+  return AMBIENT_REFLECTION_RETRY_BASE_MS * 2 ** (failureCount - 1);
 }
 
 function isActiveBackfill(status: BackfillStatus) {
