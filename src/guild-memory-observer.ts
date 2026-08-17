@@ -523,7 +523,7 @@ export class GuildMemoryObserverAgent extends Agent<Env> {
         });
         if (!evidence) continue;
         eligibleCount += 1;
-        insertedCount += this.ctx.storage.sql.exec(
+        const insert = this.ctx.storage.sql.exec(
           `INSERT OR IGNORE INTO guild_memory_observer_messages (
             message_id,
             channel_id,
@@ -544,7 +544,8 @@ export class GuildMemoryObserverAgent extends Agent<Env> {
           evidence.sentAtUtc,
           observedAtUtc,
           currentMetadata.generation
-        ).rowsWritten;
+        );
+        insertedCount += insert.rowsWritten > 0 ? 1 : 0;
       }
 
       const newestMessageId = freshMessages.at(-1)?.id;
@@ -1030,30 +1031,12 @@ export class GuildMemoryObserverAgent extends Agent<Env> {
         ...(current.channel_name ? { channelName: current.channel_name } : {})
       });
       if (!evidence) continue;
-      collectedCount += this.ctx.storage.sql.exec(
-        `INSERT OR IGNORE INTO guild_memory_backfill_messages (
-          backfill_id,
-          message_id,
-          channel_id,
-          channel_name,
-          author_user_id,
-          author_display_name,
-          content,
-          sent_at_utc,
-          observed_at_utc,
-          generation
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      collectedCount += this.insertBackfillEvidence(
         current.backfill_id,
-        evidence.messageId,
-        evidence.channelId,
-        evidence.channelName ?? null,
-        evidence.authorUserId,
-        evidence.authorDisplayName ?? null,
-        evidence.content,
-        evidence.sentAtUtc,
+        evidence,
         observedAtUtc,
         current.generation
-      ).rowsWritten;
+      );
     }
 
     const oldestMessageId =
@@ -1153,13 +1136,11 @@ export class GuildMemoryObserverAgent extends Agent<Env> {
     }
     let reflectedCount = 0;
     for (const message of evidence) {
-      reflectedCount += this.ctx.storage.sql.exec(
-        `DELETE FROM guild_memory_backfill_messages
-         WHERE backfill_id = ? AND message_id = ? AND generation = ?`,
+      reflectedCount += this.deleteBackfillEvidence(
         job.backfill_id,
         message.messageId,
         job.generation
-      ).rowsWritten;
+      );
     }
     const now = new Date().toISOString();
     this.sql`
@@ -1239,6 +1220,54 @@ export class GuildMemoryObserverAgent extends Agent<Env> {
         now.toISOString()
       ).rowsWritten > 0
     );
+  }
+
+  private insertBackfillEvidence(
+    backfillId: string,
+    evidence: GuildMemoryChannelMessageEvidence,
+    observedAtUtc: string,
+    generation: number
+  ) {
+    const result = this.ctx.storage.sql.exec(
+      `INSERT OR IGNORE INTO guild_memory_backfill_messages (
+        backfill_id,
+        message_id,
+        channel_id,
+        channel_name,
+        author_user_id,
+        author_display_name,
+        content,
+        sent_at_utc,
+        observed_at_utc,
+        generation
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      backfillId,
+      evidence.messageId,
+      evidence.channelId,
+      evidence.channelName ?? null,
+      evidence.authorUserId,
+      evidence.authorDisplayName ?? null,
+      evidence.content,
+      evidence.sentAtUtc,
+      observedAtUtc,
+      generation
+    );
+    return result.rowsWritten > 0 ? 1 : 0;
+  }
+
+  private deleteBackfillEvidence(
+    backfillId: string,
+    messageId: string,
+    generation: number
+  ) {
+    const result = this.ctx.storage.sql.exec(
+      `DELETE FROM guild_memory_backfill_messages
+       WHERE backfill_id = ? AND message_id = ? AND generation = ?`,
+      backfillId,
+      messageId,
+      generation
+    );
+    return result.rowsWritten > 0 ? 1 : 0;
   }
 
   private releaseBackfillStepLease(backfillId: string, owner: string) {

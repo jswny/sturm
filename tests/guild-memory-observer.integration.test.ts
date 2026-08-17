@@ -12,6 +12,17 @@ type ObserverInternals = {
   reflectChannelEvidence(input: {
     evidence: GuildMemoryChannelMessageEvidence[];
   }): Promise<{ status: "completed"; reflection: null }>;
+  insertBackfillEvidence(
+    backfillId: string,
+    evidence: GuildMemoryChannelMessageEvidence,
+    observedAtUtc: string,
+    generation: number
+  ): number;
+  deleteBackfillEvidence(
+    backfillId: string,
+    messageId: string,
+    generation: number
+  ): number;
 };
 
 describe("guild memory observer", () => {
@@ -92,6 +103,56 @@ describe("guild memory observer", () => {
       spool: { generation: 1 },
       retry: { generation: 1, failure_count: 1 },
       removedSourceCount: 0
+    });
+  });
+
+  it("counts logical backfill messages instead of SQLite index writes", async () => {
+    const guildId = uniqueId("logical-count-guild");
+    const channelId = uniqueId("logical-count-channel");
+    const backfillId = uniqueId("logical-count-backfill");
+    const observer = await createObserver(guildId);
+
+    const result = await runInDurableObject(
+      observer,
+      async (instance: GuildMemoryObserverAgent, state) => {
+        seedSource(state, channelId);
+        seedBackfill(state, { backfillId, channelId, generation: 0 });
+        const internals = instance as unknown as ObserverInternals;
+        const observedAtUtc = new Date().toISOString();
+        const evidence: GuildMemoryChannelMessageEvidence = {
+          messageId: "51",
+          channelId,
+          channelName: channelId,
+          authorUserId: "test-user",
+          authorDisplayName: "Test User",
+          content: "One logical backfill message",
+          sentAtUtc: observedAtUtc
+        };
+
+        return {
+          inserted: internals.insertBackfillEvidence(
+            backfillId,
+            evidence,
+            observedAtUtc,
+            0
+          ),
+          duplicate: internals.insertBackfillEvidence(
+            backfillId,
+            evidence,
+            observedAtUtc,
+            0
+          ),
+          deleted: internals.deleteBackfillEvidence(backfillId, "51", 0),
+          missing: internals.deleteBackfillEvidence(backfillId, "51", 0)
+        };
+      }
+    );
+
+    expect(result).toEqual({
+      inserted: 1,
+      duplicate: 0,
+      deleted: 1,
+      missing: 0
     });
   });
 
