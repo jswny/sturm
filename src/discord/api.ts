@@ -1,5 +1,6 @@
 import { MessageFlags } from "discord-api-types/v10";
 import type {
+  APIEmbed,
   APIMessageTopLevelComponent,
   RESTAPIPartialCurrentUserGuild,
   RESTGetAPICurrentUserResult,
@@ -100,6 +101,41 @@ export async function editOriginalInteractionResponse(
   components: APIMessageTopLevelComponent[] = [],
   flags?: MessageFlags
 ) {
+  return editOriginalInteractionResponsePayload(
+    target,
+    content,
+    attachments,
+    components,
+    flags,
+    { clearLegacyContent: components.length > 0 }
+  );
+}
+
+export async function editOriginalInteractionResponseWithEmbeds(
+  target: DiscordWebhookResponseTarget,
+  embeds: APIEmbed[],
+  content = ""
+) {
+  return editOriginalInteractionResponsePayload(
+    target,
+    content,
+    [],
+    [],
+    undefined,
+    {
+      embeds
+    }
+  );
+}
+
+async function editOriginalInteractionResponsePayload(
+  target: DiscordWebhookResponseTarget,
+  content: string,
+  attachments: DiscordResponseAttachment[],
+  components: APIMessageTopLevelComponent[],
+  flags: MessageFlags | undefined,
+  options: { clearLegacyContent?: boolean; embeds?: APIEmbed[] }
+) {
   let lastError: unknown;
   for (let attempt = 1; attempt <= DISCORD_WEBHOOK_MAX_ATTEMPTS; attempt++) {
     const body = createDiscordResponseBody(
@@ -107,7 +143,7 @@ export async function editOriginalInteractionResponse(
       attachments,
       components,
       flags,
-      { clearLegacyContent: components.length > 0 }
+      options
     );
 
     try {
@@ -646,7 +682,7 @@ function createDiscordResponseBody(
   attachments: DiscordResponseAttachment[],
   components: APIMessageTopLevelComponent[],
   flags?: MessageFlags,
-  options: { clearLegacyContent?: boolean } = {}
+  options: { clearLegacyContent?: boolean; embeds?: APIEmbed[] } = {}
 ) {
   if (components.length === 0) assertDiscordContentLength(content);
   const payload = createDiscordMessagePayload(
@@ -721,7 +757,11 @@ function createDiscordMessagePayload(
   attachments: DiscordResponseAttachment[],
   components: APIMessageTopLevelComponent[] = [],
   flags?: MessageFlags,
-  options: { clearLegacyContent?: boolean; nonce?: string } = {}
+  options: {
+    clearLegacyContent?: boolean;
+    embeds?: APIEmbed[];
+    nonce?: string;
+  } = {}
 ):
   | RESTPatchAPIWebhookWithTokenMessageJSONBody
   | RESTPostAPIChannelMessageJSONBody {
@@ -749,6 +789,7 @@ function createDiscordMessagePayload(
   const payload = {
     content,
     allowed_mentions: { parse: [] },
+    ...(options.embeds ? { embeds: options.embeds } : {}),
     attachments: attachments.map((attachment, index) => ({
       id: String(index),
       filename: attachment.filename,

@@ -1,10 +1,14 @@
 import {
   ApplicationCommandOptionType,
   PermissionFlagsBits,
+  type APIEmbed,
   type APIChatInputApplicationCommandInteraction
 } from "discord-api-types/v10";
 import { getAgentByName } from "agents";
-import { editOriginalInteractionResponse } from "./api";
+import {
+  editOriginalInteractionResponse,
+  editOriginalInteractionResponseWithEmbeds
+} from "./api";
 import { hasDiscordPermission } from "./permissions";
 import type {
   DiscordResponseAttachment,
@@ -58,10 +62,7 @@ export async function runMemoryCommand(
     const observer = await getGuildMemoryObserver(env, guildId);
     if (sourceCommand === "view") {
       const sources = await observer.listSources(guildId);
-      await deliverMemoryCommandResult(
-        responseTarget,
-        formatMemorySourceView(sources)
-      );
+      await deliverMemorySourceView(responseTarget, sources);
       return;
     }
 
@@ -285,6 +286,30 @@ async function deliverMemoryCommandResult(
   );
 }
 
+async function deliverMemorySourceView(
+  target: DiscordWebhookResponseTarget,
+  sources: GuildMemorySourceStatus[]
+) {
+  const embed = formatMemorySourceViewEmbed(sources);
+  if ((embed.fields?.length ?? 0) <= 25 && getEmbedTextLength(embed) <= 6000) {
+    await editOriginalInteractionResponseWithEmbeds(target, [embed]);
+    return;
+  }
+
+  await editOriginalInteractionResponse(
+    target,
+    "There are too many memory sources to fit in one embed. The full source status is attached.",
+    [
+      {
+        filename: "memory-sources.txt",
+        mimeType: "text/plain;charset=utf-8",
+        base64: utf8ToBase64(formatMemorySourceViewText(sources)),
+        description: "Ambient memory source status"
+      } satisfies DiscordResponseAttachment
+    ]
+  );
+}
+
 function formatMemoryView(result: GuildMemoryCatalog) {
   const lines = [
     `Guild memory: ${result.records.length} records`,
@@ -357,36 +382,127 @@ function formatMemorySourceMutationResult(
   }
 }
 
-function formatMemorySourceView(sources: GuildMemorySourceStatus[]) {
+function formatMemorySourceViewEmbed(
+  sources: GuildMemorySourceStatus[]
+): APIEmbed {
   if (sources.length === 0) {
-    return "No ambient memory source channels are enabled.";
+    return {
+      title: "Memory sources",
+      description: "No ambient memory source channels are enabled.",
+      color: 0x5865f2
+    };
   }
+
+  return {
+    title: "Memory sources",
+    description: `${formatCount(sources.length)} ${sources.length === 1 ? "channel is" : "channels are"} feeding guild memory.`,
+    color: sources.some(
+      (source) => source.lastError || source.latestBackfill?.lastError
+    )
+      ? 0xfee75c
+      : 0x5865f2,
+    fields: sources.map((source) => ({
+      name: `<#${source.channelId}>`,
+      value: formatMemorySourceField(source)
+    })),
+    footer: {
+      text: "Latest backfill shown for each channel"
+    }
+  };
+}
+
+function formatMemorySourceViewText(sources: GuildMemorySourceStatus[]) {
   return [
-    `Ambient memory sources: ${sources.length}`,
+    `Memory sources: ${sources.length}`,
     "",
     ...sources.flatMap((source) => {
-      const status = source.lastError
-        ? `error=${source.lastError}`
-        : `last_polled_at_utc=${source.lastPolledAtUtc ?? "never"}`;
       const lines = [
         `<#${source.channelId}>`,
-        `pending_messages=${source.pendingMessageCount}`,
-        status
-      ].join(" | ");
-      if (!source.latestBackfill) return [lines];
-      const backfill = source.latestBackfill;
-      const backfillStatus = [
-        `backfill=${backfill.status}`,
-        `scanned=${backfill.scannedMessageCount}/${backfill.messageLimit}`,
-        `eligible=${backfill.collectedMessageCount}`,
-        `reflected=${backfill.reflectedMessageCount}`,
-        backfill.lastError ? `error=${backfill.lastError}` : ""
-      ]
-        .filter(Boolean)
-        .join(" | ");
-      return [lines, `  ${backfillStatus}`];
+        `  pending: ${source.pendingMessageCount}`,
+        `  last poll: ${source.lastPolledAtUtc ?? "never"}`
+      ];
+      if (source.lastError) lines.push(`  observer error: ${source.lastError}`);
+      if (source.latestBackfill) {
+        const backfill = source.latestBackfill;
+        lines.push(
+          `  backfill: ${backfill.status}`,
+          `  scanned: ${backfill.scannedMessageCount} / ${backfill.messageLimit}`,
+          `  eligible: ${backfill.collectedMessageCount}`,
+          `  reflected: ${backfill.reflectedMessageCount}`
+        );
+        if (backfill.lastError) {
+          lines.push(`  backfill error: ${backfill.lastError}`);
+        }
+      }
+      return lines;
     })
   ].join("\n");
+}
+
+function getEmbedTextLength(embed: APIEmbed) {
+  return (
+    (embed.title?.length ?? 0) +
+    (embed.description?.length ?? 0) +
+    (embed.footer?.text.length ?? 0) +
+    (embed.author?.name.length ?? 0) +
+    (embed.fields?.reduce(
+      (total, field) => total + field.name.length + field.value.length,
+      0
+    ) ?? 0)
+  );
+}
+
+function formatMemorySourceField(source: GuildMemorySourceStatus) {
+  const lines = [
+    `**Live collection** · Pending **${formatCount(source.pendingMessageCount)}** · Last poll ${formatDiscordRelativeTimestamp(source.lastPolledAtUtc)}`
+  ];
+
+  if (source.lastError) {
+    lines.push(`⚠️ ${truncateEmbedFieldLine(source.lastError)}`);
+  }
+
+  const backfill = source.latestBackfill;
+  if (backfill) {
+    lines.push(
+      `**Backfill** · ${formatBackfillStatus(backfill.status)} · Scanned **${formatCount(backfill.scannedMessageCount)} / ${formatCount(backfill.messageLimit)}**`,
+      `Eligible **${formatCount(backfill.collectedMessageCount)}** · Reflected **${formatCount(backfill.reflectedMessageCount)}**`
+    );
+    if (backfill.lastError) {
+      lines.push(`⚠️ ${truncateEmbedFieldLine(backfill.lastError)}`);
+    }
+  }
+
+  return lines.join("\n");
+}
+
+function formatBackfillStatus(status: string) {
+  const label = status.charAt(0).toUpperCase() + status.slice(1);
+  switch (status) {
+    case "completed":
+      return `✅ ${label}`;
+    case "failed":
+      return `❌ ${label}`;
+    case "canceled":
+      return `⏹️ ${label}`;
+    default:
+      return `⏳ ${label}`;
+  }
+}
+
+function formatDiscordRelativeTimestamp(timestamp: string | undefined) {
+  if (!timestamp) return "never";
+  const milliseconds = Date.parse(timestamp);
+  if (!Number.isFinite(milliseconds)) return "unknown";
+  return `<t:${Math.floor(milliseconds / 1000)}:R>`;
+}
+
+function formatCount(value: number) {
+  return new Intl.NumberFormat("en-US").format(value);
+}
+
+function truncateEmbedFieldLine(value: string) {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  return normalized.length <= 240 ? normalized : `${normalized.slice(0, 237)}…`;
 }
 
 function formatMemoryBackfillResult(result: StartGuildMemoryBackfillResult) {
