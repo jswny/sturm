@@ -11,9 +11,10 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev --var STURM_DEBUG_ENABLED:true",
-    "start": "wrangler dev --var STURM_DEBUG_ENABLED:true",
-    "deploy": "wrangler deploy",
+    "dev": "vite dev",
+    "start": "vite dev",
+    "build": "vite build",
+    "deploy": "npm run build && wrangler deploy",
     "types": "wrangler types env.d.ts --env-file /dev/null",
     "types:check": "wrangler types env.d.ts --check --env-file /dev/null",
     "format": "oxfmt --write .",
@@ -37,12 +38,14 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@cloudflare/vite-plugin": "1.62.0",
     "@cloudflare/vitest-pool-workers": "^0.20.1",
     "@types/node": "^26.1.2",
     "oxfmt": "^0.62.0",
     "oxlint": "^1.77.0",
     "typescript": "^7.0.2",
+    "vite": "8.3.1",
     "vitest": "^4.1.10",
-    "wrangler": "^4.118.0"
+    "wrangler": "4.143.0"
   }
 }
