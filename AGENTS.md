@@ -62,6 +62,10 @@ baseline above.
 
 ## Commands
 
+Sturm uses `cf` for development, type generation, build, and deployment. Run
+`npm run types` after changing bindings in `cloudflare.config.ts`. The generated
+C3 command table above is preserved verbatim from upstream.
+
 For local Discord slash-command testing, run `npm run dev`, then register
 guild-scoped commands through
 `curl -X POST http://localhost:8787/api/admin/register-commands`. This

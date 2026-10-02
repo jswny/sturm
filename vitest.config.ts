@@ -24,8 +24,24 @@ export default defineConfig({
   plugins: [
     cloudflareTest({
       remoteBindings: useRemoteBindings,
-      wrangler: { configPath: "./wrangler.jsonc" },
+      main: "./src/server.ts",
       miniflare: {
+        compatibilityDate: "2026-08-06",
+        compatibilityFlags: ["nodejs_compat"],
+        durableObjects: {
+          ChatAgent: { className: "ChatAgent", useSQLite: true },
+          GuildMemory: { className: "GuildMemoryObject", useSQLite: true },
+          GuildMemoryObserver: {
+            className: "GuildMemoryObserverAgent",
+            useSQLite: true
+          },
+          DiscordRest: { className: "DiscordRestDispatcher", useSQLite: true }
+        },
+        r2Buckets: ["ARTIFACTS_BUCKET"],
+        ai: { binding: "AI" },
+        browserRendering: { binding: "BROWSER" },
+        images: { binding: "IMAGES" },
+        workerLoaders: { LOADER: {} },
         bindings: {
           STURM_DEBUG_ENABLED: "true"
         }
