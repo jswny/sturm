@@ -1,6 +1,12 @@
 {
   "extends": "agents/tsconfig",
   "compilerOptions": {
-    "types": ["node", "@cloudflare/vitest-pool-workers/types", "./env.d.ts"]
+    "module": "preserve",
+    "allowImportingTsExtensions": true,
+    "types": [
+      "node",
+      "@cloudflare/vitest-pool-workers/types",
+      "./.cloudflare/types/index.d.ts"
+    ]
   }
 }

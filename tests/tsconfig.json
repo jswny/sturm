@@ -8,5 +8,5 @@
       "vitest"
     ]
   },
-  "include": ["./**/*.ts", "../env.d.ts"]
+  "include": ["./**/*.ts", "../.cloudflare/types/index.d.ts"]
 }

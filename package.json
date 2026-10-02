@@ -15,11 +15,10 @@
     "start": "cf dev",
     "build": "cf build",
     "deploy": "npm run build && cf deploy --prebuilt --mode production",
-    "types": "wrangler types env.d.ts --env-file /dev/null",
-    "types:check": "wrangler types env.d.ts --check --env-file /dev/null",
+    "types": "cf workers types",
     "format": "oxfmt --write .",
     "lint": "oxlint src/",
-    "check": "npm run types:check && oxfmt --check . && oxlint src/ && tsc",
+    "check": "npm run types && oxfmt --check . && oxlint src/ && tsc",
     "test": "vitest run --config vitest.config.ts",
     "test:ai": "STURM_RUN_DEBUG_AI_INTEGRATION=true vitest run --config vitest.config.ts tests/debug-ai.integration.test.ts --reporter verbose",
     "bench:prompt-replay": "STURM_RUN_PROMPT_REPLAY=true vitest run --config vitest.config.ts tests/prompt-replay.benchmark.test.ts --reporter verbose"
@@ -46,7 +45,6 @@
     "oxlint": "^1.77.0",
     "typescript": "^7.0.2",
     "vite": "8.3.1",
-    "vitest": "^4.1.10",
-    "wrangler": "4.143.0"
+    "vitest": "^4.1.10"
   }
 }

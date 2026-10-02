@@ -1,4 +1,18 @@
 import { bindings, defineConfig, exports } from "cf/config";
+import * as entrypoint from "./src/server.ts" with { type: "cf-worker" };
+
+const workerDefinition = {
+  name: "sturm",
+  compatibilityDate: "2026-08-06",
+  compatibilityFlags: ["nodejs_compat"],
+  entrypoint,
+  exports: {
+    ChatAgent: exports.durableObject({ storage: "sqlite" }),
+    GuildMemoryObject: exports.durableObject({ storage: "sqlite" }),
+    GuildMemoryObserverAgent: exports.durableObject({ storage: "sqlite" }),
+    DiscordRestDispatcher: exports.durableObject({ storage: "sqlite" })
+  }
+};
 
 /**
  * Secret-like files were detected but not read or migrated: .dev.vars.example. Only `secrets.required` entries are migrated.
@@ -7,16 +21,7 @@ import { bindings, defineConfig, exports } from "cf/config";
 
 export default defineConfig(({ mode }) => ({
   worker: {
-    name: "sturm",
-    compatibilityDate: "2026-08-06",
-    compatibilityFlags: ["nodejs_compat"],
-    entrypoint: "src/server.ts",
-    exports: {
-      ChatAgent: exports.durableObject({ storage: "sqlite" }),
-      GuildMemoryObject: exports.durableObject({ storage: "sqlite" }),
-      GuildMemoryObserverAgent: exports.durableObject({ storage: "sqlite" }),
-      DiscordRestDispatcher: exports.durableObject({ storage: "sqlite" })
-    },
+    ...workerDefinition,
     workersDev: false,
     previewUrls: false,
     observability: {
@@ -37,20 +42,29 @@ export default defineConfig(({ mode }) => ({
       ARTIFACTS_BUCKET: bindings.r2({
         name: "sturm-artifacts"
       }),
-      ChatAgent: bindings.durableObject({
-        worker: "sturm",
+      ChatAgent: bindings.durableObject<typeof workerDefinition, "ChatAgent">({
+        worker: workerDefinition,
         exportName: "ChatAgent"
       }),
-      GuildMemory: bindings.durableObject({
-        worker: "sturm",
+      GuildMemory: bindings.durableObject<
+        typeof workerDefinition,
+        "GuildMemoryObject"
+      >({
+        worker: workerDefinition,
         exportName: "GuildMemoryObject"
       }),
-      GuildMemoryObserver: bindings.durableObject({
-        worker: "sturm",
+      GuildMemoryObserver: bindings.durableObject<
+        typeof workerDefinition,
+        "GuildMemoryObserverAgent"
+      >({
+        worker: workerDefinition,
         exportName: "GuildMemoryObserverAgent"
       }),
-      DiscordRest: bindings.durableObject({
-        worker: "sturm",
+      DiscordRest: bindings.durableObject<
+        typeof workerDefinition,
+        "DiscordRestDispatcher"
+      >({
+        worker: workerDefinition,
         exportName: "DiscordRestDispatcher"
       }),
       AI: bindings.ai({
