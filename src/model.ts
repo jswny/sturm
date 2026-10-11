@@ -1,7 +1,7 @@
 import { createOpenAI } from "@ai-sdk/openai";
 import { createGatewayProvider } from "workers-ai-provider/gateway";
 
-export const CHAT_MODEL = "gpt-5.6-sol";
+export const CHAT_MODEL = "gpt-6.1-sol";
 export const IMAGE_GENERATION_MODEL = "google/nano-banana-2";
 export const IMAGE_GENERATION_TIMEOUT_MS = 180_000;
 export const BROWSER_EXECUTION_TIMEOUT_MS = 60_000;
@@ -54,7 +54,7 @@ export const CONTEXT_OVERFLOW_HEADROOM = 0.9;
 
 type OpenAIProviderOptions = {
   readonly openai: {
-    readonly reasoningEffort: "none" | "low" | "medium";
+    readonly reasoningEffort: "low" | "medium";
     readonly textVerbosity: "low";
     readonly store: false;
   };
@@ -70,7 +70,7 @@ export const REPLY_PROVIDER_OPTIONS = {
 
 export const COMPACTION_PROVIDER_OPTIONS = {
   openai: {
-    reasoningEffort: "none",
+    reasoningEffort: "low",
     textVerbosity: "low",
     store: false
   }
@@ -78,7 +78,7 @@ export const COMPACTION_PROVIDER_OPTIONS = {
 
 export const ARTIFACT_SUMMARY_PROVIDER_OPTIONS = {
   openai: {
-    reasoningEffort: "none",
+    reasoningEffort: "low",
     textVerbosity: "low",
     store: false
   }
