@@ -37,10 +37,10 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@cloudflare/vite-plugin": "2.0.0-beta.sha-52b0dc0e9",
+    "@cloudflare/vite-plugin": "2.0.0-beta.v.3",
     "@cloudflare/vitest-pool-workers": "^0.20.1",
     "@types/node": "^26.1.2",
-    "cf": "1.0.0-beta.12",
+    "cf": "1.0.0-beta.20",
     "oxfmt": "^0.62.0",
     "oxlint": "^1.77.0",
     "typescript": "^7.0.2",

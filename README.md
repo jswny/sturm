@@ -25,18 +25,13 @@ KAGI_API_KEY=
 
 Restart local development after changing `.dev.vars`.
 
-Set production secrets in Cloudflare. The `cf` CLI accepts an ignored local
-[JSON Merge Patch file](https://developers.cloudflare.com/api/resources/workers/subresources/scripts/subresources/secrets/methods/bulk_update/)
-for the three secrets:
-
-```bash
-cf workers secrets bulk --worker sturm --file /path/to/secrets.json
-```
+Set the four production secrets listed above on the `sturm` Worker in Cloudflare.
+The config declares their names; keep their values out of the repository.
 
 Create the R2 bucket used for generated image artifacts before deploying:
 
 ```bash
-cf r2 buckets create-by-name sturm-artifacts
+cf r2 buckets create --name sturm-artifacts
 ```
 
 Run locally:
