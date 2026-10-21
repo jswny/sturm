@@ -17,8 +17,8 @@
     "deploy": "npm run build && cf deploy --prebuilt --mode production",
     "types": "cf workers types",
     "format": "oxfmt --write .",
-    "lint": "oxlint src/",
-    "check": "npm run types && oxfmt --check . && oxlint src/ && tsc",
+    "lint": "oxlint src/ tests/",
+    "check": "npm run types && oxfmt --check . && npm run lint && tsc",
     "test": "vitest run --config vitest.config.ts",
     "test:ai": "STURM_RUN_DEBUG_AI_INTEGRATION=true vitest run --config vitest.config.ts tests/debug-ai.integration.test.ts --reporter verbose",
     "bench:prompt-replay": "STURM_RUN_PROMPT_REPLAY=true vitest run --config vitest.config.ts tests/prompt-replay.benchmark.test.ts --reporter verbose"
@@ -39,10 +39,11 @@
   "devDependencies": {
     "@cloudflare/vite-plugin": "2.0.0-beta.v.3",
     "@cloudflare/vitest-plugin": "1.4.6",
+    "@oxlint/plugins": "1.77.0",
     "@types/node": "^26.1.2",
     "cf": "1.0.0-beta.20",
     "oxfmt": "^0.62.0",
-    "oxlint": "^1.77.0",
+    "oxlint": "1.77.0",
     "typescript": "^7.0.2",
     "vite": "8.3.4",
     "vitest": "^4.1.10"

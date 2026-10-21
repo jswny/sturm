@@ -10,15 +10,12 @@ export async function resolveDiscordMessageAuthorDisplayNames(
 ) {
   if (!guildId) return new Map<string, string>();
 
-  const authorIds = [
-    ...new Set(
-      messages
-        .filter((message) => !message.webhook_id)
-        .map((message) => message.author.id)
-    )
-  ];
+  const authorIds = new Set<string>();
+  for (const message of messages) {
+    if (!message.webhook_id) authorIds.add(message.author.id);
+  }
   const results = await Promise.all(
-    authorIds.map(async (authorId) => {
+    [...authorIds].map(async (authorId) => {
       try {
         const member = await getGuildMember(env, guildId, authorId, {
           maxWaitMs
