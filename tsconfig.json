@@ -5,7 +5,7 @@
     "allowImportingTsExtensions": true,
     "types": [
       "node",
-      "@cloudflare/vitest-pool-workers/types",
+      "@cloudflare/vitest-plugin/types",
       "./.cloudflare/types/index.d.ts"
     ]
   }
