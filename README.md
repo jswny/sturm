@@ -4,8 +4,9 @@ A Discord bot on Cloudflare Workers.
 
 Sturm responds to `/c text:<message>` in Discord guild channels. It keeps
 conversation context per channel, shares durable memory across the guild, and can
-use tools for web search, page inspection, URL summaries, archiving, image generation, member
-lookup, and nickname postfix changes. DMs are not supported.
+use tools for web search, scientific research, page inspection, URL summaries,
+archiving, image generation, member lookup, and nickname postfix changes.
+DMs are not supported.
 
 ## Setup
 
@@ -21,12 +22,13 @@ DISCORD_PUBLIC_KEY=
 DISCORD_APPLICATION_ID=
 DISCORD_TOKEN=
 EXA_API_KEY=
+CONSENSUS_API_KEY=
 KAGI_API_KEY=
 ```
 
 Restart local development after changing `.dev.vars`.
 
-Set the five production secrets listed above on the `sturm` Worker in Cloudflare.
+Set the production secrets listed above on the `sturm` Worker in Cloudflare.
 The config declares their names; keep their values out of the repository.
 
 Create the R2 bucket used for generated image artifacts before deploying:

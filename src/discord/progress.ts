@@ -224,6 +224,11 @@ const TOOL_PROGRESS_COPY: ToolProgressCatalog = {
     finished: "Searched the web",
     failed: "Web search failed"
   },
+  searchResearchPapers: {
+    started: "Searching scientific research",
+    finished: "Found research papers",
+    failed: "Research search failed"
+  },
   summarizeUrl: {
     started: "Reading the page",
     finished: "Read the page",

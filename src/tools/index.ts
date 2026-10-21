@@ -1,5 +1,6 @@
 import type { WorkspaceFsLike } from "@cloudflare/shell";
 import type { ArtifactEnv, ResponseArtifact } from "../artifacts";
+import type { ConsensusEnv } from "../consensus";
 import type { DiscordMessageHistoryEnv } from "../discord-message-history";
 import type { DiscordMessageSearchEnv } from "../discord-message-search";
 import type { DiscordMessageToolContext } from "../discord/types";
@@ -20,6 +21,7 @@ import { createImageTools } from "./images";
 import { createModerationTools } from "./moderation";
 import { createNicknameTools } from "./nickname";
 import { createSearchTools } from "./search";
+import { createResearchTools } from "./research";
 import { createScheduledTaskTools } from "./scheduled-tasks";
 import { createStickerTools } from "./stickers";
 import {
@@ -28,6 +30,7 @@ import {
 } from "./user-prompts";
 
 export type ToolEnv = SearchEnv &
+  ConsensusEnv &
   DiscordMessageHistoryEnv &
   DiscordMessageSearchEnv &
   ImageEnv &
@@ -64,6 +67,7 @@ export function createDiscordTools(env: ToolEnv, options: ToolOptions = {}) {
   return {
     ...createArchiveTools(),
     ...createSearchTools(env),
+    ...createResearchTools(env),
     ...createDiscordMessageHistoryTools(env, {
       ...discordToolContext,
       initialBeforeMessageId: options.recentChannelBeforeMessageId
