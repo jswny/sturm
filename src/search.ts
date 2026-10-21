@@ -1,20 +1,23 @@
-import { logError, logWarn } from "./logging";
+import { logError, logInfo, logWarn } from "./logging";
 import { readResponseTextWithLimit } from "./http";
 
 export type SearchEnv = Env & {
+  EXA_API_KEY?: string;
   KAGI_API_KEY?: string;
 };
 
 export type SearchResult = {
   title: string;
   url: string;
-  snippet?: string;
+  highlights: string[];
+  published_at_utc?: string;
 };
 
 export type SearchResponse = {
   query: string;
-  answer?: string;
   results: SearchResult[];
+  retrieved_at_utc: string;
+  notices?: string[];
   error?: string;
 };
 
@@ -24,137 +27,203 @@ export type UrlSummaryResponse = {
   error?: string;
 };
 
-type KagiFastGptResponse = {
-  data?: {
-    output?: string;
-    references?: SearchResult[];
-  };
-};
-
 type KagiSummaryResponse = {
   data?: {
     output?: string;
   };
 };
 
-const KAGI_FASTGPT_URL = "https://kagi.com/api/v0/fastgpt";
+const EXA_SEARCH_URL = "https://api.exa.ai/search";
 const KAGI_SUMMARIZE_URL = "https://kagi.com/api/v0/summarize";
-const KAGI_REQUEST_TIMEOUT_MS = 30_000;
-const KAGI_RESPONSE_MAX_BYTES = 2 * 1024 * 1024;
+const SEARCH_RESULT_COUNT = 6;
+const SEARCH_HIGHLIGHT_MAX_CHARACTERS = 20_000;
+const REQUEST_TIMEOUT_MS = 30_000;
+const RESPONSE_MAX_BYTES = 2 * 1024 * 1024;
 
-function decodeSearchSnippetEntities(value: string) {
-  return value
-    .replaceAll("&quot;", '"')
-    .replaceAll("&#39;", "'")
-    .replaceAll("&apos;", "'")
-    .replaceAll("&amp;", "&")
-    .replaceAll("&lt;", "<")
-    .replaceAll("&gt;", ">");
+type ExaSearchResponse = {
+  results?: Array<{
+    title?: unknown;
+    url?: unknown;
+    highlights?: unknown;
+    publishedDate?: unknown;
+  }>;
+  requestId?: string;
+  costDollars?: { total?: number };
+  notices?: Array<{ message?: string }>;
+};
+
+function normalizePublishedDate(value: unknown) {
+  if (typeof value !== "string") return undefined;
+
+  const timestamp = new Date(value);
+
+  return Number.isNaN(timestamp.getTime())
+    ? undefined
+    : timestamp.toISOString();
 }
 
-function cleanSnippet(snippet: string | undefined) {
-  if (!snippet) return undefined;
+function normalizeSearchResults(results: ExaSearchResponse["results"]) {
+  let remainingCharacters = SEARCH_HIGHLIGHT_MAX_CHARACTERS;
 
-  return decodeSearchSnippetEntities(snippet.replace(/<[^>]*>/g, ""))
-    .replace(/\s+/g, " ")
-    .trim();
+  return (results ?? []).slice(0, SEARCH_RESULT_COUNT).flatMap((item) => {
+    if (
+      !item ||
+      typeof item.title !== "string" ||
+      typeof item.url !== "string"
+    ) {
+      return [];
+    }
+
+    const highlights: string[] = [];
+
+    if (Array.isArray(item.highlights)) {
+      for (const value of item.highlights) {
+        if (typeof value !== "string") continue;
+
+        const highlight = value.trim();
+
+        if (!highlight || highlight.length > remainingCharacters) continue;
+
+        highlights.push(highlight);
+        remainingCharacters -= highlight.length;
+      }
+    }
+
+    return [
+      {
+        title: item.title,
+        url: item.url,
+        highlights,
+        published_at_utc: normalizePublishedDate(item.publishedDate)
+      }
+    ];
+  });
 }
 
 export async function searchWeb(
   env: SearchEnv,
-  query: string
+  query: string,
+  domains?: string[]
 ): Promise<SearchResponse> {
-  const apiKey = env.KAGI_API_KEY?.trim();
+  const retrieved_at_utc = new Date().toISOString();
+  const apiKey = env.EXA_API_KEY?.trim();
 
   if (!apiKey) {
-    logWarn("Kagi search skipped because API key is not configured", {
-      provider: "kagi",
-      endpoint: "fastgpt"
+    logWarn("Exa search skipped because API key is not configured", {
+      provider: "exa",
+      endpoint: "search"
     });
 
     return {
       query,
       results: [],
-      error: "KAGI_API_KEY is not configured."
+      retrieved_at_utc,
+      error: "EXA_API_KEY is not configured."
     };
   }
 
   let response: Response;
 
   try {
-    response = await fetch(KAGI_FASTGPT_URL, {
+    response = await fetch(EXA_SEARCH_URL, {
       method: "POST",
       headers: {
         Accept: "application/json",
-        Authorization: `Bot ${apiKey}`,
+        "x-api-key": apiKey,
         "Content-Type": "application/json"
       },
-      body: JSON.stringify({ query }),
-      signal: AbortSignal.timeout(KAGI_REQUEST_TIMEOUT_MS)
+      body: JSON.stringify({
+        query,
+        type: "auto",
+        numResults: SEARCH_RESULT_COUNT,
+        contents: { highlights: true },
+        ...(domains?.length ? { includeDomains: domains } : {})
+      }),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
     });
   } catch (error) {
-    logError("Kagi search request failed", error, {
-      provider: "kagi",
-      endpoint: "fastgpt"
+    logError("Exa search request failed", error, {
+      provider: "exa",
+      endpoint: "search"
     });
 
     return {
       query,
       results: [],
-      error: "Kagi search request failed."
+      retrieved_at_utc,
+      error: "Exa search request failed."
     };
   }
 
   if (!response.ok) {
-    const body = await readResponseTextWithLimit(
-      response,
-      KAGI_RESPONSE_MAX_BYTES
-    ).catch(() => "");
-
-    logWarn("Kagi FastGPT returned an error", {
-      provider: "kagi",
-      endpoint: "fastgpt",
+    logWarn("Exa search returned an error", {
+      provider: "exa",
+      endpoint: "search",
       status: response.status,
-      statusText: response.statusText,
-      body: body.slice(0, 500)
+      statusText: response.statusText
     });
 
     return {
       query,
       results: [],
-      error: `Kagi search failed with ${response.status} ${response.statusText}.`
+      retrieved_at_utc,
+      error: `Exa search failed with ${response.status} ${response.statusText}.`
     };
   }
 
-  let payload: KagiFastGptResponse;
+  let payload: ExaSearchResponse;
 
   try {
     payload = JSON.parse(
-      await readResponseTextWithLimit(response, KAGI_RESPONSE_MAX_BYTES)
-    ) as KagiFastGptResponse;
+      await readResponseTextWithLimit(response, RESPONSE_MAX_BYTES)
+    ) as ExaSearchResponse;
   } catch (error) {
-    logError("Kagi FastGPT returned invalid JSON", error, {
-      provider: "kagi",
-      endpoint: "fastgpt"
+    logError("Exa search returned invalid JSON", error, {
+      provider: "exa",
+      endpoint: "search"
     });
 
     return {
       query,
       results: [],
-      error: "Kagi search returned invalid JSON."
+      retrieved_at_utc,
+      error: "Exa search returned invalid JSON."
     };
   }
 
-  const results = (payload.data?.references ?? []).map((item) => ({
-    title: item.title,
-    url: item.url,
-    snippet: cleanSnippet(item.snippet)
-  }));
+  if (!Array.isArray(payload?.results)) {
+    logWarn("Exa search returned no results array", {
+      provider: "exa",
+      endpoint: "search",
+      requestId: payload?.requestId
+    });
+
+    return {
+      query,
+      results: [],
+      retrieved_at_utc,
+      error: "Exa search returned an unexpected response."
+    };
+  }
+
+  const results = normalizeSearchResults(payload.results);
+  logInfo("Exa search completed", {
+    provider: "exa",
+    endpoint: "search",
+    requestId: payload.requestId,
+    resultCount: results.length,
+    costDollars: payload.costDollars?.total
+  });
 
   return {
     query,
-    answer: payload.data?.output,
-    results
+    results,
+    retrieved_at_utc,
+    notices: Array.isArray(payload.notices)
+      ? payload.notices.flatMap((notice) =>
+          typeof notice?.message === "string" ? [notice.message] : []
+        )
+      : undefined
   };
 }
 
@@ -187,7 +256,7 @@ export async function summarizeUrl(
         "Content-Type": "application/json"
       },
       body: JSON.stringify({ url }),
-      signal: AbortSignal.timeout(KAGI_REQUEST_TIMEOUT_MS)
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
     });
   } catch (error) {
     logError("Kagi summarize request failed", error, {
@@ -204,7 +273,7 @@ export async function summarizeUrl(
   if (!response.ok) {
     const body = await readResponseTextWithLimit(
       response,
-      KAGI_RESPONSE_MAX_BYTES
+      RESPONSE_MAX_BYTES
     ).catch(() => "");
 
     logWarn("Kagi summarize returned an error", {
@@ -225,7 +294,7 @@ export async function summarizeUrl(
 
   try {
     payload = JSON.parse(
-      await readResponseTextWithLimit(response, KAGI_RESPONSE_MAX_BYTES)
+      await readResponseTextWithLimit(response, RESPONSE_MAX_BYTES)
     ) as KagiSummaryResponse;
   } catch (error) {
     logError("Kagi summarize returned invalid JSON", error, {

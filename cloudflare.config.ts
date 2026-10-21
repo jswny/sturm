@@ -38,6 +38,7 @@ export default defineConfig(({ mode }) => {
         DISCORD_APPLICATION_ID: bindings.secret(),
         DISCORD_PUBLIC_KEY: bindings.secret(),
         DISCORD_TOKEN: bindings.secret(),
+        EXA_API_KEY: bindings.secret(),
         KAGI_API_KEY: bindings.secret(),
         ARTIFACTS_BUCKET: bindings.r2({
           name: "sturm-artifacts"

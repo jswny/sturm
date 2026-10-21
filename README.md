@@ -20,12 +20,13 @@ Fill in `.dev.vars` for local development:
 DISCORD_PUBLIC_KEY=
 DISCORD_APPLICATION_ID=
 DISCORD_TOKEN=
+EXA_API_KEY=
 KAGI_API_KEY=
 ```
 
 Restart local development after changing `.dev.vars`.
 
-Set the four production secrets listed above on the `sturm` Worker in Cloudflare.
+Set the five production secrets listed above on the `sturm` Worker in Cloudflare.
 The config declares their names; keep their values out of the repository.
 
 Create the R2 bucket used for generated image artifacts before deploying:
