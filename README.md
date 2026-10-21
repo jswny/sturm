@@ -25,18 +25,13 @@ KAGI_API_KEY=
 
 Restart local development after changing `.dev.vars`.
 
-Set production secrets in Cloudflare:
-
-```bash
-npx wrangler secret put DISCORD_PUBLIC_KEY
-npx wrangler secret put DISCORD_TOKEN
-npx wrangler secret put KAGI_API_KEY
-```
+Set the four production secrets listed above on the `sturm` Worker in Cloudflare.
+The config declares their names; keep their values out of the repository.
 
 Create the R2 bucket used for generated image artifacts before deploying:
 
 ```bash
-npx wrangler r2 bucket create sturm-artifacts
+cf r2 buckets create --name sturm-artifacts
 ```
 
 Run locally:

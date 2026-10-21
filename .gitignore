@@ -140,7 +140,9 @@ dist
 
 # Cloudflare
 .wrangler
+.cloudflare/
 .dev.vars
+.env*
 
 
 .dev.vars*
