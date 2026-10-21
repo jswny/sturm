@@ -35,6 +35,7 @@ export type ImageAspectRatio =
   | "9:16"
   | "16:9"
   | "21:9";
+
 export type ImageResolution = "1K" | "2K" | "4K";
 
 export type GenerateImageInput = {
@@ -77,6 +78,7 @@ export async function generateImage(
   const outputFormat = IMAGE_GENERATION_OUTPUT_FORMAT;
 
   let result: NanoBananaImageResponse;
+
   try {
     result = (await env.AI.run(
       IMAGE_MODEL,
@@ -110,6 +112,7 @@ export async function generateImage(
       outputFormat,
       resolution
     });
+
     return {
       response: {
         success: false,
@@ -122,6 +125,7 @@ export async function generateImage(
   }
 
   const imageUrl = getGeneratedImageUrl(result);
+
   if (!imageUrl) {
     logWarn("AI Gateway image generation returned no image URL", {
       model: IMAGE_MODEL,
@@ -133,6 +137,7 @@ export async function generateImage(
       outputFormat,
       resolution
     });
+
     return {
       response: {
         success: false,
@@ -145,6 +150,7 @@ export async function generateImage(
   }
 
   let downloaded: DownloadedImage;
+
   try {
     downloaded = await downloadGeneratedImage(imageUrl);
   } catch (error) {
@@ -157,6 +163,7 @@ export async function generateImage(
       outputFormat,
       resolution
     });
+
     return {
       response: {
         success: false,
@@ -210,6 +217,7 @@ export async function generateImage(
       outputFormat,
       resolution
     });
+
     return {
       response: {
         success: false,
@@ -244,8 +252,10 @@ function normalizeGenerateImageInput(
 
 function getGeneratedImageUrl(result: NanoBananaImageResponse) {
   const image = result.result?.image;
+
   if (typeof image !== "string") return undefined;
   const trimmed = image.trim();
+
   return trimmed || undefined;
 }
 
@@ -253,6 +263,7 @@ async function downloadGeneratedImage(
   imageUrl: string
 ): Promise<DownloadedImage> {
   let response: Response;
+
   try {
     response = await fetch(imageUrl, {
       signal: AbortSignal.timeout(GENERATED_IMAGE_DOWNLOAD_TIMEOUT_MS)
@@ -268,10 +279,12 @@ async function downloadGeneratedImage(
   const mimeType = getRequiredJpegMimeType(
     response.headers.get("content-type")
   );
+
   const bytes = await readResponseBytesWithLimit(
     response,
     GENERATED_IMAGE_MAX_BYTES
   );
+
   if (bytes.length === 0) {
     throw new Error("Image download returned an empty body.");
   }
@@ -285,15 +298,18 @@ async function downloadGeneratedImage(
 
 function getRequiredJpegMimeType(contentType: string | null) {
   const mimeType = contentType?.split(";")[0]?.trim().toLowerCase();
+
   if (mimeType !== "image/jpeg") {
     throw new Error(
       `Image download returned unsupported content type ${contentType ?? "missing"}.`
     );
   }
+
   return mimeType;
 }
 
 function createGeneratedImageArtifactKey(filename: string) {
   const date = new Date().toISOString().slice(0, 10);
+
   return `images/generated/${date}/${filename}`;
 }

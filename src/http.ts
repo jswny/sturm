@@ -13,6 +13,7 @@ export async function readRequestTextWithLimit(
   maxBytes: number
 ) {
   assertContentLengthWithinLimit(request.headers, maxBytes);
+
   return new TextDecoder().decode(
     await readStreamBytesWithLimit(request.body, maxBytes)
   );
@@ -28,6 +29,7 @@ export async function readResponseBytesWithLimit(
     await response.body?.cancel().catch(() => undefined);
     throw error;
   }
+
   return readStreamBytesWithLimit(response.body, maxBytes);
 }
 
@@ -42,9 +44,11 @@ export async function readResponseTextWithLimit(
 
 function assertContentLengthWithinLimit(headers: Headers, maxBytes: number) {
   const value = headers.get("content-length");
+
   if (!value) return;
 
   const length = Number(value);
+
   if (Number.isFinite(length) && length >= 0 && length > maxBytes) {
     throw new BodyTooLargeError(maxBytes);
   }
@@ -63,13 +67,16 @@ async function readStreamBytesWithLimit(
   try {
     while (true) {
       const { done, value } = await reader.read();
+
       if (done) break;
 
       totalBytes += value.byteLength;
+
       if (totalBytes > maxBytes) {
         await reader.cancel("Body limit exceeded.").catch(() => undefined);
         throw new BodyTooLargeError(maxBytes);
       }
+
       chunks.push(value);
     }
   } finally {
@@ -78,9 +85,11 @@ async function readStreamBytesWithLimit(
 
   const bytes = new Uint8Array(totalBytes);
   let offset = 0;
+
   for (const chunk of chunks) {
     bytes.set(chunk, offset);
     offset += chunk.byteLength;
   }
+
   return bytes;
 }

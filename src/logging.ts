@@ -1,4 +1,5 @@
 export type LogContext = Record<string, unknown>;
+
 type LogLevel = "info" | "warn" | "error";
 
 export function logInfo(message: string, context?: LogContext) {

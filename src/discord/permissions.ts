@@ -10,6 +10,7 @@ export function hasDiscordPermission(
   permission: bigint
 ) {
   const parsed = parseDiscordPermissionBits(permissions);
+
   return hasParsedDiscordPermission(parsed, permission);
 }
 
@@ -19,6 +20,7 @@ export function requireDiscordPermission(
   options: { deniedMessage: string; permissionLabel?: string }
 ): DiscordPermissionRequirement {
   const parsed = parseDiscordPermissionBits(permissions);
+
   if (hasParsedDiscordPermission(parsed, permission)) return { ok: true };
 
   const requiredPermission =
@@ -40,6 +42,7 @@ export function createDiscordPermissionContext(
   if (!permissions) return undefined;
 
   const parsed = parseDiscordPermissionBits(permissions);
+
   if (parsed === undefined) {
     return { raw: permissions, names: [] };
   }
@@ -54,6 +57,7 @@ export function formatDiscordPermissions(
   permissions: DiscordPermissionContext | undefined
 ) {
   if (!permissions) return "";
+
   return permissions.names.length > 0 ? permissions.names.join(", ") : "none";
 }
 
@@ -114,6 +118,7 @@ function formatDeniedCallerPermissions(
   parsed: bigint | undefined
 ) {
   if (!permissions) return "unavailable";
+
   if (parsed === undefined) {
     return `unrecognized permission bitset: ${permissions}`;
   }
@@ -121,6 +126,7 @@ function formatDeniedCallerPermissions(
   const names = getDiscordPermissionNames(parsed).map(
     formatDiscordPermissionName
   );
+
   return names.length > 0 ? names.join(", ") : "none";
 }
 
@@ -132,5 +138,6 @@ function formatDiscordPermissionName(name: string) {
 
 function formatSentence(value: string) {
   const trimmed = value.trim();
+
   return /[.!?]$/.test(trimmed) ? trimmed : `${trimmed}.`;
 }

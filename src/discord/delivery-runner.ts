@@ -33,6 +33,7 @@ import { getErrorMessage, logError, logInfo, logWarn } from "../logging";
 const DISCORD_DEBUG_RESPONSE_TIMEOUT_MS = 14 * 60 * 1000;
 const DISCORD_DEBUG_RESPONSE_POLL_MS = 100;
 const DISCORD_DEFERRED_RESPONSE_SETTLE_MS = 500;
+
 const MAX_STEPS_REACHED_RESPONSE =
   "I reached the work limit for this response before I could finish the summary. Some requested work may be incomplete; ask me to continue.";
 
@@ -63,14 +64,17 @@ export class DiscordDeliveryRunner {
 
     const freshRecord =
       (await this.options.deliveries.getDelivery(correlationId)) ?? record;
+
     if (freshRecord.type !== "chat") return;
 
     const rawText = getRawDiscordMessageText(result.message);
     const text = getDiscordMessageText(result.message);
+
     const artifacts = await hydrateStoredResponseArtifacts(
       this.options.env,
       freshRecord.artifacts
     );
+
     if (shouldSuppressEmptyResponse(freshRecord, text, artifacts)) {
       logInfo("Skipped empty Discord channel response", {
         sequence: freshRecord.sequence,
@@ -78,6 +82,7 @@ export class DiscordDeliveryRunner {
         responseTargetType: freshRecord.responseTarget.type
       });
       await this.options.deliveries.completeDelivery(freshRecord, "delivered");
+
       return;
     }
 
@@ -85,6 +90,7 @@ export class DiscordDeliveryRunner {
       text.length === 0 &&
       artifacts.length === 0 &&
       getAssistantStepCount(result.message) >= this.options.maxSteps;
+
     const responseText = reachedMaxStepsWithoutText
       ? MAX_STEPS_REACHED_RESPONSE
       : text;
@@ -92,12 +98,14 @@ export class DiscordDeliveryRunner {
     const componentPrompt = freshRecord.componentPromptId
       ? await this.options.componentPrompts.get(freshRecord.componentPromptId)
       : undefined;
+
     const historyText = [
       createAssistantHistoryText(responseText, artifacts),
       componentPrompt ? formatComponentPromptHistoryText(componentPrompt) : ""
     ]
       .filter(Boolean)
       .join("\n\n");
+
     if (historyText !== rawText) {
       try {
         await this.options.updateMessageInHistory(
@@ -114,6 +122,7 @@ export class DiscordDeliveryRunner {
     }
 
     const renderedText = renderDiscordResponseTemplate(responseText);
+
     if (renderedText.error) {
       logWarn("Discord response template render failed", {
         sequence: freshRecord.sequence,
@@ -134,6 +143,7 @@ export class DiscordDeliveryRunner {
           renderedText.content,
           artifacts
         );
+
     await this.deliverResponse(freshRecord, response);
     await this.options.deliveries.completeDelivery(freshRecord, "delivered");
   }
@@ -145,8 +155,10 @@ export class DiscordDeliveryRunner {
 
     try {
       const correlationId = getDeliveryCorrelationId(record);
+
       const freshRecord =
         (await this.options.deliveries.getDelivery(correlationId)) ?? record;
+
       if (freshRecord.type !== "chat" || isTerminalDelivery(freshRecord)) {
         return;
       }
@@ -155,6 +167,7 @@ export class DiscordDeliveryRunner {
         this.options.env,
         freshRecord.artifacts
       );
+
       if (shouldSuppressEmptyResponse(freshRecord, "", artifacts)) {
         logInfo("Skipped empty completed Discord submission response", {
           sequence: freshRecord.sequence,
@@ -165,6 +178,7 @@ export class DiscordDeliveryRunner {
           freshRecord,
           "delivered"
         );
+
         return;
       }
 
@@ -216,15 +230,18 @@ export class DiscordDeliveryRunner {
 
     while (Date.now() < deadline) {
       const result = await this.options.deliveries.getDebugResult(targetId);
+
       if (!result) {
         await sleep(DISCORD_DEBUG_RESPONSE_POLL_MS);
         continue;
       }
 
       await this.options.deliveries.deleteDebugResult(targetId);
+
       if (result.status === "failed") {
         throw new Error(result.error);
       }
+
       return result.response;
     }
 
@@ -244,6 +261,7 @@ export class DiscordDeliveryRunner {
         status: "completed",
         response
       });
+
       return;
     }
 
@@ -255,6 +273,7 @@ export class DiscordDeliveryRunner {
         contentLength: response.content.length,
         attachments: response.attachments?.length ?? 0
       });
+
       const messageCount = await deliverChannelMessage(
         this.options.env,
         record.responseTarget.channelId,
@@ -264,6 +283,7 @@ export class DiscordDeliveryRunner {
         response.flags,
         { idempotencyKey: getDeliveryCorrelationId(record) }
       );
+
       logInfo("Sent Discord channel message", {
         sequence: record.sequence,
         ...getDeliveryLogContext(record),
@@ -272,6 +292,7 @@ export class DiscordDeliveryRunner {
         messageCount,
         attachments: response.attachments?.length ?? 0
       });
+
       return;
     }
 
@@ -282,6 +303,7 @@ export class DiscordDeliveryRunner {
       contentLength: response.content.length,
       attachments: response.attachments?.length ?? 0
     });
+
     const messageCount = await deliverInteractionResponse(
       this.options.env,
       record.responseTarget,
@@ -292,6 +314,7 @@ export class DiscordDeliveryRunner {
       response.flags,
       { idempotencyKey: getDeliveryCorrelationId(record) }
     );
+
     logInfo("Delivered Discord interaction response", {
       sequence: record.sequence,
       ...getDeliveryLogContext(record),
@@ -311,12 +334,14 @@ export class DiscordDeliveryRunner {
         status: "failed",
         error
       });
+
       return;
     }
 
     if (record.responseTarget.type === "channel_message") return;
 
     await waitForDiscordDeferredResponse(record);
+
     try {
       await editOriginalInteractionResponse(
         record.responseTarget,
@@ -341,7 +366,9 @@ function getDeliveryLogContext(record: DiscordDeliveryRecord) {
 async function waitForDiscordDeferredResponse(record: DiscordDeliveryRecord) {
   const readyAt =
     Date.parse(record.createdAt) + DISCORD_DEFERRED_RESPONSE_SETTLE_MS;
+
   const delayMs = readyAt - Date.now();
+
   if (delayMs > 0) await sleep(delayMs);
 }
 

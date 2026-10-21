@@ -76,6 +76,7 @@ export async function createGuildStickerFromArtifact(
     targetName: "sticker",
     targetNamePlural: "stickers"
   });
+
   const baseResponse = {
     ok: false,
     action: "created_sticker",
@@ -90,6 +91,7 @@ export async function createGuildStickerFromArtifact(
   }
 
   const metadataResult = prepareStickerMetadata(input, prepared.artifact);
+
   if (!metadataResult.ok) {
     return {
       ...baseResponse,
@@ -99,6 +101,7 @@ export async function createGuildStickerFromArtifact(
       error: metadataResult.error
     };
   }
+
   const { metadata } = metadataResult;
 
   const processed = await transformStaticArtifactImage(env, prepared.artifact, {
@@ -106,6 +109,7 @@ export async function createGuildStickerFromArtifact(
     sizePx: STICKER_SIZE_PX,
     maxBytes: MAX_STICKER_BYTES
   });
+
   if (!processed.ok) {
     return {
       ...baseResponse,
@@ -164,6 +168,7 @@ function prepareStickerMetadata(
   artifact: StaticExpressionSource
 ): PrepareStickerMetadataResult {
   const name = sanitizeStickerName(input.name);
+
   if (!name) {
     return {
       ok: false,
@@ -175,9 +180,11 @@ function prepareStickerMetadata(
   const description =
     sanitizeStickerDescription(input.description) ??
     inferStickerDescription(name, artifact);
+
   const tagsResult = sanitizeStickerTags(
     input.tags?.length ? input.tags : inferStickerTags(name, artifact)
   );
+
   if (!tagsResult.ok) {
     return {
       ok: false,
@@ -186,6 +193,7 @@ function prepareStickerMetadata(
       error: tagsResult.error
     };
   }
+
   const { tags, tagsText } = tagsResult;
 
   return { ok: true, metadata: { name, description, tags, tagsText } };
@@ -213,11 +221,13 @@ function sanitizeStickerTags(
       .replace(/\.[a-z0-9]+$/i, "")
       .replace(/[^a-z0-9_-]+/g, "-")
       .replace(/^-+|-+$/g, "");
+
     if (!tag || tags.includes(tag)) continue;
     tags.push(tag);
   }
 
   const tagsText = tags.join(", ");
+
   if (!tagsText) {
     return {
       ok: false,
@@ -249,8 +259,11 @@ function sanitizeStickerName(value: string | undefined) {
 
 function sanitizeStickerDescription(value: string | undefined) {
   const description = value?.trim();
+
   if (!description) return undefined;
+
   if (description.length < STICKER_DESCRIPTION_MIN_CHARS) return undefined;
+
   return description.slice(0, STICKER_DESCRIPTION_MAX_CHARS);
 }
 
@@ -259,9 +272,11 @@ function inferStickerDescription(
   artifact: StaticExpressionSource
 ) {
   const words = splitWords(name).join(" ");
+
   const fallback = words
     ? `${capitalize(words)} sticker`
     : FALLBACK_DESCRIPTION;
+
   return (
     sanitizeStickerDescription(artifact.description) ??
     fallback.slice(0, STICKER_DESCRIPTION_MAX_CHARS)
@@ -270,6 +285,7 @@ function inferStickerDescription(
 
 function inferStickerTags(name: string, artifact: StaticExpressionSource) {
   const nameTags = splitWords(name);
+
   if (nameTags.length > 0) return nameTags;
 
   return splitWords(artifact.description ?? artifact.filename);

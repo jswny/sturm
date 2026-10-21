@@ -16,5 +16,6 @@ export function getGuildIdFromDiscordConversationName(
   name: string | undefined
 ) {
   const match = name?.match(DISCORD_GUILD_CHANNEL_CONVERSATION_PATTERN);
+
   return match?.[1];
 }

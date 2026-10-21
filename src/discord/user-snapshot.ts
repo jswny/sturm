@@ -20,6 +20,7 @@ export function createPendingDiscordUserSnapshot(
   interaction: DiscordUserSnapshotInteraction
 ): PendingDiscordUserSnapshot | undefined {
   const user = interaction.member?.user ?? interaction.user;
+
   if (!user?.id) return undefined;
 
   return {
@@ -39,6 +40,7 @@ export function createDiscordUserIdentitySnapshot(
   interaction: DiscordUserSnapshotInteraction
 ): DiscordUserIdentitySnapshot | undefined {
   const user = interaction.member?.user ?? interaction.user;
+
   if (!user?.id) return undefined;
 
   return {
@@ -75,10 +77,12 @@ export function resolveDiscordUserSnapshot(
 
   for (const role of assignedRoles) {
     const roleName = normalizeDiscordRoleName(role.name);
+
     if (!roleName || seenRoleNames.has(roleName)) continue;
 
     seenRoleNames.add(roleName);
     roleNames.push(roleName);
+
     if (roleNames.length >= MAX_DISCORD_USER_ROLE_NAMES) break;
   }
 
@@ -105,6 +109,7 @@ function normalizeDiscordMemberJoinedAt(value: unknown) {
   if (typeof value !== "string" || !value.trim()) return undefined;
 
   const timestamp = new Date(value);
+
   return Number.isNaN(timestamp.getTime())
     ? undefined
     : timestamp.toISOString();

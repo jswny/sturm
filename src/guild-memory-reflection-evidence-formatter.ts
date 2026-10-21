@@ -100,12 +100,15 @@ function formatChannelBatchEvidence(input: {
 
 function truncateForReflection(value: string, maxLength = 4_000) {
   const trimmed = value.trim();
+
   if (trimmed.length <= maxLength) return trimmed;
+
   return `${trimmed.slice(0, maxLength)}${CHANNEL_REFLECTION_CHUNK_POLICY.truncationMarker}`;
 }
 
 function indent(value: string, spaces: number) {
   const prefix = " ".repeat(spaces);
+
   return value
     .split("\n")
     .map((line) => `${prefix}${line}`)

@@ -20,6 +20,7 @@ type DiscordDeliveryMeta = {
 };
 
 type DiscordDeliveryStatus = "pending" | "running" | "delivered" | "failed";
+
 export type DiscordDeliveryLifecycleState = "running" | "recovering";
 
 export type DiscordDeliveryLifecycle = {
@@ -106,10 +107,13 @@ export type DiscordDeliveryCreateResult = {
 const DISCORD_DELIVERY_META_KEY = "discord:delivery:meta";
 const DISCORD_DELIVERY_PREFIX = "discord:delivery:record:";
 const DISCORD_ACTIVE_DELIVERY_PREFIX = "discord:delivery:active:";
+
 const DISCORD_ACTIVE_INDEX_MIGRATION_CURSOR_KEY =
   "discord:delivery:active-index:v1:cursor";
+
 const DISCORD_ACTIVE_INDEX_MIGRATION_COMPLETE_KEY =
   "discord:delivery:active-index:v1:complete";
+
 const DISCORD_DEBUG_RESULT_PREFIX = "discord:delivery:debug-result:";
 const DELIVERY_RECORD_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const DELIVERY_RECORD_PRUNE_BATCH_SIZE = 100;
@@ -125,17 +129,21 @@ export class DiscordDeliveryStore {
     input: DiscordDeliveryChatInput | DiscordDeliveryResetInput
   ): Promise<DiscordDeliveryCreateResult> {
     const now = new Date().toISOString();
+
     const correlationId =
       "request" in input ? input.request.correlationId : input.correlationId;
+
     const deliveryKey = getDiscordDeliveryKey(correlationId);
 
     return this.storage.transaction(async (txn) => {
       const existing = await txn.get<DiscordDeliveryRecord>(deliveryKey);
+
       if (existing) return { created: false, record: existing };
 
       const meta =
         (await txn.get<DiscordDeliveryMeta>(DISCORD_DELIVERY_META_KEY)) ??
         getDefaultDeliveryMeta();
+
       const sequence = meta.nextSequence++;
       const record = createDiscordDeliveryRecord(input, sequence, now);
 
@@ -151,6 +159,7 @@ export class DiscordDeliveryStore {
     await this.storage.transaction(async (txn) => {
       const key = getDiscordDeliveryKey(getDeliveryCorrelationId(record));
       const current = await txn.get<DiscordDeliveryRecord>(key);
+
       if (
         current?.sequence !== record.sequence ||
         current.status !== "pending"
@@ -176,14 +185,18 @@ export class DiscordDeliveryStore {
       prefix: DISCORD_ACTIVE_DELIVERY_PREFIX,
       limit
     });
+
     const activeKeys = [...activeEntries.keys()];
+
     const deliveryKeys = activeKeys.map((key) =>
       getDiscordDeliveryKey(key.slice(DISCORD_ACTIVE_DELIVERY_PREFIX.length))
     );
+
     const indexedDeliveries =
       deliveryKeys.length > 0
         ? await this.storage.get<DiscordDeliveryRecord>(deliveryKeys)
         : new Map<string, DiscordDeliveryRecord>();
+
     const records: DiscordDeliveryRecord[] = [];
     const seen = new Set<string>();
     const staleActiveKeys: string[] = [];
@@ -192,6 +205,7 @@ export class DiscordDeliveryStore {
       const activeKey = activeKeys[index];
       const deliveryKey = deliveryKeys[index];
       const record = indexedDeliveries.get(deliveryKey);
+
       if (!record || isTerminalDeliveryStatus(record.status)) {
         staleActiveKeys.push(activeKey);
         continue;
@@ -200,14 +214,17 @@ export class DiscordDeliveryStore {
       records.push(record);
       seen.add(record.correlationId);
     }
+
     if (staleActiveKeys.length > 0) {
       await this.storage.delete(staleActiveKeys);
     }
 
     const migratedRecords = await this.migrateActiveDeliveryIndex();
+
     for (const record of migratedRecords) {
       if (seen.has(record.correlationId)) continue;
       records.push(record);
+
       if (records.length >= limit) break;
     }
 
@@ -219,6 +236,7 @@ export class DiscordDeliveryStore {
       if (isTerminalDeliveryStatus(record.status)) return record;
 
       const now = new Date().toISOString();
+
       return {
         ...record,
         status: "running",
@@ -239,6 +257,7 @@ export class DiscordDeliveryStore {
       if (isTerminalDeliveryStatus(record.status)) return record;
 
       const now = new Date().toISOString();
+
       return {
         ...record,
         status: "running",
@@ -304,6 +323,7 @@ export class DiscordDeliveryStore {
     await this.storage.transaction(async (txn) => {
       const key = getDiscordDeliveryKey(getDeliveryCorrelationId(record));
       const current = await txn.get<DiscordDeliveryRecord>(key);
+
       if (!current || current.sequence !== record.sequence) return;
 
       const nextRecord = {
@@ -312,6 +332,7 @@ export class DiscordDeliveryStore {
         error,
         updatedAt: new Date().toISOString()
       } as DiscordDeliveryRecord;
+
       delete nextRecord.lifecycle;
 
       await txn.put<DiscordDeliveryRecord>(key, nextRecord);
@@ -325,6 +346,7 @@ export class DiscordDeliveryStore {
     retentionMs = DELIVERY_RECORD_RETENTION_MS
   ) {
     const cutoffMs = Date.now() - retentionMs;
+
     return pruneDurableStorageRecords<DiscordDeliveryRecord>(this.storage, {
       prefix: DISCORD_DELIVERY_PREFIX,
       limit: DELIVERY_RECORD_PRUNE_BATCH_SIZE,
@@ -336,6 +358,7 @@ export class DiscordDeliveryStore {
 
   async pruneStaleDebugResults(retentionMs = DEBUG_RESULT_RETENTION_MS) {
     const cutoffMs = Date.now() - retentionMs;
+
     return pruneDurableStorageRecords<DiscordDebugResult>(this.storage, {
       prefix: DISCORD_DEBUG_RESULT_PREFIX,
       limit: DEBUG_RESULT_PRUNE_BATCH_SIZE,
@@ -375,6 +398,7 @@ export class DiscordDeliveryStore {
     await this.storage.transaction(async (txn) => {
       const key = getDiscordDeliveryKey(correlationId);
       const record = await txn.get<DiscordDeliveryRecord>(key);
+
       if (!record) return;
 
       await txn.put(key, update(record));
@@ -385,31 +409,38 @@ export class DiscordDeliveryStore {
     const migrationComplete = await this.storage.get<boolean>(
       DISCORD_ACTIVE_INDEX_MIGRATION_COMPLETE_KEY
     );
+
     if (migrationComplete) return [];
 
     const cursor = await this.storage.get<string>(
       DISCORD_ACTIVE_INDEX_MIGRATION_CURSOR_KEY
     );
+
     const page = await this.storage.list<DiscordDeliveryRecord>({
       prefix: DISCORD_DELIVERY_PREFIX,
       startAfter: cursor,
       limit: ACTIVE_DELIVERY_MIGRATION_BATCH_SIZE
     });
+
     if (page.size === 0) {
       await this.storage.put(DISCORD_ACTIVE_INDEX_MIGRATION_COMPLETE_KEY, true);
       await this.storage.delete(DISCORD_ACTIVE_INDEX_MIGRATION_CURSOR_KEY);
+
       return [];
     }
 
     const records: DiscordDeliveryRecord[] = [];
     const indexBackfill: Record<string, boolean> = {};
     let lastKey: string | undefined;
+
     for (const [key, record] of page) {
       lastKey = key;
+
       if (isTerminalDeliveryStatus(record.status)) continue;
       records.push(record);
       indexBackfill[getDiscordActiveDeliveryKey(record.correlationId)] = true;
     }
+
     if (Object.keys(indexBackfill).length > 0) {
       await this.storage.put(indexBackfill);
     }

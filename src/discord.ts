@@ -44,6 +44,7 @@ export type {
   DiscordResponseTarget,
   DiscordUserSnapshot
 } from "./discord/types";
+
 export { editOriginalInteractionResponse } from "./discord/api";
 
 type DiscordEnv = Env & {
@@ -58,6 +59,7 @@ export async function handleDiscordRequest(
   ctx: ExecutionContext
 ): Promise<Response | null> {
   const url = new URL(request.url);
+
   if (url.pathname !== "/discord" && url.pathname !== "/discord/") return null;
 
   if (request.method !== "POST") {
@@ -65,6 +67,7 @@ export async function handleDiscordRequest(
   }
 
   let body: string;
+
   try {
     body = await readRequestTextWithLimit(
       request,
@@ -75,19 +78,24 @@ export async function handleDiscordRequest(
     logWarn("Discord interaction request was too large", {
       maxBytes: error.maxBytes
     });
+
     return json({ error: "Request body too large" }, { status: 413 });
   }
+
   const verified = await verifyDiscordRequest(request, body, env);
+
   if (!verified) {
     logWarn("Discord request verification failed", {
       hasSignature: request.headers.has("x-signature-ed25519"),
       hasTimestamp: request.headers.has("x-signature-timestamp"),
       hasPublicKey: Boolean(env.DISCORD_PUBLIC_KEY)
     });
+
     return new Response("Bad request signature.", { status: 401 });
   }
 
   let interaction: APIInteraction;
+
   try {
     interaction = JSON.parse(body) as APIInteraction;
   } catch (error) {
@@ -95,6 +103,7 @@ export async function handleDiscordRequest(
       bodyLength: body.length,
       error: error instanceof Error ? error.message : String(error)
     });
+
     return json({ error: "Invalid JSON" }, { status: 400 });
   }
 
@@ -134,6 +143,7 @@ export async function handleDiscordRequest(
 
   if (interaction.data.name === C_COMMAND.name) {
     const text = getStringOption(interaction, "text");
+
     if (!text) {
       return interactionJson(
         {
@@ -177,6 +187,7 @@ export async function handleDiscordRequest(
 
   if (interaction.data.name === MEMORY_COMMAND.name) {
     const location = getGuildChannelLocation(interaction);
+
     if (!location) {
       return guildOnlyInteractionResponse();
     }
@@ -208,6 +219,7 @@ async function handleMessageComponentInteraction(
   env: Env
 ) {
   const parsed = parseComponentPromptCustomId(interaction.data.custom_id);
+
   if (!parsed) {
     return ephemeralInteractionResponse(
       "This component is no longer available."
@@ -215,18 +227,21 @@ async function handleMessageComponentInteraction(
   }
 
   const location = getGuildChannelLocation(interaction);
+
   if (!location) return guildOnlyInteractionResponse();
 
   const optionId =
     parsed.mode === "select"
       ? getSelectedComponentOptionId(interaction)
       : parsed.optionId;
+
   if (!optionId) {
     return ephemeralInteractionResponse("That option is no longer available.");
   }
 
   const conversationName = getDiscordGuildChannelConversationName(location);
   const agent = await getAgentByName(env.ChatAgent, conversationName);
+
   try {
     const result = await agent.handleDiscordComponentPromptInteraction({
       promptId: parsed.promptId,
@@ -248,6 +263,7 @@ async function handleMessageComponentInteraction(
       error,
       interaction
     );
+
     return ephemeralInteractionResponse(
       "Sorry, I could not handle that selection."
     );
@@ -347,6 +363,7 @@ async function enqueueCommand(
   env: Env
 ) {
   const location = getGuildChannelLocation(interaction);
+
   if (!location) {
     throw new Error("Discord interaction did not include a guild channel.");
   }
@@ -368,6 +385,7 @@ async function enqueueCommand(
       userPermissions: interaction.member?.permissions
     }
   });
+
   return agent;
 }
 
@@ -376,6 +394,7 @@ async function enqueueResetCommand(
   env: Env
 ) {
   const location = getGuildChannelLocation(interaction);
+
   if (!location) {
     throw new Error("Discord interaction did not include a guild channel.");
   }
@@ -391,6 +410,7 @@ async function enqueueResetCommand(
     user: createDiscordUserIdentitySnapshot(interaction),
     responseTarget: getResponseTarget(interaction)
   });
+
   return agent;
 }
 
@@ -402,6 +422,7 @@ function getGuildChannelLocation(
   interaction: DiscordRoutedInteraction
 ): DiscordGuildChannelLocation | null {
   if (!interaction.guild_id || !interaction.channel_id) return null;
+
   return {
     guildId: interaction.guild_id,
     channelId: interaction.channel_id
@@ -430,7 +451,9 @@ function getStringOption(
   name: string
 ) {
   const option = interaction.data?.options?.find((item) => item.name === name);
+
   if (option?.type !== ApplicationCommandOptionType.String) return "";
+
   return option.value.trim();
 }
 
@@ -439,12 +462,14 @@ function getAttachmentOption(
   name: string
 ): DiscordRequestAttachment[] | undefined {
   const option = interaction.data?.options?.find((item) => item.name === name);
+
   if (option?.type !== ApplicationCommandOptionType.Attachment) {
     return undefined;
   }
 
   const attachment =
     interaction.data.resolved?.attachments?.[String(option.value)];
+
   if (!attachment) return undefined;
 
   return [createRequestAttachment(attachment)];
@@ -482,6 +507,7 @@ async function verifyDiscordRequest(
 ) {
   const signature = request.headers.get("x-signature-ed25519");
   const timestamp = request.headers.get("x-signature-timestamp");
+
   if (!signature || !timestamp || !env.DISCORD_PUBLIC_KEY) return false;
 
   try {
@@ -492,6 +518,7 @@ async function verifyDiscordRequest(
       hasTimestamp: Boolean(timestamp),
       hasPublicKey: Boolean(env.DISCORD_PUBLIC_KEY)
     });
+
     return false;
   }
 }

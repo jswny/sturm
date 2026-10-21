@@ -42,6 +42,7 @@ export async function readEarlierDiscordMessages(
   input: DiscordMessageHistoryInput
 ): Promise<DiscordMessageHistoryResponse> {
   const explicitBeforeMessageId = input.beforeMessageId?.trim() || undefined;
+
   if (explicitBeforeMessageId && !isDiscordSnowflake(explicitBeforeMessageId)) {
     return failure(
       context,
@@ -76,6 +77,7 @@ export async function readEarlierDiscordMessages(
       beforeMessageId,
       maxWaitMs: DISCORD_MESSAGE_HISTORY_MAX_WAIT_MS
     });
+
     const authorDisplayNames = await resolveDiscordMessageAuthorDisplayNames(
       env,
       context.guildId,
@@ -100,6 +102,7 @@ export async function readEarlierDiscordMessages(
     };
   } catch (error) {
     logDiscordMessageHistoryFailure(error, context, beforeMessageId);
+
     return failure(context, formatDiscordMessageHistoryError(error));
   }
 }
@@ -134,6 +137,7 @@ function logDiscordMessageHistoryFailure(
       discordCode: error.code,
       error: formatDiscordMessageHistoryError(error)
     });
+
     return;
   }
 

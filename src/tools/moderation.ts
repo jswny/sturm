@@ -42,6 +42,7 @@ const unmuteResponseSchema = z.object({
 });
 
 type MuteToolResponse = z.infer<typeof muteResponseSchema>;
+
 type UnmuteToolResponse = z.infer<typeof unmuteResponseSchema>;
 
 export function createModerationTools(
@@ -101,22 +102,28 @@ function formatMuteOutput(output: MuteToolResponse) {
   }
 
   const lines = ["Temporary mute applied."];
+
   if (output.targetDisplayName) {
     lines.push(`targetDisplayName: ${output.targetDisplayName}`);
   }
+
   if (output.targetUserId) lines.push(`targetUserId: ${output.targetUserId}`);
+
   if (output.durationSeconds) {
     lines.push(`durationSeconds: ${output.durationSeconds}`);
   }
+
   if (output.communicationDisabledUntil) {
     lines.push(
       `communicationDisabledUntil: ${output.communicationDisabledUntil}`
     );
   }
+
   if (output.reason) lines.push(`reason: ${output.reason}`);
   lines.push(
     "Final response guidance: briefly confirm the moderation result. Do not expose caller/guild internals unless the user explicitly asks for diagnostics."
   );
+
   return lines.join("\n");
 }
 
@@ -126,13 +133,17 @@ function formatUnmuteOutput(output: UnmuteToolResponse) {
   }
 
   const lines = ["Temporary mute removed."];
+
   if (output.targetDisplayName) {
     lines.push(`targetDisplayName: ${output.targetDisplayName}`);
   }
+
   if (output.targetUserId) lines.push(`targetUserId: ${output.targetUserId}`);
+
   if (output.reason) lines.push(`reason: ${output.reason}`);
   lines.push(
     "Final response guidance: briefly confirm the moderation result. Do not expose caller/guild internals unless the user explicitly asks for diagnostics."
   );
+
   return lines.join("\n");
 }

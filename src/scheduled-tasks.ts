@@ -135,6 +135,7 @@ export function summarizeScheduledChannelTask(
 ): ScheduledChannelTaskSummary | undefined {
   if (schedule.callback !== SCHEDULED_CHANNEL_TASK_CALLBACK) return undefined;
   const payload = getScheduledChannelTaskPayload(schedule.payload);
+
   if (!payload) return undefined;
 
   return {
@@ -158,10 +159,15 @@ export function getScheduledChannelTaskPayload(
   const payload = value as Partial<ScheduledChannelTaskPayload>;
 
   if (payload.kind !== "discord_channel_task") return undefined;
+
   if (typeof payload.taskId !== "string") return undefined;
+
   if (typeof payload.guildId !== "string") return undefined;
+
   if (typeof payload.channelId !== "string") return undefined;
+
   if (typeof payload.instruction !== "string") return undefined;
+
   if (typeof payload.createdAt !== "string") return undefined;
 
   return payload as ScheduledChannelTaskPayload;

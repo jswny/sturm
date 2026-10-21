@@ -78,15 +78,19 @@ export async function getChannelMessages(
       "Discord channel message reads cannot combine before and after cursors."
     );
   }
+
   const params = new URLSearchParams({
     limit: String(clampDiscordMessageLimit(options.limit))
   });
+
   if (options.beforeMessageId) {
     params.set("before", options.beforeMessageId);
   }
+
   if (options.afterMessageId) {
     params.set("after", options.afterMessageId);
   }
+
   return discordApiFetch<RESTGetAPIChannelMessagesResult>(
     env,
     `/channels/${channelId}/messages?${params.toString()}`,
@@ -136,7 +140,8 @@ async function editOriginalInteractionResponsePayload(
   flags: MessageFlags | undefined,
   options: { clearLegacyContent?: boolean; embeds?: APIEmbed[] }
 ) {
-  let lastError: unknown;
+  let lastError: Error | undefined;
+
   for (let attempt = 1; attempt <= DISCORD_WEBHOOK_MAX_ATTEMPTS; attempt++) {
     const body = createDiscordResponseBody(
       content,
@@ -159,6 +164,7 @@ async function editOriginalInteractionResponsePayload(
 
       if (response.ok) {
         await response.body?.cancel();
+
         return;
       }
 
@@ -166,7 +172,9 @@ async function editOriginalInteractionResponsePayload(
         response,
         DISCORD_WEBHOOK_RESPONSE_MAX_BYTES
       );
+
       const retryAfterMs = getDiscordRestRetryAfterMs(response, responseBody);
+
       const error = new DiscordApiError(
         `Discord original response edit failed: ${response.status} ${responseBody}`,
         response.status,
@@ -175,6 +183,7 @@ async function editOriginalInteractionResponsePayload(
         response.status === 429 || response.status >= 500,
         retryAfterMs
       );
+
       if (
         !error.retryable ||
         attempt === DISCORD_WEBHOOK_MAX_ATTEMPTS ||
@@ -183,9 +192,11 @@ async function editOriginalInteractionResponsePayload(
       ) {
         throw error;
       }
+
       lastError = error;
     } catch (error) {
-      lastError = error;
+      lastError = error instanceof Error ? error : new Error(String(error));
+
       if (error instanceof DiscordApiError) {
         if (
           !error.retryable ||
@@ -195,6 +206,7 @@ async function editOriginalInteractionResponsePayload(
           throw error;
         }
       }
+
       if (attempt === DISCORD_WEBHOOK_MAX_ATTEMPTS) throw error;
     }
 
@@ -227,6 +239,7 @@ export async function deliverInteractionResponse(
       components,
       flags
     );
+
     return 1;
   }
 
@@ -234,12 +247,14 @@ export async function deliverInteractionResponse(
   const [firstChunk = "", ...followupChunks] = chunks;
 
   await editOriginalInteractionResponse(target, firstChunk, attachments);
+
   if (followupChunks.length > 0) {
     if (!channelId) {
       throw new Error(
         "Discord interaction response could not deliver follow-up chunks without a channel ID."
       );
     }
+
     for (let index = 0; index < followupChunks.length; index++) {
       await createChannelMessage(
         env,
@@ -275,6 +290,7 @@ export async function deliverChannelMessage(
       flags,
       await createDiscordMessageNonce(options.idempotencyKey, 0)
     );
+
     return 1;
   }
 
@@ -290,6 +306,7 @@ export async function deliverChannelMessage(
     undefined,
     await createDiscordMessageNonce(options.idempotencyKey, 0)
   );
+
   for (let index = 0; index < followupChunks.length; index++) {
     await createChannelMessage(
       env,
@@ -321,6 +338,7 @@ async function createChannelMessage(
     flags,
     nonce
   );
+
   const result = await getDiscordRestDispatcher(env.DiscordRest).request({
     method: "POST",
     path: `/channels/${channelId}/messages`,
@@ -381,6 +399,7 @@ export async function searchGuildMembers(
     query,
     limit: String(limit)
   });
+
   return discordApiFetch<RESTGetAPIGuildMembersSearchResult>(
     env,
     `/guilds/${guildId}/members/search?${params.toString()}`
@@ -394,6 +413,7 @@ export async function searchGuildMessages(
   options: { maxWaitMs?: number } = {}
 ): Promise<RESTGetAPIGuildMessagesSearchResult> {
   const params = createDiscordGuildMessageSearchParams(query);
+
   return discordApiFetch<RESTGetAPIGuildMessagesSearchResult>(
     env,
     `/guilds/${guildId}/messages/search?${params.toString()}`,
@@ -409,16 +429,19 @@ export async function getCurrentUserGuilds(
 
   while (true) {
     const query = new URLSearchParams({ limit: "200" });
+
     if (after) query.set("after", after);
 
     const page = await discordApiFetch<RESTGetAPICurrentUserGuildsResult>(
       env,
       `/users/@me/guilds?${query.toString()}`
     );
+
     guilds.push(...page);
 
     if (page.length < 200) return guilds;
     after = page.at(-1)?.id;
+
     if (!after) return guilds;
   }
 }
@@ -455,6 +478,7 @@ export async function createGuildEmoji(
     name: input.name,
     image: input.image
   };
+
   return discordApiFetch<RESTPostAPIGuildEmojiResult>(
     env,
     `/guilds/${guildId}/emojis`,
@@ -516,6 +540,7 @@ export async function modifyGuildMemberNickname(
   nick: string | null
 ): Promise<RESTPatchAPIGuildMemberResult> {
   const body: RESTPatchAPIGuildMemberJSONBody = { nick };
+
   return discordApiFetch<RESTPatchAPIGuildMemberResult>(
     env,
     `/guilds/${guildId}/members/${userId}`,
@@ -537,6 +562,7 @@ export async function modifyGuildMemberTimeout(
   const body: RESTPatchAPIGuildMemberJSONBody = {
     communication_disabled_until: communicationDisabledUntil
   };
+
   return discordApiFetch<RESTPatchAPIGuildMemberResult>(
     env,
     `/guilds/${guildId}/members/${userId}`,
@@ -590,6 +616,7 @@ function normalizeHeaders(headers: HeadersInit | undefined) {
 
 function clampDiscordMessageLimit(limit: number) {
   if (!Number.isFinite(limit)) return 50;
+
   return Math.min(100, Math.max(1, Math.trunc(limit)));
 }
 
@@ -629,6 +656,7 @@ function createDiscordGuildMessageSearchParams(
   appendOptionalParam(params, "sort_by", query.sort_by);
   appendOptionalParam(params, "sort_order", query.sort_order);
   appendOptionalParam(params, "include_nsfw", query.include_nsfw);
+
   return params;
 }
 
@@ -652,16 +680,16 @@ function appendRepeatedParam(
 }
 
 function createDiscordAuditLogHeaders(reason: string | undefined) {
-  const headers: Record<string, string> = {
-    "content-type": "application/json"
-  };
   const preparedReason = reason?.trim();
-  if (preparedReason) {
-    headers["x-audit-log-reason"] = encodeURIComponent(
-      preparedReason.slice(0, 160)
-    );
-  }
-  return headers;
+
+  return {
+    "content-type": "application/json",
+    ...(preparedReason
+      ? {
+          "x-audit-log-reason": encodeURIComponent(preparedReason.slice(0, 160))
+        }
+      : {})
+  };
 }
 
 function createDiscordApiError(
@@ -685,6 +713,7 @@ function createDiscordResponseBody(
   options: { clearLegacyContent?: boolean; embeds?: APIEmbed[] } = {}
 ) {
   if (components.length === 0) assertDiscordContentLength(content);
+
   const payload = createDiscordMessagePayload(
     content,
     attachments,
@@ -702,6 +731,7 @@ function createDiscordResponseBody(
 
   const form = new FormData();
   form.append("payload_json", JSON.stringify(payload));
+
   for (const [index, attachment] of attachments.entries()) {
     form.append(
       `files[${index}]`,
@@ -722,6 +752,7 @@ function createDiscordRestMessageRequest(
   nonce?: string
 ) {
   if (components.length === 0) assertDiscordContentLength(content);
+
   const payload = createDiscordMessagePayload(
     content,
     attachments,
@@ -729,6 +760,7 @@ function createDiscordRestMessageRequest(
     flags,
     { nonce }
   );
+
   const body = JSON.stringify(payload);
 
   if (attachments.length === 0) {
@@ -777,6 +809,7 @@ function createDiscordMessagePayload(
         description: attachment.description
       }))
     };
+
     return options.nonce
       ? {
           ...payload,
@@ -796,6 +829,7 @@ function createDiscordMessagePayload(
       description: attachment.description
     }))
   };
+
   return options.nonce
     ? {
         ...payload,
@@ -815,6 +849,7 @@ async function createDiscordMessageNonce(
     "SHA-256",
     new TextEncoder().encode(`${idempotencyKey}:${chunkIndex}`)
   );
+
   return [...new Uint8Array(digest)]
     .slice(0, 12)
     .map((byte) => byte.toString(16).padStart(2, "0"))
@@ -836,23 +871,28 @@ export function splitDiscordContent(content: string) {
   while (remaining.length > MAX_DISCORD_CONTENT_LENGTH) {
     const splitIndex = findDiscordSplitIndex(remaining);
     const chunk = remaining.slice(0, splitIndex).trimEnd();
+
     if (chunk) chunks.push(chunk);
     remaining = remaining.slice(splitIndex).trimStart();
   }
 
   if (remaining || chunks.length === 0) chunks.push(remaining);
+
   return chunks;
 }
 
 function findDiscordSplitIndex(content: string) {
   const limit = Math.min(content.length, MAX_DISCORD_CONTENT_LENGTH);
   const candidate = content.slice(0, limit);
+
   for (const separator of ["\n\n", "\n", ". ", " "]) {
     const index = candidate.lastIndexOf(separator);
+
     if (index >= MIN_DISCORD_SPLIT_LENGTH) {
       return index + separator.length;
     }
   }
+
   return limit;
 }
 
@@ -867,6 +907,7 @@ function assertDiscordContentLength(content: string) {
 function getDiscordErrorCode(body: string) {
   try {
     const parsed = JSON.parse(body) as { code?: unknown };
+
     return typeof parsed.code === "number" ? parsed.code : undefined;
   } catch {
     return undefined;

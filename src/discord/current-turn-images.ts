@@ -4,6 +4,7 @@ import type { StoredResponseArtifact } from "../artifacts";
 import type { DiscordChatRequest } from "./types";
 
 export const CURRENT_TURN_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+
 const SUPPORTED_CURRENT_TURN_IMAGE_MIME_TYPES = new Set([
   "image/png",
   "image/jpeg",
@@ -24,6 +25,7 @@ export async function addCurrentTurnImagesToModelMessages(
   options: CurrentTurnImageOptions = {}
 ): Promise<ModelMessage[]> {
   const artifacts = request.artifacts?.filter(isCurrentTurnImageArtifact);
+
   if (!artifacts?.length) return messages;
 
   const parts = (
@@ -35,6 +37,7 @@ export async function addCurrentTurnImagesToModelMessages(
   ).filter((part) => part !== undefined);
 
   if (parts.length === 0) return messages;
+
   return appendPartsToLatestUserMessage(messages, parts);
 }
 
@@ -45,6 +48,7 @@ async function createCurrentTurnImagePart(
 ): Promise<CurrentTurnImagePart | undefined> {
   const maxBytes = options.maxBytes ?? CURRENT_TURN_IMAGE_MAX_BYTES;
   const declaredMimeType = normalizeMimeType(artifact.mimeType);
+
   if (!isSupportedCurrentTurnImageMimeType(declaredMimeType)) {
     return createArtifactStatusPart(
       artifact,
@@ -61,6 +65,7 @@ async function createCurrentTurnImagePart(
     }
 
     const object = await options.artifactBucket.get(artifact.artifactKey);
+
     if (!object?.body) {
       logWarn("Discord current-turn image artifact was missing", {
         correlationId: request.correlationId,
@@ -69,6 +74,7 @@ async function createCurrentTurnImagePart(
         artifactKey: artifact.artifactKey,
         filename: artifact.filename
       });
+
       return createArtifactStatusPart(
         artifact,
         "not provided as visual input because the stored artifact is unavailable"
@@ -85,17 +91,20 @@ async function createCurrentTurnImagePart(
     const headers = new Headers();
     object.writeHttpMetadata(headers);
     const storedMimeType = normalizeMimeType(headers.get("content-type"));
+
     const mediaType = isSupportedCurrentTurnImageMimeType(storedMimeType)
       ? storedMimeType
       : declaredMimeType;
 
     const bytes = new Uint8Array(await object.arrayBuffer());
+
     if (bytes.byteLength === 0) {
       return createArtifactStatusPart(
         artifact,
         "not provided as visual input because the stored artifact is empty"
       );
     }
+
     if (bytes.byteLength > maxBytes) {
       return createArtifactStatusPart(
         artifact,
@@ -118,6 +127,7 @@ async function createCurrentTurnImagePart(
       filename: artifact.filename,
       error: getErrorMessage(error)
     });
+
     return createArtifactStatusPart(
       artifact,
       "not provided as visual input because the stored artifact could not be read"
@@ -130,10 +140,12 @@ function appendPartsToLatestUserMessage(
   parts: CurrentTurnImagePart[]
 ): ModelMessage[] {
   const targetIndex = findLatestUserMessageIndex(messages);
+
   if (targetIndex < 0) return messages;
 
   return messages.map((message, index) => {
     if (index !== targetIndex || message.role !== "user") return message;
+
     return {
       ...message,
       content:
@@ -148,6 +160,7 @@ function findLatestUserMessageIndex(messages: ModelMessage[]) {
   for (let index = messages.length - 1; index >= 0; index--) {
     if (messages[index].role === "user") return index;
   }
+
   return -1;
 }
 

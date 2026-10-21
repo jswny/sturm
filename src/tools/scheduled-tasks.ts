@@ -70,8 +70,11 @@ const updateResultSchema = z.object({
 });
 
 type ScheduleTaskToolResult = z.infer<typeof scheduleResultSchema>;
+
 type ListScheduledTasksToolResult = z.infer<typeof listResultSchema>;
+
 type CancelScheduledTaskToolResult = z.infer<typeof cancelResultSchema>;
+
 type UpdateScheduledTaskToolResult = z.infer<typeof updateResultSchema>;
 
 export function createScheduledTaskTools(
@@ -229,16 +232,22 @@ function formatScheduleTaskOutput(output: ScheduleTaskToolResult) {
   }
 
   const lines = ["Scheduled task created."];
+
   if (output.scheduleId) lines.push(`scheduleId: ${output.scheduleId}`);
+
   if (output.type) lines.push(`type: ${output.type}`);
+
   if (output.nextRunAt) lines.push(`nextRunAt: ${output.nextRunAt}`);
+
   if (output.recurring !== undefined) {
     lines.push(`recurring: ${output.recurring ? "yes" : "no"}`);
   }
+
   if (output.instruction) lines.push(`instruction: ${output.instruction}`);
   lines.push(
     "Final response guidance: confirm the schedule and use scheduleId as the user-facing handle when a handle is needed. Do not expose taskId unless the user explicitly asks for diagnostics."
   );
+
   return lines.join("\n");
 }
 
@@ -248,6 +257,7 @@ function formatListScheduledTasksOutput(output: ListScheduledTasksToolResult) {
   }
 
   const schedules = output.schedules ?? [];
+
   if (schedules.length === 0) {
     return "No scheduled tasks are active for this channel.";
   }
@@ -291,20 +301,29 @@ function formatUpdateScheduledTaskOutput(
   }
 
   const lines = ["Scheduled task updated."];
+
   if (output.oldScheduleId)
     lines.push(`oldScheduleId: ${output.oldScheduleId}`);
+
   if (output.newScheduleId) lines.push(`scheduleId: ${output.newScheduleId}`);
+
   if (!output.newScheduleId) lines.push(`scheduleId: ${output.scheduleId}`);
+
   if (output.type) lines.push(`type: ${output.type}`);
+
   if (output.nextRunAt) lines.push(`nextRunAt: ${output.nextRunAt}`);
+
   if (output.recurring !== undefined) {
     lines.push(`recurring: ${output.recurring ? "yes" : "no"}`);
   }
+
   if (output.instruction) lines.push(`instruction: ${output.instruction}`);
+
   if (output.warning) lines.push(`warning: ${output.warning}`);
   lines.push(
     "Final response guidance: confirm the update and use the new scheduleId as the user-facing handle. Do not expose task IDs unless the user explicitly asks for diagnostics."
   );
+
   return lines.join("\n");
 }
 

@@ -54,6 +54,7 @@ function decodeSearchSnippetEntities(value: string) {
 
 function cleanSnippet(snippet: string | undefined) {
   if (!snippet) return undefined;
+
   return decodeSearchSnippetEntities(snippet.replace(/<[^>]*>/g, ""))
     .replace(/\s+/g, " ")
     .trim();
@@ -70,6 +71,7 @@ export async function searchWeb(
       provider: "kagi",
       endpoint: "fastgpt"
     });
+
     return {
       query,
       results: [],
@@ -78,6 +80,7 @@ export async function searchWeb(
   }
 
   let response: Response;
+
   try {
     response = await fetch(KAGI_FASTGPT_URL, {
       method: "POST",
@@ -94,6 +97,7 @@ export async function searchWeb(
       provider: "kagi",
       endpoint: "fastgpt"
     });
+
     return {
       query,
       results: [],
@@ -106,6 +110,7 @@ export async function searchWeb(
       response,
       KAGI_RESPONSE_MAX_BYTES
     ).catch(() => "");
+
     logWarn("Kagi FastGPT returned an error", {
       provider: "kagi",
       endpoint: "fastgpt",
@@ -113,6 +118,7 @@ export async function searchWeb(
       statusText: response.statusText,
       body: body.slice(0, 500)
     });
+
     return {
       query,
       results: [],
@@ -121,6 +127,7 @@ export async function searchWeb(
   }
 
   let payload: KagiFastGptResponse;
+
   try {
     payload = JSON.parse(
       await readResponseTextWithLimit(response, KAGI_RESPONSE_MAX_BYTES)
@@ -130,12 +137,14 @@ export async function searchWeb(
       provider: "kagi",
       endpoint: "fastgpt"
     });
+
     return {
       query,
       results: [],
       error: "Kagi search returned invalid JSON."
     };
   }
+
   const results = (payload.data?.references ?? []).map((item) => ({
     title: item.title,
     url: item.url,
@@ -160,6 +169,7 @@ export async function summarizeUrl(
       provider: "kagi",
       endpoint: "summarize"
     });
+
     return {
       url,
       error: "KAGI_API_KEY is not configured."
@@ -167,6 +177,7 @@ export async function summarizeUrl(
   }
 
   let response: Response;
+
   try {
     response = await fetch(KAGI_SUMMARIZE_URL, {
       method: "POST",
@@ -183,6 +194,7 @@ export async function summarizeUrl(
       provider: "kagi",
       endpoint: "summarize"
     });
+
     return {
       url,
       error: "Kagi summarize request failed."
@@ -194,6 +206,7 @@ export async function summarizeUrl(
       response,
       KAGI_RESPONSE_MAX_BYTES
     ).catch(() => "");
+
     logWarn("Kagi summarize returned an error", {
       provider: "kagi",
       endpoint: "summarize",
@@ -201,6 +214,7 @@ export async function summarizeUrl(
       statusText: response.statusText,
       body: body.slice(0, 500)
     });
+
     return {
       url,
       error: `Kagi summarize failed with ${response.status} ${response.statusText}.`
@@ -208,6 +222,7 @@ export async function summarizeUrl(
   }
 
   let payload: KagiSummaryResponse;
+
   try {
     payload = JSON.parse(
       await readResponseTextWithLimit(response, KAGI_RESPONSE_MAX_BYTES)
@@ -217,6 +232,7 @@ export async function summarizeUrl(
       provider: "kagi",
       endpoint: "summarize"
     });
+
     return {
       url,
       error: "Kagi summarize returned invalid JSON."

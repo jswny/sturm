@@ -13,10 +13,12 @@ export async function readDiscordMessagesAfterCursor(
     limit: DISCORD_MESSAGE_PAGE_SIZE,
     afterMessageId: cursorMessageId
   });
+
   if (firstPage.length < DISCORD_MESSAGE_PAGE_SIZE) return firstPage;
 
   const messages = new Map(firstPage.map((message) => [message.id, message]));
   let oldestMessageId = getOldestDiscordMessageId(firstPage);
+
   for (let page = 1; page < maxPages; page++) {
     const nextPage = await readDiscordMessagesBeforeCursor(
       env,
@@ -24,6 +26,7 @@ export async function readDiscordMessagesAfterCursor(
       oldestMessageId,
       DISCORD_MESSAGE_PAGE_SIZE
     );
+
     for (const message of nextPage) {
       if (compareDiscordSnowflakes(message.id, cursorMessageId) > 0) {
         messages.set(message.id, message);
@@ -38,6 +41,7 @@ export async function readDiscordMessagesAfterCursor(
     ) {
       return [...messages.values()];
     }
+
     oldestMessageId = getOldestDiscordMessageId(nextPage);
   }
 
@@ -64,11 +68,13 @@ export function getOldestDiscordMessageId(
   const oldest = messages.reduce((current, message) =>
     compareDiscordSnowflakes(message.id, current.id) < 0 ? message : current
   );
+
   return oldest.id;
 }
 
 export function compareDiscordSnowflakes(left: string, right: string) {
   const leftValue = BigInt(left);
   const rightValue = BigInt(right);
+
   return leftValue < rightValue ? -1 : leftValue > rightValue ? 1 : 0;
 }

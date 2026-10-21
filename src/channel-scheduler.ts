@@ -59,6 +59,7 @@ async function scheduleDiscordChannelTask(
   input: ScheduleChannelTaskInput
 ): Promise<ScheduleChannelTaskResult> {
   const instruction = input.instruction.trim();
+
   if (!instruction) {
     return {
       ok: false,
@@ -74,6 +75,7 @@ async function scheduleDiscordChannelTask(
   }
 
   const when = getScheduleWhen(input);
+
   if (!when.ok) return when;
 
   const payload = createScheduledChannelTaskPayload(turn, instruction);
@@ -93,6 +95,7 @@ async function scheduleDiscordChannelTask(
       channelId: turn.channelId,
       mode: input.mode
     });
+
     return {
       ok: false,
       error: getErrorMessage(error)
@@ -123,6 +126,7 @@ async function listDiscordChannelTasks(
       guildId: turn.guildId,
       channelId: turn.channelId
     });
+
     return {
       ok: false,
       error: getErrorMessage(error)
@@ -136,6 +140,7 @@ async function cancelDiscordChannelTask(
   scheduleId: string
 ): Promise<CancelScheduledChannelTaskResult> {
   const preparedScheduleId = scheduleId.trim();
+
   if (!preparedScheduleId) {
     return {
       ok: false,
@@ -146,6 +151,7 @@ async function cancelDiscordChannelTask(
 
   try {
     const schedule = await host.getScheduleById(preparedScheduleId);
+
     if (!schedule) {
       return {
         ok: true,
@@ -159,6 +165,7 @@ async function cancelDiscordChannelTask(
       turn,
       "cancel"
     );
+
     if (!target.ok) {
       return {
         ok: false,
@@ -179,6 +186,7 @@ async function cancelDiscordChannelTask(
       channelId: turn.channelId,
       scheduleId: preparedScheduleId
     });
+
     return {
       ok: false,
       scheduleId: preparedScheduleId,
@@ -193,6 +201,7 @@ async function updateDiscordChannelTask(
   input: UpdateScheduledChannelTaskInput
 ): Promise<UpdateScheduledChannelTaskResult> {
   const preparedScheduleId = input.scheduleId.trim();
+
   if (!preparedScheduleId) {
     return {
       ok: false,
@@ -203,6 +212,7 @@ async function updateDiscordChannelTask(
 
   try {
     const schedule = await host.getScheduleById(preparedScheduleId);
+
     if (!schedule) {
       return {
         ok: true,
@@ -216,6 +226,7 @@ async function updateDiscordChannelTask(
       turn,
       "update"
     );
+
     if (!target.ok) {
       return {
         ok: false,
@@ -230,6 +241,7 @@ async function updateDiscordChannelTask(
       target.payload,
       schedule
     );
+
     if (!replacement.ok) {
       return {
         ok: false,
@@ -245,12 +257,14 @@ async function updateDiscordChannelTask(
       replacement.when,
       replacement.payload
     );
+
     const replacementFields = createReplacementScheduleFields(
       replacementSchedule,
       replacement.payload
     );
 
     let oldScheduleCancelled: boolean;
+
     try {
       oldScheduleCancelled = await host.cancelSchedule(preparedScheduleId);
     } catch (error) {
@@ -258,6 +272,7 @@ async function updateDiscordChannelTask(
         host,
         replacementSchedule.id
       );
+
       logError(
         "Scheduled channel task replacement cancellation failed",
         error,
@@ -270,6 +285,7 @@ async function updateDiscordChannelTask(
           newScheduleCancelled
         }
       );
+
       return {
         ok: false,
         scheduleId: preparedScheduleId,
@@ -312,6 +328,7 @@ async function updateDiscordChannelTask(
       channelId: turn.channelId,
       scheduleId: preparedScheduleId
     });
+
     return {
       ok: false,
       scheduleId: preparedScheduleId,
@@ -326,22 +343,27 @@ function getScheduleWhen(
   switch (input.mode) {
     case "delay": {
       const delaySeconds = getPositiveInteger(input.delaySeconds);
+
       if (!delaySeconds) {
         return {
           ok: false,
           error: "delaySeconds must be a positive integer when mode is delay."
         };
       }
+
       return { ok: true, value: { mode: "delay", value: delaySeconds } };
     }
+
     case "at": {
       const runAt = input.runAt?.trim();
+
       if (!runAt) {
         return {
           ok: false,
           error: "runAt is required when mode is at."
         };
       }
+
       if (!hasIsoTimezone(runAt)) {
         return {
           ok: false,
@@ -351,28 +373,34 @@ function getScheduleWhen(
       }
 
       const date = new Date(runAt);
+
       if (!Number.isFinite(date.getTime())) {
         return {
           ok: false,
           error: "runAt must be a valid ISO 8601 timestamp."
         };
       }
+
       if (date.getTime() <= Date.now()) {
         return {
           ok: false,
           error: "runAt must be in the future."
         };
       }
+
       return { ok: true, value: { mode: "at", value: date } };
     }
+
     case "cron": {
       const cron = input.cron?.trim();
+
       if (!cron) {
         return {
           ok: false,
           error: "cron is required when mode is cron."
         };
       }
+
       if (cron.split(/\s+/).length !== 5) {
         return {
           ok: false,
@@ -380,16 +408,20 @@ function getScheduleWhen(
             "cron must be a five-field expression: minute hour day month weekday."
         };
       }
+
       if (!isHourlyOrLessFrequentCron(cron)) {
         return {
           ok: false,
           error: "Recurring cron schedules cannot run more than once per hour."
         };
       }
+
       return { ok: true, value: { mode: "cron", value: cron } };
     }
+
     case "interval": {
       const intervalSeconds = getPositiveInteger(input.intervalSeconds);
+
       if (!intervalSeconds) {
         return {
           ok: false,
@@ -397,12 +429,14 @@ function getScheduleWhen(
             "intervalSeconds must be a positive integer when mode is interval."
         };
       }
+
       if (intervalSeconds < MIN_RECURRING_SCHEDULE_SECONDS) {
         return {
           ok: false,
           error: "intervalSeconds must be at least 3600 for recurring tasks."
         };
       }
+
       return { ok: true, value: { mode: "interval", value: intervalSeconds } };
     }
   }
@@ -488,6 +522,7 @@ function getScheduledChannelTaskMutationTarget(
   | { ok: true; payload: ScheduledChannelTaskPayload }
   | { ok: false; error: string } {
   const payload = getScheduledChannelTaskPayload(schedule.payload);
+
   if (
     schedule.callback !== SCHEDULED_CHANNEL_TASK_CALLBACK ||
     !payload ||
@@ -535,6 +570,7 @@ function prepareReplacementScheduledChannelTask(
     }
   | { ok: false; error: string } {
   const hasInstructionChange = input.instruction !== undefined;
+
   const hasTimingChange =
     input.mode !== undefined || hasReplacementTimingFields(input);
 
@@ -546,9 +582,11 @@ function prepareReplacementScheduledChannelTask(
   }
 
   const instruction = getReplacementInstruction(input, existingPayload);
+
   if (!instruction.ok) return instruction;
 
   const when = getReplacementScheduleWhen(input, existingSchedule);
+
   if (!when.ok) return when;
 
   return {
@@ -585,12 +623,14 @@ function getReplacementInstruction(
   }
 
   const instruction = input.instruction.trim();
+
   if (!instruction) {
     return {
       ok: false,
       error: "Updated scheduled task instruction cannot be empty."
     };
   }
+
   return { ok: true, value: instruction };
 }
 
@@ -625,6 +665,7 @@ function getExistingScheduleWhen(
     case "scheduled":
     case "delayed": {
       const date = new Date(schedule.time * 1000);
+
       if (!Number.isFinite(date.getTime()) || date.getTime() <= Date.now()) {
         return {
           ok: false,
@@ -632,8 +673,10 @@ function getExistingScheduleWhen(
             "Existing one-time schedule is no longer in the future; provide a new runAt time."
         };
       }
+
       return { ok: true, value: { mode: "at", value: date } };
     }
+
     case "cron":
       return { ok: true, value: { mode: "cron", value: schedule.cron } };
     case "interval":
@@ -664,6 +707,7 @@ async function cancelReplacementSchedule(
       agentName: host.agentName,
       scheduleId
     });
+
     return false;
   }
 }
@@ -672,6 +716,7 @@ function getPositiveInteger(value: number | undefined) {
   if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
     return undefined;
   }
+
   return value;
 }
 
@@ -681,11 +726,16 @@ function hasIsoTimezone(value: string) {
 
 function isHourlyOrLessFrequentCron(cron: string) {
   const [minute, hour] = cron.split(/\s+/);
+
   if (!minute || !hour) return false;
+
   if (minute === "*" || minute.includes("/")) return false;
+
   if (hour.includes("/")) {
     const interval = Number(hour.split("/")[1]);
+
     if (Number.isFinite(interval) && interval < 1) return false;
   }
+
   return true;
 }

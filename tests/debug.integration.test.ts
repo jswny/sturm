@@ -7,7 +7,7 @@ type WorkerFetch = {
 
 type JsonRecord = Record<string, unknown>;
 
-const worker = exports.default as unknown as WorkerFetch;
+const worker = exports.default as WorkerFetch;
 
 const surface = {
   type: "guild_channel",
@@ -34,6 +34,7 @@ describe("debug integration", () => {
       "/debug/status",
       "x".repeat(1024 * 1024 + 1)
     );
+
     expect(oversizedDebug.status).toBe(413);
     expect(JSON.parse(oversizedDebug.text)).toMatchObject({
       error: "Request body too large"
@@ -44,6 +45,7 @@ describe("debug integration", () => {
       "/discord",
       "x".repeat(1024 * 1024 + 1)
     );
+
     expect(oversizedDiscord.status).toBe(413);
     expect(JSON.parse(oversizedDiscord.text)).toMatchObject({
       error: "Request body too large"
@@ -69,6 +71,7 @@ describe("debug integration", () => {
       surface,
       correlationId: `${correlationId}-missing`
     });
+
     expect(missingStatus.status).toBe(200);
     expect(missingStatus.body).toMatchObject({
       ok: true,
@@ -81,6 +84,7 @@ describe("debug integration", () => {
       surface,
       correlationId: resetCorrelationId
     });
+
     expect(reset.status).toBe(200);
     expect(reset.body).toMatchObject({
       ok: true,
@@ -95,6 +99,7 @@ describe("debug integration", () => {
       resetCorrelationId,
       (status) => getOptionalRecord(status, "delivery")?.status === "delivered"
     );
+
     expect(getRecord(resetStatus, "delivery")).toMatchObject({
       type: "reset",
       correlationId: resetCorrelationId,
@@ -118,6 +123,7 @@ async function waitForDebugStatus(
       surface,
       correlationId
     });
+
     expect(status.status).toBe(200);
     lastStatus = status.body;
 
@@ -142,6 +148,7 @@ async function requestJson(method: string, path: string, body?: unknown) {
     path,
     body === undefined ? undefined : JSON.stringify(body)
   );
+
   const parsed = response.text ? (JSON.parse(response.text) as unknown) : null;
 
   return {
@@ -163,6 +170,7 @@ async function requestRaw(method: string, path: string, body?: string) {
       body
     })
   );
+
   const text = await response.text();
 
   return {
@@ -177,7 +185,9 @@ function getRecord(source: JsonRecord, key: string) {
 
 function getOptionalRecord(source: JsonRecord, key: string) {
   const value = source[key];
+
   if (value === null || value === undefined) return null;
+
   return expectRecord(value, key);
 }
 
@@ -185,11 +195,13 @@ function expectRecord(value: unknown, label: string): JsonRecord {
   expect(value, label).toBeTypeOf("object");
   expect(value, label).not.toBeNull();
   expect(Array.isArray(value), label).toBe(false);
+
   return value as JsonRecord;
 }
 
 function expectString(value: unknown, label: string) {
   expect(value, label).toBeTypeOf("string");
+
   return value as string;
 }
 

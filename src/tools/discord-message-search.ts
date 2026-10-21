@@ -141,6 +141,7 @@ function formatDiscordMessageSearchOutput(
   }
 
   const results = output.results ?? [];
+
   if (results.length === 0) {
     return "Discord message search returned no matching messages.";
   }

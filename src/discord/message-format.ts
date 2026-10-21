@@ -81,6 +81,7 @@ export function createDiscordRetrievedMessage(
   context: DiscordMessageFormatContext
 ): DiscordRetrievedMessage {
   const formatted = formatDiscordMessageForRetrieval(message, context);
+
   return {
     id: message.id,
     formattedText: formatted.text,
@@ -95,11 +96,13 @@ function formatDiscordMessage(
   if (isCurrentSturmInteractionMessage(message, options)) return undefined;
 
   const isSturm = isSturmMessage(message, options.app);
+
   const author = formatMessageAuthor(
     message,
     options.memberDisplayNames,
     isSturm ? "Sturm" : undefined
   );
+
   if (isSturm && options.sturmMessageContent === "marker") {
     return {
       id: message.id,
@@ -112,11 +115,13 @@ function formatDiscordMessage(
   }
 
   const fullBody = formatMessageBody(message);
+
   if (!fullBody && !options.includeEmptyMessage) return undefined;
 
   const body = options.maxBodyChars
     ? limitText(fullBody, options.maxBodyChars)
     : fullBody;
+
   return {
     id: message.id,
     text: formatMessageText(
@@ -133,6 +138,7 @@ function formatMessageText(
   body: string
 ) {
   const prefix = `- ${formatMessageTimestamps(message)} ${author}: `;
+
   return `${prefix}${indentContinuationLines(body)}`;
 }
 
@@ -157,24 +163,32 @@ function formatMessageAuthor(
     memberDisplayNames.get(message.author.id) ??
     message.author.global_name ??
     message.author.username;
+
   const labels = [`id: ${message.author.id}`];
+
   if (message.author.bot) labels.push("bot");
+
   if (message.webhook_id) labels.push(`webhook_id: ${message.webhook_id}`);
+
   return `${displayName} (${labels.join(", ")})`;
 }
 
 function formatMessageBody(message: DiscordMessageBody) {
   const parts: string[] = [];
   const content = normalizeMessageContent(message.content);
+
   if (content) parts.push(content);
+
   if (message.attachments.length > 0) {
     parts.push(
       `attachments: ${message.attachments.map(formatAttachment).join(", ")}`
     );
   }
+
   if (message.embeds.length > 0) parts.push(`embeds: ${message.embeds.length}`);
 
   const componentText = collectMessageComponentText(message.components);
+
   if (componentText.length > 0) {
     parts.push(formatLabeledBlock("component_text", componentText.join("\n")));
   }
@@ -186,7 +200,9 @@ function formatMessageBody(message: DiscordMessageBody) {
         .join(", ")}`
     );
   }
+
   if (message.poll) parts.push(formatPoll(message.poll));
+
   if (message.message_snapshots?.length) {
     parts.push(
       ...message.message_snapshots.map((snapshot, index) =>
@@ -208,6 +224,7 @@ function formatAttachment(
   const contentType = attachment.content_type
     ? ` ${attachment.content_type}`
     : "";
+
   return `${attachment.filename}${contentType}`;
 }
 
@@ -223,8 +240,10 @@ function collectComponentText(
   switch (component.type) {
     case ComponentType.TextDisplay: {
       const content = normalizeMessageContent(component.content);
+
       return content ? [content] : [];
     }
+
     case ComponentType.Section:
       return component.components.flatMap(collectComponentText);
     case ComponentType.Container:
@@ -238,12 +257,15 @@ function formatPoll(poll: APIPoll) {
   const counts = new Map(
     poll.results?.answer_counts.map((answer) => [answer.id, answer.count]) ?? []
   );
+
   const answers = poll.answers.map((answer) => {
     const count = counts.get(answer.answer_id);
+
     return `${answer.answer_id}. ${formatPollMedia(answer.poll_media)}${
       count === undefined ? "" : ` (votes: ${count})`
     }`;
   });
+
   return [
     `poll_question: ${formatPollMedia(poll.question)}`,
     `poll_answers: ${answers.join("; ")}`,
@@ -258,11 +280,13 @@ function formatPoll(poll: APIPoll) {
 
 function formatPollMedia(media: APIPollMedia) {
   const emoji = media.emoji?.name ?? media.emoji?.id;
+
   return [emoji, media.text].filter(Boolean).join(" ") || "[no label]";
 }
 
 function formatMessageSnapshot(snapshot: APIMessageSnapshot, index: number) {
   const snapshotBody = formatMessageBody(snapshot.message);
+
   const details = [
     formatUtcTimestampField("sent_at_utc", snapshot.message.timestamp),
     snapshot.message.edited_timestamp
@@ -275,6 +299,7 @@ function formatMessageSnapshot(snapshot: APIMessageSnapshot, index: number) {
   ]
     .filter((line) => line !== undefined)
     .join("\n");
+
   return formatLabeledBlock(`message_snapshot_${index + 1}`, details);
 }
 
@@ -316,5 +341,6 @@ function getMessageInteractionId(message: DiscordChannelMessage) {
 
 function limitText(text: string, maxLength: number) {
   if (text.length <= maxLength) return text;
+
   return `${text.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
 }

@@ -57,6 +57,7 @@ export async function handleDebugRequest(
   env: DebugEnv
 ): Promise<Response | null> {
   const url = new URL(request.url);
+
   if (!url.pathname.startsWith("/debug/")) return null;
 
   if (!isDebugEnabled(env)) {
@@ -96,13 +97,16 @@ function isDebugEnabled(env: DebugEnv) {
 
 async function replyToDebugChat(payload: DebugChatPayload, env: DebugEnv) {
   const error = validateDebugChatPayload(payload);
+
   if (error) return json({ error }, { status: 400 });
 
   const conversationName = getDiscordGuildChannelConversationName(
     payload.surface
   );
+
   const agent = await getAgentByName(env.ChatAgent, conversationName);
   const correlationId = getPayloadCorrelationId(payload) ?? crypto.randomUUID();
+
   const response = await agent.runDebugQueuedDiscordChat({
     correlationId,
     text: payload.text.trim(),
@@ -137,13 +141,16 @@ async function replyToDebugChat(payload: DebugChatPayload, env: DebugEnv) {
 
 async function replyToDebugReset(payload: DebugResetPayload, env: DebugEnv) {
   const error = validateDebugSurface(payload.surface);
+
   if (error) return json({ error }, { status: 400 });
 
   const conversationName = getDiscordGuildChannelConversationName(
     payload.surface
   );
+
   const agent = await getAgentByName(env.ChatAgent, conversationName);
   const correlationId = getPayloadCorrelationId(payload) ?? crypto.randomUUID();
+
   const response = await agent.runDebugQueuedDiscordReset({
     correlationId,
     guildId: payload.surface.guildId,
@@ -161,16 +168,20 @@ async function replyToDebugReset(payload: DebugResetPayload, env: DebugEnv) {
 
 async function replyToDebugStatus(payload: DebugStatusPayload, env: DebugEnv) {
   const error = validateDebugStatusPayload(payload);
+
   if (error) return json({ error }, { status: 400 });
 
   const conversationName = getDiscordGuildChannelConversationName(
     payload.surface
   );
+
   const agent = await getAgentByName(env.ChatAgent, conversationName);
   const correlationId = getPayloadCorrelationId(payload);
+
   if (!correlationId) {
     return json({ error: "Missing correlationId." }, { status: 400 });
   }
+
   const status = await agent.getDebugDiscordStatus(correlationId);
 
   return json({
@@ -183,6 +194,7 @@ async function replyToDebugStatus(payload: DebugStatusPayload, env: DebugEnv) {
 
 async function readJson<T>(request: Request): Promise<T> {
   let body: string;
+
   try {
     body = await readRequestTextWithLimit(request, DEBUG_REQUEST_MAX_BYTES);
   } catch (error) {
@@ -195,6 +207,7 @@ async function readJson<T>(request: Request): Promise<T> {
         headers: { "content-type": "application/json" }
       });
     }
+
     throw error;
   }
 
@@ -215,6 +228,7 @@ function validateDebugChatPayload(payload: DebugChatPayload) {
   if (!payload || typeof payload !== "object") return "Missing request body.";
 
   const surfaceError = validateDebugSurface(payload.surface);
+
   if (surfaceError) return surfaceError;
 
   if (!payload.user || typeof payload.user !== "object") {
@@ -232,6 +246,7 @@ function validateDebugStatusPayload(payload: DebugStatusPayload) {
   if (!payload || typeof payload !== "object") return "Missing request body.";
 
   const surfaceError = validateDebugSurface(payload.surface);
+
   if (surfaceError) return surfaceError;
 
   if (!getPayloadCorrelationId(payload)) return "Missing correlationId.";
@@ -249,8 +264,11 @@ function validateDebugSurface(surface: DebugSurface | undefined) {
   if (surface.type !== "guild_channel") {
     return "surface.type must be guild_channel.";
   }
+
   if (!surface.guildId) return "Missing surface.guildId.";
+
   if (!surface.channelId) return "Missing surface.channelId.";
+
   return null;
 }
 
@@ -270,6 +288,7 @@ function createDebugAppPermissions(
   payload: DebugChatPayload
 ): DiscordPermissionContext | undefined {
   const raw = payload.permissions?.app;
+
   if (!raw) return undefined;
 
   if (!payload.permissions?.appNames) {
@@ -284,7 +303,9 @@ function createDebugAppPermissions(
 
 function createDebugAppContext(env: DebugEnv): DiscordAppContext | undefined {
   const applicationId = env.DISCORD_APPLICATION_ID?.trim();
+
   if (!applicationId) return undefined;
+
   return { applicationId };
 }
 

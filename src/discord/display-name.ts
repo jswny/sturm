@@ -20,5 +20,6 @@ export function resolveDiscordMemberDisplayName(
 
 function cleanDisplayName(value: string | null | undefined) {
   const trimmed = value?.trim();
+
   return trimmed || undefined;
 }

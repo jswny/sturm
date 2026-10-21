@@ -7,10 +7,12 @@ export const IMAGE_GENERATION_TIMEOUT_MS = 180_000;
 export const BROWSER_EXECUTION_TIMEOUT_MS = 60_000;
 export const REPLY_CHAT_BASE_TIMEOUT_MS = 120_000;
 export const REPLY_CHAT_BLOCKING_OPERATION_TIMEOUT_BUFFER_MS = 15_000;
+
 const REPLY_CHAT_BLOCKING_OPERATION_TIMEOUTS_MS = [
   BROWSER_EXECUTION_TIMEOUT_MS,
   IMAGE_GENERATION_TIMEOUT_MS
 ] as const;
+
 export const REPLY_CHAT_TIMEOUT_MS = Math.max(
   REPLY_CHAT_BASE_TIMEOUT_MS,
   timeoutWithBuffer(
@@ -18,6 +20,7 @@ export const REPLY_CHAT_TIMEOUT_MS = Math.max(
     REPLY_CHAT_BLOCKING_OPERATION_TIMEOUT_BUFFER_MS
   )
 );
+
 export const CHAT_STREAM_STALL_TIMEOUT_MS = REPLY_CHAT_TIMEOUT_MS;
 export const SCHEDULED_CHAT_MAX_RETRIES = 5;
 export const DEFAULT_IMAGE_ASPECT_RATIO = "1:1";
@@ -26,9 +29,11 @@ export const DEFAULT_IMAGE_RESOLUTION = "1K";
 export const IMAGE_GENERATION_GOOGLE_SEARCH = true;
 export const IMAGE_GENERATION_IMAGE_SEARCH = true;
 export const CHAT_AI_GATEWAY_ID = "default";
+
 export const CHAT_AI_GATEWAY_METADATA = {
   app: "sturm"
 };
+
 export const CHAT_AI_GATEWAY_FLOWS = {
   reply: "reply",
   artifactSummary: "artifact-summary",
@@ -40,11 +45,13 @@ export const CHAT_AI_GATEWAY_FLOWS = {
 
 export type ChatAiGatewayFlow =
   (typeof CHAT_AI_GATEWAY_FLOWS)[keyof typeof CHAT_AI_GATEWAY_FLOWS];
+
 export type ChatAiGatewayCorrelation = {
   correlationId?: string;
   guildId?: string;
   channelId?: string;
 };
+
 type ChatAiGatewayMetadata = Record<string, string>;
 
 export const COMPACTION_TOKEN_THRESHOLD = 200_000;
@@ -116,6 +123,7 @@ export function createChatModel(
       "x-session-affinity": sessionAffinity
     })
   });
+
   return openai.responses(CHAT_MODEL);
 }
 

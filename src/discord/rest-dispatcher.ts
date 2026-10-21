@@ -110,10 +110,12 @@ export class DiscordRestDispatcher extends DurableObject<DiscordRestEnv> {
   async request(input: DiscordRestRequest): Promise<DiscordRestResult> {
     const method = (input.method ?? "GET").toUpperCase();
     const cacheTarget = getDiscordGuildMemberTarget(method, input.path);
+
     const guildRolesCacheTarget = getDiscordGuildRolesGuildId(
       method,
       input.path
     );
+
     if (
       method === "GET" &&
       (cacheTarget || guildRolesCacheTarget) &&
@@ -125,6 +127,7 @@ export class DiscordRestDispatcher extends DurableObject<DiscordRestEnv> {
         : guildRolesCacheTarget
           ? await this.guildRolesCache.get(guildRolesCacheTarget)
           : undefined;
+
       if (cached && this.env.DISCORD_TOKEN?.trim()) {
         return {
           ok: true,
@@ -137,6 +140,7 @@ export class DiscordRestDispatcher extends DurableObject<DiscordRestEnv> {
     const routeKey = getDiscordRestRouteKey(method, input.path);
     const majorResourceKey = getDiscordRestMajorResourceKey(input.path);
     const now = Date.now();
+
     const job = {
       id: crypto.randomUUID(),
       method,
@@ -154,6 +158,7 @@ export class DiscordRestDispatcher extends DurableObject<DiscordRestEnv> {
     await this.scheduleCleanupAlarm(job.expiresAt);
 
     const queueKey = await this.getQueueKey(job.routeKey);
+
     return this.enqueueJob(queueKey, () => this.processJob(job, input));
   }
 
@@ -190,6 +195,7 @@ export class DiscordRestDispatcher extends DurableObject<DiscordRestEnv> {
     input: DiscordRestRequest
   ): Promise<DiscordRestResult> {
     const token = this.env.DISCORD_TOKEN?.trim();
+
     if (!token) {
       return this.finishJob(job, {
         ok: false,
@@ -211,6 +217,7 @@ export class DiscordRestDispatcher extends DurableObject<DiscordRestEnv> {
         await this.getRateLimitKeys(job.routeKey),
         deadline
       );
+
       if (!routeCheck.ok) {
         return this.finishJob(job, {
           ok: false,
@@ -224,6 +231,7 @@ export class DiscordRestDispatcher extends DurableObject<DiscordRestEnv> {
         ["global"],
         deadline
       );
+
       if (!globalCheck.ok) {
         return this.finishJob(job, {
           ok: false,
@@ -235,10 +243,12 @@ export class DiscordRestDispatcher extends DurableObject<DiscordRestEnv> {
 
       let response: Response;
       let body: string;
+
       try {
         const headers = new Headers(input.headers);
         headers.set("authorization", `Bot ${token}`);
         const fetchBody = createDiscordRestBody(input);
+
         if (fetchBody instanceof FormData) {
           headers.delete("content-type");
         }
@@ -255,6 +265,7 @@ export class DiscordRestDispatcher extends DurableObject<DiscordRestEnv> {
         );
       } catch (error) {
         const retryAfterMs = getDiscordRestNetworkBackoffMs(attempts);
+
         if (
           !canWaitForDiscordRestRetry(deadline, retryAfterMs) ||
           attempts >= MAX_ATTEMPTS
@@ -265,6 +276,7 @@ export class DiscordRestDispatcher extends DurableObject<DiscordRestEnv> {
             attempts,
             error: error instanceof Error ? error.message : String(error)
           });
+
           return this.finishJob(job, {
             ok: false,
             retryable: true,
@@ -272,6 +284,7 @@ export class DiscordRestDispatcher extends DurableObject<DiscordRestEnv> {
             error: "Discord REST request failed before a response was received."
           });
         }
+
         await sleep(retryAfterMs);
         continue;
       }
@@ -280,6 +293,7 @@ export class DiscordRestDispatcher extends DurableObject<DiscordRestEnv> {
 
       if (response.status === 429) {
         const retryAfterMs = getDiscordRestRetryAfterMs(response, body);
+
         if (
           retryAfterMs !== undefined &&
           canWaitForDiscordRestRetry(deadline, retryAfterMs) &&
@@ -302,6 +316,7 @@ export class DiscordRestDispatcher extends DurableObject<DiscordRestEnv> {
 
       if (response.status >= 500 && response.status < 600) {
         const retryAfterMs = getDiscordRestNetworkBackoffMs(attempts);
+
         if (
           canWaitForDiscordRestRetry(deadline, retryAfterMs) &&
           attempts < MAX_ATTEMPTS
@@ -342,16 +357,19 @@ export class DiscordRestDispatcher extends DurableObject<DiscordRestEnv> {
   private enqueueJob(queueKey: string, task: () => Promise<DiscordRestResult>) {
     const previous = this.queueTails.get(queueKey) ?? Promise.resolve();
     const run = previous.catch(() => undefined).then(task);
+
     const tail = run.then(
       () => undefined,
       () => undefined
     );
+
     this.queueTails.set(queueKey, tail);
     void tail.finally(() => {
       if (this.queueTails.get(queueKey) === tail) {
         this.queueTails.delete(queueKey);
       }
     });
+
     return run;
   }
 
@@ -361,7 +379,9 @@ export class DiscordRestDispatcher extends DurableObject<DiscordRestEnv> {
       attempts,
       updatedAt: Date.now()
     } satisfies DiscordRestJob;
+
     await this.ctx.storage.put(getJobKey(job.id), updated);
+
     return updated;
   }
 
@@ -370,6 +390,7 @@ export class DiscordRestDispatcher extends DurableObject<DiscordRestEnv> {
     result: DiscordRestResult
   ): Promise<DiscordRestResult> {
     const now = Date.now();
+
     const updated = {
       ...job,
       status: result.ok
@@ -380,8 +401,10 @@ export class DiscordRestDispatcher extends DurableObject<DiscordRestEnv> {
       updatedAt: now,
       expiresAt: now + JOB_TTL_MS
     } satisfies DiscordRestJob;
+
     await this.ctx.storage.put(getJobKey(job.id), updated);
     await this.scheduleCleanupAlarm(updated.expiresAt);
+
     return result;
   }
 
@@ -393,9 +416,11 @@ export class DiscordRestDispatcher extends DurableObject<DiscordRestEnv> {
       const state = await this.ctx.storage.get<RateLimitState>(
         getRateLimitKey(key)
       );
+
       if (!state) continue;
 
       const retryAfterMs = state.resetAt - Date.now();
+
       if (retryAfterMs <= 0) {
         await this.ctx.storage.delete(getRateLimitKey(key));
         continue;
@@ -424,6 +449,7 @@ export class DiscordRestDispatcher extends DurableObject<DiscordRestEnv> {
     const retryAfterMs = getDiscordRestRetryAfterMs(response, body);
     const remaining = Number(response.headers.get("x-ratelimit-remaining"));
     const resetAfterMs = getDiscordRestResetAfterMs(response);
+
     const isGlobal =
       response.headers.get("x-ratelimit-global") === "true" ||
       getDiscordRestRateLimitBody(body)?.global === true;
@@ -433,6 +459,7 @@ export class DiscordRestDispatcher extends DurableObject<DiscordRestEnv> {
         isGlobal ? "global" : rateLimitKey,
         Date.now() + retryAfterMs
       );
+
       return;
     }
 
@@ -444,10 +471,12 @@ export class DiscordRestDispatcher extends DurableObject<DiscordRestEnv> {
   private async getRateLimitKeys(routeKey: string) {
     const aliasKey = getBucketAliasKey(routeKey);
     const alias = await this.ctx.storage.get<BucketAliasState>(aliasKey);
+
     if (!alias) return [routeKey];
 
     if (alias.expiresAt <= Date.now()) {
       await this.ctx.storage.delete(aliasKey);
+
       return [routeKey];
     }
 
@@ -465,23 +494,28 @@ export class DiscordRestDispatcher extends DurableObject<DiscordRestEnv> {
     response: Response
   ) {
     const bucket = response.headers.get("x-ratelimit-bucket");
+
     if (!bucket) return job.routeKey;
 
     const rateLimitKey = getDiscordRestBucketRateLimitKey(
       job.majorResourceKey,
       bucket
     );
+
     await this.storeBucketAlias(job.routeKey, rateLimitKey);
+
     return rateLimitKey;
   }
 
   private async storeBucketAlias(routeKey: string, rateLimitKey: string) {
     const now = Date.now();
+
     const alias = {
       rateLimitKey,
       updatedAt: now,
       expiresAt: now + BUCKET_ALIAS_TTL_MS
     } satisfies BucketAliasState;
+
     await this.ctx.storage.put(getBucketAliasKey(routeKey), alias);
     await this.scheduleCleanupAlarm(alias.expiresAt);
   }
@@ -511,11 +545,13 @@ export class DiscordRestDispatcher extends DurableObject<DiscordRestEnv> {
         cacheMode
       )
     ]);
+
     const nextExpiry = expiresAts.reduce<number | undefined>(
       (next, expiresAt) =>
         expiresAt === undefined ? next : minTimestamp(next, expiresAt),
       undefined
     );
+
     if (nextExpiry) await this.scheduleCleanupAlarm(nextExpiry);
   }
 
@@ -554,6 +590,7 @@ export class DiscordRestDispatcher extends DurableObject<DiscordRestEnv> {
   private async scheduleCleanupAlarm(timestamp: number) {
     await this.enqueueAlarmUpdate(async () => {
       const current = await this.ctx.storage.getAlarm();
+
       if (!current || timestamp < current) {
         await this.ctx.storage.setAlarm(timestamp);
       }
@@ -568,6 +605,7 @@ export class DiscordRestDispatcher extends DurableObject<DiscordRestEnv> {
       const jobs = await this.ctx.storage.list<DiscordRestJob>({
         prefix: "job:"
       });
+
       for (const job of jobs.values()) {
         if (job.expiresAt > now) next = minTimestamp(next, job.expiresAt);
       }
@@ -575,6 +613,7 @@ export class DiscordRestDispatcher extends DurableObject<DiscordRestEnv> {
       const limits = await this.ctx.storage.list<RateLimitState>({
         prefix: "rate:"
       });
+
       for (const state of limits.values()) {
         if (state.resetAt > now) next = minTimestamp(next, state.resetAt);
       }
@@ -582,15 +621,18 @@ export class DiscordRestDispatcher extends DurableObject<DiscordRestEnv> {
       const aliases = await this.ctx.storage.list<BucketAliasState>({
         prefix: "bucket-alias:"
       });
+
       for (const alias of aliases.values()) {
         if (alias.expiresAt > now) next = minTimestamp(next, alias.expiresAt);
       }
 
       const memberCacheExpiry = await this.memberCache.getNextExpiry(now);
+
       if (memberCacheExpiry) next = minTimestamp(next, memberCacheExpiry);
 
       const guildRolesCacheExpiry =
         await this.guildRolesCache.getNextExpiry(now);
+
       if (guildRolesCacheExpiry) {
         next = minTimestamp(next, guildRolesCacheExpiry);
       }
@@ -609,6 +651,7 @@ export class DiscordRestDispatcher extends DurableObject<DiscordRestEnv> {
       () => undefined,
       () => undefined
     );
+
     return run;
   }
 }
@@ -635,10 +678,13 @@ function createDiscordRestBody(input: DiscordRestRequest) {
   if (!input.files?.length && !input.fields?.length) return input.body;
 
   const form = new FormData();
+
   if (input.body !== undefined) form.append("payload_json", input.body);
+
   for (const field of input.fields ?? []) {
     form.append(field.name, field.value);
   }
+
   for (const file of input.files ?? []) {
     form.append(
       file.fieldName,
@@ -647,6 +693,7 @@ function createDiscordRestBody(input: DiscordRestRequest) {
       })
     );
   }
+
   return form;
 }
 
@@ -657,6 +704,7 @@ function base64ToBytes(base64: string) {
 function getDiscordErrorCode(body: string) {
   try {
     const parsed = JSON.parse(body) as { code?: unknown };
+
     return typeof parsed.code === "number" ? parsed.code : undefined;
   } catch {
     return undefined;

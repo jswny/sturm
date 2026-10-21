@@ -73,9 +73,12 @@ export function parseGuildMemoryReflectionEvidence(
   value: unknown
 ): GuildMemoryReflectionEvidence | null {
   if (!isObject(value)) return null;
+
   if (value.kind === "completed_turn") {
     if (!isDiscordChatRequest(value.request)) return null;
+
     if (typeof value.assistantText !== "string") return null;
+
     return createCompletedTurnMemoryEvidence(
       value.request,
       value.assistantText
@@ -85,18 +88,24 @@ export function parseGuildMemoryReflectionEvidence(
   if (value.kind !== "ambient_batch" && value.kind !== "backfill_batch") {
     return null;
   }
+
   if (typeof value.guildId !== "string") return null;
+
   if (!Array.isArray(value.messages) || value.messages.length === 0)
     return null;
   const messages = value.messages.map(parseAmbientMessageEvidence);
+
   if (messages.some((message) => message === null)) return null;
+
   if (value.kind === "ambient_batch") {
     return createAmbientBatchMemoryEvidence(
       value.guildId,
       messages as GuildMemoryChannelMessageEvidence[]
     );
   }
+
   if (typeof value.backfillId !== "string") return null;
+
   return createBackfillBatchMemoryEvidence(
     value.guildId,
     value.backfillId,
@@ -108,7 +117,9 @@ export function parseLegacyCompletedTurnMemoryEvidence(
   value: Record<string, unknown>
 ): GuildMemoryCompletedTurnEvidence | null {
   if (!isDiscordChatRequest(value.request)) return null;
+
   if (typeof value.assistantText !== "string") return null;
+
   return createCompletedTurnMemoryEvidence(value.request, value.assistantText);
 }
 
@@ -116,23 +127,31 @@ function parseAmbientMessageEvidence(
   value: unknown
 ): GuildMemoryChannelMessageEvidence | null {
   if (!isObject(value)) return null;
+
   if (typeof value.messageId !== "string") return null;
+
   if (typeof value.channelId !== "string") return null;
+
   if (
     value.channelName !== undefined &&
     typeof value.channelName !== "string"
   ) {
     return null;
   }
+
   if (typeof value.authorUserId !== "string") return null;
+
   if (
     value.authorDisplayName !== undefined &&
     typeof value.authorDisplayName !== "string"
   ) {
     return null;
   }
+
   if (typeof value.content !== "string") return null;
+
   if (typeof value.sentAtUtc !== "string") return null;
+
   return {
     messageId: value.messageId,
     channelId: value.channelId,

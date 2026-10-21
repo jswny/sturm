@@ -14,12 +14,15 @@ export function formatModelArtifactReferences(
   if (!artifacts?.length) return "";
 
   const lines = [options.heading];
+
   if (options.includeUsageGuidance ?? true) {
     lines.push(
       "Use artifactId for tool calls only. Do not repeat artifact IDs or internal references in final responses unless the user asks for diagnostics."
     );
   }
+
   lines.push(...artifacts.map(formatArtifactReference));
+
   return lines.join("\n");
 }
 
@@ -40,14 +43,17 @@ function formatArtifactDescription(artifact: StoredResponseArtifact) {
   if (artifact.visualSummary) {
     return `visualSummary: ${truncateArtifactReferenceText(artifact.visualSummary)}`;
   }
+
   if (artifact.description) {
     return `description: ${truncateArtifactReferenceText(artifact.description)}`;
   }
+
   if (artifact.source === "image_generation") {
     return `description: ${truncateArtifactReferenceText(
       `Generated image for: ${artifact.metadata.prompt}`
     )}`;
   }
+
   return "";
 }
 
@@ -78,8 +84,10 @@ function formatDimensions(
 
 function truncateArtifactReferenceText(value: string) {
   const normalized = value.replace(/\s+/g, " ").trim();
+
   if (normalized.length <= MAX_ARTIFACT_REFERENCE_TEXT_LENGTH) {
     return normalized;
   }
+
   return `${normalized.slice(0, MAX_ARTIFACT_REFERENCE_TEXT_LENGTH - 3)}...`;
 }

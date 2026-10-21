@@ -25,11 +25,16 @@ type DiscordMemberActionErrorOptions = {
   invalidRequest: string;
 };
 
+type DiscordMemberActionValidationResult = {
+  targetUserId: string;
+  error?: string;
+};
+
 export function validateDiscordMemberActionContext(
   env: DiscordApiEnv,
   context: DiscordMemberActionContext,
   options: DiscordMemberActionValidationOptions
-): { targetUserId: string; error?: string } {
+): DiscordMemberActionValidationResult {
   const targetUserId = options.targetUserId?.trim() || "";
 
   if (!env.DISCORD_TOKEN?.trim()) {
@@ -72,6 +77,7 @@ export function validateDiscordMemberActionContext(
     options.permission,
     { deniedMessage: options.permissionError }
   );
+
   if (!permission.ok) {
     return {
       targetUserId,
@@ -116,6 +122,7 @@ export function logDiscordMemberActionFailure(input: {
       discordCode: input.error.code,
       error: input.formatError(input.error)
     });
+
     return;
   }
 
@@ -128,12 +135,14 @@ export function formatDiscordMemberActionError(
 ) {
   if (error instanceof DiscordApiError) {
     if (error.status === 403) return options.forbidden;
+
     if (error.status === 404) return options.notFound;
 
     if (error.code === 50_035) {
       const validationError = options.validationField
         ? getDiscordValidationError(error.body, options.validationField)
         : undefined;
+
       if (validationError && options.validationErrorPrefix) {
         return `${options.validationErrorPrefix}: ${validationError}`;
       }
@@ -152,9 +161,11 @@ function getDiscordValidationError(body: string, field: string) {
     const parsed = JSON.parse(body) as {
       errors?: Record<string, { _errors?: { message?: string }[] }>;
     };
+
     const error = parsed.errors?.[field]?._errors?.find((item) =>
       Boolean(item.message)
     );
+
     return error?.message;
   } catch {
     return undefined;

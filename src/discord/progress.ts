@@ -37,6 +37,7 @@ export function createDiscordProgressReporter(
   options: DiscordProgressOptions
 ): DiscordProgressReporter | undefined {
   if (target.type !== "discord") return undefined;
+
   return new DiscordInteractionProgressReporter(target, options);
 }
 
@@ -51,6 +52,7 @@ export function withProgressTools(
   return Object.fromEntries(
     Object.entries(tools).map(([name, definition]) => {
       const execute = definition.execute;
+
       if (typeof execute !== "function") return [name, definition];
 
       return [
@@ -63,6 +65,7 @@ export function withProgressTools(
           ) => {
             const toolCallId =
               options?.toolCallId ?? `${name}:${fallbackToolCallSequence++}`;
+
             await reporter.report({
               type: "tool",
               toolCallId,
@@ -75,12 +78,14 @@ export function withProgressTools(
                 input,
                 options as ToolExecutionOptions<unknown>
               );
+
               await reporter.report({
                 type: "tool",
                 toolCallId,
                 toolName: name,
                 status: isToolFailureOutput(output) ? "failed" : "finished"
               });
+
               return output;
             } catch (error) {
               await reporter.report({
@@ -105,6 +110,7 @@ function isToolFailureOutput(output: unknown) {
   }
 
   const result = output as Record<string, unknown>;
+
   return (
     result.ok === false ||
     result.success === false ||
@@ -124,10 +130,13 @@ class DiscordInteractionProgressReporter implements DiscordProgressReporter {
 
   async report(event: DiscordProgressEvent) {
     const line = renderProgressEvent(event);
+
     if (!this.upsertLine(line)) return;
+
     if (!this.shouldEditNow(event)) return;
 
     await this.waitUntilDeferredResponseSettled();
+
     try {
       await editOriginalInteractionResponse(this.target, this.render());
       this.lastEditAt = Date.now();
@@ -145,9 +154,11 @@ class DiscordInteractionProgressReporter implements DiscordProgressReporter {
       const existingIndex = this.lines.findIndex(
         (candidate) => candidate.key === line.key
       );
+
       if (existingIndex >= 0) {
         if (this.lines[existingIndex].text === line.text) return false;
         this.lines[existingIndex] = line;
+
         return true;
       }
     } else if (this.lines.at(-1)?.text === line.text) {
@@ -156,13 +167,16 @@ class DiscordInteractionProgressReporter implements DiscordProgressReporter {
 
     this.lines.push(line);
     this.lines = this.lines.slice(-DISCORD_PROGRESS_MAX_LINES);
+
     return true;
   }
 
   private shouldEditNow(event: DiscordProgressEvent) {
     // A fast failure must not remain hidden behind an earlier started update.
     if (event.type === "tool" && event.status === "failed") return true;
+
     if (this.lastEditAt === 0) return true;
+
     return (
       Date.now() - this.lastEditAt >= DISCORD_PROGRESS_MIN_EDIT_INTERVAL_MS
     );
@@ -170,10 +184,13 @@ class DiscordInteractionProgressReporter implements DiscordProgressReporter {
 
   private async waitUntilDeferredResponseSettled() {
     const createdAtMs = Date.parse(this.options.createdAt);
+
     const baseTime = Number.isFinite(createdAtMs)
       ? createdAtMs
       : this.startedAt;
+
     const waitMs = DISCORD_PROGRESS_INITIAL_SETTLE_MS - (Date.now() - baseTime);
+
     if (waitMs > 0) await sleep(waitMs);
   }
 
@@ -194,7 +211,9 @@ type ToolProgressCopy = Record<
   string
 >;
 
-const TOOL_PROGRESS_COPY: Readonly<Record<string, ToolProgressCopy>> = {
+type ToolProgressCatalog = Readonly<Record<string, ToolProgressCopy>>;
+
+const TOOL_PROGRESS_COPY: ToolProgressCatalog = {
   archiveUrl: {
     started: "Creating an archive link",
     finished: "Created an archive link",
@@ -312,6 +331,7 @@ function renderProgressEvent(event: DiscordProgressEvent) {
   if (event.type === "phase") return { text: event.label };
 
   const copy = TOOL_PROGRESS_COPY[event.toolName] ?? DEFAULT_TOOL_PROGRESS_COPY;
+
   return {
     key: `tool:${event.toolCallId}`,
     text: copy[event.status]

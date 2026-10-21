@@ -46,6 +46,7 @@ const guildMemberSearchResponseSchema = z.object({
 });
 
 type NicknameToolResponse = z.infer<typeof nicknameResponseSchema>;
+
 type GuildMemberSearchToolResponse = z.infer<
   typeof guildMemberSearchResponseSchema
 >;
@@ -124,6 +125,7 @@ function formatGuildMemberSearchOutput(output: GuildMemberSearchToolResponse) {
   }
 
   const results = output.results ?? [];
+
   if (results.length === 0) {
     return `No guild members matched "${output.query}".`;
   }
@@ -152,19 +154,28 @@ function formatNicknameOutput(output: NicknameToolResponse) {
   }
 
   const lines = [`Nickname postfix ${output.action}.`];
+
   if (output.targetUserId) lines.push(`targetUserId: ${output.targetUserId}`);
+
   if (output.oldNickname) lines.push(`oldNickname: ${output.oldNickname}`);
+
   if (output.baseNickname) lines.push(`baseNickname: ${output.baseNickname}`);
+
   if (output.postfix) lines.push(`postfix: ${output.postfix}`);
+
   if (output.convertedPostfix) {
     lines.push(`convertedPostfix: ${output.convertedPostfix}`);
   }
+
   if (output.newNickname) lines.push(`newNickname: ${output.newNickname}`);
+
   if (output.changed !== undefined) {
     lines.push(`changed: ${output.changed ? "yes" : "no"}`);
   }
+
   lines.push(
     "Final response guidance: briefly confirm the nickname result. Do not expose caller/guild internals unless the user explicitly asks for diagnostics."
   );
+
   return lines.join("\n");
 }

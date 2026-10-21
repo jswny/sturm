@@ -13,6 +13,7 @@ export function archiveUrl(
   preserveQueryParams = false
 ): ArchiveUrlResponse {
   let parsedUrl: URL;
+
   try {
     parsedUrl = new URL(url);
   } catch {

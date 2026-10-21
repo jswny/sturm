@@ -4,6 +4,7 @@ export function formatUtcTimestampField(fieldName: string, timestamp: string) {
 
 export function normalizeUtcTimestamp(timestamp: string) {
   const parsed = Date.parse(timestamp);
+
   if (!Number.isFinite(parsed)) return timestamp;
 
   return new Date(parsed).toISOString();
@@ -11,6 +12,7 @@ export function normalizeUtcTimestamp(timestamp: string) {
 
 export function toUnixTimestampSeconds(timestamp: string) {
   const parsed = Date.parse(timestamp);
+
   if (!Number.isFinite(parsed)) return undefined;
 
   return Math.floor(parsed / 1000);

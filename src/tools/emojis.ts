@@ -80,11 +80,15 @@ function formatCreateEmojiOutput(output: CreateEmojiToolResponse) {
   }
 
   const lines = ["Discord emoji created."];
+
   if (output.name) lines.push(`name: ${output.name}`);
+
   if (output.shortcode) lines.push(`shortcode: ${output.shortcode}`);
+
   if (output.mention) lines.push(`mention: ${output.mention}`);
   lines.push(
     "Final response guidance: mention the emoji by name, shortcode, or mention when useful. Do not expose source artifact IDs, internal IDs, processed sizes, or diagnostics unless the user explicitly asks."
   );
+
   return lines.join("\n");
 }

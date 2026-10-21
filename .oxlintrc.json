@@ -18,19 +18,32 @@
     ],
     "oxc/no-accumulating-spread": "error",
     "anti-slop/no-array-filter-map": "error",
+    "anti-slop/no-chained-type-assertions": "error",
+    "anti-slop/no-known-value-widening": "error",
     "anti-slop/no-reduce-accumulator-copy": "error",
     "anti-slop/no-module-mocking": "error",
     "anti-slop/no-object-parameters": "error",
     "anti-slop/no-reflect-apply": "error",
     "anti-slop/no-reflect-get": "error",
     "anti-slop/no-unknown-type-aliases": "error",
-    "anti-slop/no-widen-then-assert": "error"
+    "anti-slop/no-widen-then-assert": "error",
+    "anti-slop/require-readable-spacing": "error"
   },
   "ignorePatterns": ["**/env.d.ts", "tools/oxlint/anti-slop/**"],
   "jsPlugins": [
     {
       "name": "anti-slop",
       "specifier": "./tools/oxlint/anti-slop/index.ts"
+    }
+  ],
+  "overrides": [
+    {
+      "files": ["tests/guild-memory-observer.integration.test.ts"],
+      "rules": { "anti-slop/no-chained-type-assertions": "off" }
+    },
+    {
+      "files": ["src/discord/progress.ts"],
+      "rules": { "anti-slop/no-known-value-widening": "off" }
     }
   ]
 }

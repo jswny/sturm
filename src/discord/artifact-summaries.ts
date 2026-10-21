@@ -40,6 +40,7 @@ export async function summarizeDiscordArtifacts(
   const imageArtifacts = request.artifacts?.filter(
     shouldSummarizeImageArtifact
   );
+
   if (!imageArtifacts?.length) return request;
 
   const summaries = await Promise.all(
@@ -47,17 +48,20 @@ export async function summarizeDiscordArtifacts(
       summarizeDiscordImageArtifact(env, request, artifact, sessionAffinity)
     )
   );
+
   const summaryById = new Map(
     summaries.flatMap((result) =>
       result.summary ? [[result.artifactId, result.summary]] : []
     )
   );
+
   if (summaryById.size === 0) return request;
 
   return {
     ...request,
     artifacts: request.artifacts?.map((artifact) => {
       const visualSummary = summaryById.get(artifact.id);
+
       return visualSummary ? { ...artifact, visualSummary } : artifact;
     })
   };
@@ -81,6 +85,7 @@ async function summarizeDiscordImageArtifact(
 ): Promise<{ artifactId: string; summary?: string }> {
   try {
     const object = await env.ARTIFACTS_BUCKET.get(artifact.artifactKey);
+
     if (!object?.body) {
       logWarn("Image artifact summary skipped missing artifact", {
         correlationId: request.correlationId,
@@ -88,6 +93,7 @@ async function summarizeDiscordImageArtifact(
         artifactKey: artifact.artifactKey,
         filename: artifact.filename
       });
+
       return { artifactId: artifact.id };
     }
 
@@ -100,20 +106,24 @@ async function summarizeDiscordImageArtifact(
         sizeBytes: object.size,
         maxBytes: IMAGE_SUMMARY_MAX_BYTES
       });
+
       return { artifactId: artifact.id };
     }
 
     const headers = new Headers();
     object.writeHttpMetadata(headers);
     const storedMimeType = normalizeMimeType(headers.get("content-type"));
+
     const mediaType = isSupportedImageMimeType(storedMimeType)
       ? storedMimeType
       : normalizeMimeType(artifact.mimeType);
+
     if (!isSupportedImageMimeType(mediaType)) {
       return { artifactId: artifact.id };
     }
 
     const bytes = new Uint8Array(await object.arrayBuffer());
+
     if (!bytes.byteLength || bytes.byteLength > IMAGE_SUMMARY_MAX_BYTES) {
       return { artifactId: artifact.id };
     }
@@ -128,6 +138,7 @@ async function summarizeDiscordImageArtifact(
       },
       sessionAffinity
     );
+
     const result = await generateText({
       model,
       providerOptions: ARTIFACT_SUMMARY_PROVIDER_OPTIONS,
@@ -173,6 +184,7 @@ async function summarizeDiscordImageArtifact(
     });
 
     const summary = normalizeVisualSummary(result.output.summary);
+
     if (!summary) {
       logWarn("Image artifact summary produced no usable summary", {
         correlationId: request.correlationId,
@@ -196,6 +208,7 @@ async function summarizeDiscordImageArtifact(
       filename: artifact.filename,
       error: getErrorMessage(error)
     });
+
     return { artifactId: artifact.id };
   }
 }
@@ -204,6 +217,7 @@ function normalizeVisualSummary(value: string) {
   const summary = clampVisualSummary(
     normalizeVisualSummaryWhitespace(stripModelThinkingTraces(value))
   );
+
   return summary || undefined;
 }
 
@@ -220,14 +234,17 @@ function clampVisualSummary(value: string) {
 
   const truncated = value.slice(0, IMAGE_SUMMARY_MAX_CHARS).trimEnd();
   const lastSpace = truncated.lastIndexOf(" ");
+
   const wordSafe =
     lastSpace > Math.floor(IMAGE_SUMMARY_MAX_CHARS * 0.7)
       ? truncated.slice(0, lastSpace)
       : truncated;
+
   const cleaned = wordSafe
     .replace(/[\s,;:-]+$/g, "")
     .replace(/\b(?:and|or|with|of|to|a|the|in|on)$/i, "")
     .trim();
+
   return /[.!?)]$/.test(cleaned) ? cleaned : `${cleaned}.`;
 }
 

@@ -28,7 +28,9 @@ export async function freezeDiscordRequestAttachments(
       freezeDiscordRequestAttachment(env, request, attachment)
     )
   );
+
   const attachments = results.map((result) => result.attachment);
+
   const artifacts = mergeStoredArtifacts([
     ...(request.artifacts ?? []),
     ...results
@@ -54,6 +56,7 @@ async function freezeDiscordRequestAttachment(
   if (attachment.artifactKey && attachment.sha256) {
     const artifactId = createDiscordAttachmentArtifactId(request, attachment);
     const updatedAttachment = { ...attachment, artifactId };
+
     return {
       attachment: updatedAttachment,
       artifact: createStoredDiscordAttachmentArtifact(
@@ -72,11 +75,13 @@ async function freezeDiscordRequestAttachment(
       sizeBytes: attachment.sizeBytes,
       maxBytes: DISCORD_ATTACHMENT_MAX_BYTES
     });
+
     return { attachment };
   }
 
   try {
     const fetched = await fetchAttachmentBytes(attachment);
+
     if (!fetched.ok) {
       logWarn("Discord attachment freeze fetch failed", {
         correlationId: request.correlationId,
@@ -85,6 +90,7 @@ async function freezeDiscordRequestAttachment(
         filename: attachment.filename,
         error: fetched.error
       });
+
       return { attachment };
     }
 
@@ -97,15 +103,18 @@ async function freezeDiscordRequestAttachment(
         sizeBytes: fetched.bytes.byteLength,
         maxBytes: DISCORD_ATTACHMENT_MAX_BYTES
       });
+
       return { attachment };
     }
 
     const artifactId = createDiscordAttachmentArtifactId(request, attachment);
     const storedAt = new Date().toISOString();
+
     const mimeType =
       normalizeMimeType(fetched.mimeType) ??
       normalizeMimeType(attachment.mimeType) ??
       "application/octet-stream";
+
     const artifact = await storeResponseArtifact(env, {
       id: artifactId,
       source: "discord_attachment",
@@ -149,6 +158,7 @@ async function freezeDiscordRequestAttachment(
       filename: attachment.filename,
       error: getErrorMessage(error)
     });
+
     return { attachment };
   }
 }
@@ -195,10 +205,12 @@ function createDiscordAttachmentArtifactKey(
   attachment: DiscordRequestAttachment
 ) {
   const date = new Date().toISOString().slice(0, 10);
+
   const filename = sanitizeArtifactFilename(
     attachment.filename,
     "attachment.bin"
   );
+
   return [
     DISCORD_ATTACHMENT_ARTIFACT_PREFIX,
     date,
@@ -227,11 +239,13 @@ async function fetchAttachmentBytes(
     headers: { accept: attachment.mimeType ?? "*/*" },
     signal: AbortSignal.timeout(DISCORD_ATTACHMENT_FETCH_TIMEOUT_MS)
   });
+
   if (!response.ok) {
     const body = await readResponseTextWithLimit(
       response,
       DISCORD_ATTACHMENT_ERROR_MAX_BYTES
     ).catch(() => "");
+
     return {
       ok: false,
       error: `${response.status} ${body.slice(0, 200)}`.trim()
@@ -250,11 +264,13 @@ async function fetchAttachmentBytes(
 
 function decodeDataUrl(url: string) {
   const match = url.match(/^data:([^;,]+)?(;base64)?,(.*)$/);
+
   if (!match) return { ok: false as const, error: "invalid data URL" };
 
   const mimeType = match[1] || undefined;
   const isBase64 = Boolean(match[2]);
   const payload = match[3] ?? "";
+
   const bytes = isBase64
     ? Uint8Array.from(atob(payload), (char) => char.charCodeAt(0))
     : new TextEncoder().encode(decodeURIComponent(payload));
@@ -279,9 +295,11 @@ function mergeStoredArtifacts(
   artifacts: StoredResponseArtifact[]
 ): StoredResponseArtifact[] {
   const seen = new Set<string>();
+
   return artifacts.filter((artifact) => {
     if (seen.has(artifact.id)) return false;
     seen.add(artifact.id);
+
     return true;
   });
 }

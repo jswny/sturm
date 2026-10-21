@@ -16,6 +16,7 @@ const imageAspectRatioSchema = z.enum([
   "16:9",
   "21:9"
 ]);
+
 const imageResolutionSchema = z.enum(["1K", "2K", "4K"]);
 
 const generateImageResponseSchema = z.object({
@@ -89,7 +90,9 @@ export function createImageTools(
             correlation: getImageGenerationCorrelation(options.discordRequest)
           }
         );
+
         if (artifact) await options.onArtifactCreated?.(artifact);
+
         return response;
       },
       toModelOutput: ({ output }) => ({
@@ -109,16 +112,20 @@ function formatGenerateImageOutput(output: GenerateImageToolResponse) {
     "Image generation succeeded.",
     `attached: ${output.attached ? "yes" : "no"}`
   ];
+
   if (output.artifactId) {
     lines.push(
       `artifactId: ${output.artifactId} (same-turn tool handle only; do not include in final response text)`
     );
   }
+
   if (output.aspectRatio) lines.push(`aspectRatio: ${output.aspectRatio}`);
+
   if (output.resolution) lines.push(`resolution: ${output.resolution}`);
   lines.push(
     "Final response guidance: briefly say the image is attached. Do not write Markdown image syntax, attachment URLs, filenames, artifact IDs, hashes, provider metadata, or prompt dumps unless the user explicitly asks for diagnostics."
   );
+
   return lines.join("\n");
 }
 

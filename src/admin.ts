@@ -24,6 +24,7 @@ export async function handleAdminRequest(
   env: AdminEnv
 ): Promise<Response | null> {
   const url = new URL(request.url);
+
   if (isRegisterCommandsPath(url.pathname)) {
     if (request.method !== "POST") {
       return Response.json({ error: "Method not allowed" }, { status: 405 });
@@ -48,6 +49,7 @@ async function registerCommandsInAllGuilds(env: AdminEnv) {
 
   if (!applicationId) {
     logWarn("Discord command registration missing application ID");
+
     return Response.json(
       { ok: false, error: "DISCORD_APPLICATION_ID is not configured." },
       { status: 500 }
@@ -56,6 +58,7 @@ async function registerCommandsInAllGuilds(env: AdminEnv) {
 
   if (!token) {
     logWarn("Discord command registration missing bot token");
+
     return Response.json(
       { ok: false, error: "DISCORD_TOKEN is not configured." },
       { status: 500 }
@@ -63,17 +66,20 @@ async function registerCommandsInAllGuilds(env: AdminEnv) {
   }
 
   let guilds: Awaited<ReturnType<typeof getCurrentUserGuilds>>;
+
   try {
     guilds = await getCurrentUserGuilds(env);
   } catch (error) {
     logDiscordAdminFailure("Discord guild list fetch failed", error, {
       operation: "registerCommands"
     });
+
     return Response.json(
       { ok: false, error: formatDiscordAdminError(error) },
       { status: 502 }
     );
   }
+
   const commandNames = GUILD_COMMANDS.map((command) => command.name);
   const results: RegisterCommandsResult[] = [];
 
@@ -90,6 +96,7 @@ async function registerCommandsInAllGuilds(env: AdminEnv) {
         guild.id,
         GUILD_COMMANDS
       );
+
       results.push({
         guildId: guild.id,
         guildName: guild.name,
@@ -116,6 +123,7 @@ async function registerCommandsInAllGuilds(env: AdminEnv) {
   }
 
   const failures = results.filter((result) => !result.ok);
+
   return Response.json({
     ok: failures.length === 0,
     guildCount: guilds.length,
@@ -138,6 +146,7 @@ function logDiscordAdminFailure(
       discordCode: error.code,
       error: formatDiscordAdminError(error)
     });
+
     return;
   }
 

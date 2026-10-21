@@ -83,7 +83,9 @@ export function getDiscordTurnFromUserMessage(
   if (message.role !== "user") return undefined;
 
   const metadata = message.metadata as DiscordUserMessageMetadata;
+
   if (metadata?.source !== "discord") return undefined;
+
   if (typeof metadata.correlationId !== "string") return undefined;
 
   return {
@@ -130,6 +132,7 @@ export function createDiscordResponseFromAssistantMessage(
   artifacts: ResponseArtifact[]
 ): DiscordChatResponse {
   const cleanText = stripModelThinkingTraces(text);
+
   return {
     content: formatDiscordResponseText(cleanText, artifacts),
     attachments: artifacts.map((artifact) => ({
@@ -167,6 +170,7 @@ export async function clearDiscordSession(
   await session.clearMessages();
   const workspaceRootEntries = await session.clearWorkspace?.();
   const channelContextCleared = await session.clearChannelContext?.();
+
   return {
     content: formatResetResponse(
       messageCount,
@@ -240,7 +244,9 @@ export function getDiscordArtifactsFromAssistantMessage(
   if (message.role !== "assistant") return undefined;
 
   const metadata = message.metadata as DiscordAssistantMessageMetadata;
+
   if (metadata?.source !== "discord") return undefined;
+
   return getStoredArtifactMetadata(metadata.artifacts);
 }
 
@@ -269,13 +275,16 @@ export function withAssistantText(
 
 function getDiscordUserMetadata(value: unknown) {
   if (!value || typeof value !== "object") return undefined;
+
   const user = value as {
     id?: unknown;
     displayName?: unknown;
     roles?: unknown;
     joinedAtUtc?: unknown;
   };
+
   if (typeof user.id !== "string") return undefined;
+
   return {
     id: user.id,
     displayName:
@@ -288,15 +297,18 @@ function getDiscordUserMetadata(value: unknown) {
 
 function getStringArray(value: unknown) {
   if (!Array.isArray(value)) return undefined;
+
   const strings = value.filter(
     (entry): entry is string => typeof entry === "string"
   );
+
   return strings.length > 0 ? strings : undefined;
 }
 
 function getDiscordAppMetadata(value: unknown) {
   if (!value || typeof value !== "object") return undefined;
   const app = value as { applicationId?: unknown; botUserId?: unknown };
+
   return {
     applicationId:
       typeof app.applicationId === "string" ? app.applicationId : undefined,
@@ -306,6 +318,7 @@ function getDiscordAppMetadata(value: unknown) {
 
 function getDiscordChannelMetadata(value: unknown) {
   if (!value || typeof value !== "object") return undefined;
+
   const channel = value as {
     id?: unknown;
     guildId?: unknown;
@@ -317,6 +330,7 @@ function getDiscordChannelMetadata(value: unknown) {
     nsfw?: unknown;
     slowmodeSeconds?: unknown;
   };
+
   if (typeof channel.id !== "string") return undefined;
 
   return {
@@ -343,6 +357,7 @@ function getDiscordAttachmentMetadata(value: unknown) {
   return value
     .map((item) => {
       if (!item || typeof item !== "object") return undefined;
+
       const attachment = item as {
         id?: unknown;
         artifactId?: unknown;
@@ -357,6 +372,7 @@ function getDiscordAttachmentMetadata(value: unknown) {
         height?: unknown;
         description?: unknown;
       };
+
       if (
         typeof attachment.id !== "string" ||
         typeof attachment.filename !== "string" ||
@@ -408,6 +424,7 @@ function getStoredArtifactMetadata(value: unknown) {
   return value
     .map((item) => {
       if (!item || typeof item !== "object") return undefined;
+
       const artifact = item as {
         id?: unknown;
         source?: unknown;
@@ -419,6 +436,7 @@ function getStoredArtifactMetadata(value: unknown) {
         visualSummary?: unknown;
         metadata?: unknown;
       };
+
       if (
         typeof artifact.id !== "string" ||
         !isStoredArtifactSource(artifact.source) ||
@@ -466,6 +484,7 @@ function isStoredArtifactSource(
 function getDiscordPermissionMetadata(value: unknown) {
   if (!value || typeof value !== "object") return undefined;
   const permissions = value as { raw?: unknown; names?: unknown };
+
   if (typeof permissions.raw !== "string") return undefined;
 
   return {

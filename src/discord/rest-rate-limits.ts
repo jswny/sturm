@@ -2,11 +2,13 @@ const RATE_LIMIT_FUDGE_MS = 100;
 
 export function getDiscordRestRetryAfterMs(response: Response, body: string) {
   const parsed = getDiscordRestRateLimitBody(body);
+
   if (typeof parsed?.retry_after === "number") {
     return Math.ceil(parsed.retry_after * 1000) + RATE_LIMIT_FUDGE_MS;
   }
 
   const header = Number(response.headers.get("retry-after"));
+
   if (Number.isFinite(header) && header > 0) {
     return Math.ceil(header * 1000) + RATE_LIMIT_FUDGE_MS;
   }
@@ -16,7 +18,9 @@ export function getDiscordRestRetryAfterMs(response: Response, body: string) {
 
 export function getDiscordRestResetAfterMs(response: Response) {
   const header = Number(response.headers.get("x-ratelimit-reset-after"));
+
   if (!Number.isFinite(header) || header <= 0) return undefined;
+
   return Math.ceil(header * 1000) + RATE_LIMIT_FUDGE_MS;
 }
 

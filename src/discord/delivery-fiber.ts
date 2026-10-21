@@ -70,32 +70,46 @@ export function parseDiscordDeliveryFiberSnapshot(
   value: unknown
 ): DiscordDeliveryFiberSnapshot | null {
   if (!isObject(value)) return null;
+
   if (value.kind !== "discord_response_delivery" || value.version !== 1) {
     return null;
   }
+
   if (typeof value.correlationId !== "string") return null;
 
   if (value.action === "completed_without_response") {
     return value as DiscordDeliveryFiberSnapshot;
   }
+
   if (value.action === "failure") {
     if (typeof value.error !== "string") return null;
+
     if (
       value.userMessage !== undefined &&
       typeof value.userMessage !== "string"
     ) {
       return null;
     }
+
     return value as DiscordDeliveryFiberSnapshot;
   }
+
   if (value.action !== "chat_response") return null;
+
   if (!isObject(value.result)) return null;
+
   if (value.result.status !== "completed") return null;
+
   if (typeof value.result.requestId !== "string") return null;
+
   if (typeof value.result.continuation !== "boolean") return null;
+
   if (!isObject(value.result.message)) return null;
+
   if (typeof value.result.message.id !== "string") return null;
+
   if (value.result.message.role !== "assistant") return null;
+
   if (!Array.isArray(value.result.message.parts)) return null;
 
   return value as DiscordDeliveryFiberSnapshot;

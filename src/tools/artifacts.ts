@@ -100,6 +100,7 @@ async function exportWorkspaceFile(
   }
 ): Promise<ExportWorkspaceFileResponse> {
   const path = normalizeWorkspacePath(input.path);
+
   if (!workspace) {
     return {
       success: false,
@@ -110,6 +111,7 @@ async function exportWorkspaceFile(
   }
 
   const stat = await workspace.stat(path);
+
   if (!stat) {
     return {
       success: false,
@@ -140,11 +142,13 @@ async function exportWorkspaceFile(
   }
 
   const bytes = await workspace.readFileBytes(path);
+
   if (!bytes) {
     logWarn("Workspace export read returned no bytes", {
       path,
       sizeBytes: stat.size
     });
+
     return {
       success: false,
       attached: false,
@@ -157,6 +161,7 @@ async function exportWorkspaceFile(
     input.filename ?? getBasename(path) ?? stat.name,
     stat.name || "workspace-file.bin"
   );
+
   const mimeType =
     stat.mimeType ||
     inferMimeType(attachmentFilename) ||
@@ -192,6 +197,7 @@ async function exportWorkspaceFile(
       mimeType,
       sizeBytes: bytes.byteLength
     });
+
     return {
       success: false,
       attached: false,
@@ -206,11 +212,13 @@ async function exportWorkspaceFile(
 function normalizeWorkspacePath(path: string) {
   const trimmed = path.trim();
   const absolute = trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+
   return absolute.replace(/\/+/g, "/");
 }
 
 function inferMimeType(filename: string) {
   const extension = filename.toLowerCase().split(".").at(-1);
+
   switch (extension) {
     case "css":
       return "text/css";
@@ -257,15 +265,20 @@ function formatExportWorkspaceFileOutput(output: ExportWorkspaceFileResponse) {
     `attached: ${output.attached ? "yes" : "no"}`,
     `path: ${output.path}`
   ];
+
   if (output.filename) lines.push(`filename: ${output.filename}`);
+
   if (output.mimeType) lines.push(`mimeType: ${output.mimeType}`);
+
   if (output.artifactId) {
     lines.push(
       `artifactId: ${output.artifactId} (same-turn tool handle only; do not include in final response text)`
     );
   }
+
   lines.push(
     "Final response guidance: briefly say the file is attached. Do not paste raw file data, workspace internals, artifact IDs, storage keys, hashes, or other diagnostics unless the user explicitly asks."
   );
+
   return lines.join("\n");
 }

@@ -4,9 +4,13 @@ import { handleDiscordRequest } from "./discord";
 import { logError } from "./logging";
 
 export { ChatAgent } from "./agent";
+
 export { CodemodeRuntime } from "@cloudflare/codemode";
+
 export { DiscordRestDispatcher } from "./discord/rest-dispatcher";
+
 export { GuildMemoryObserverAgent } from "./guild-memory-observer";
+
 export { GuildMemoryObject } from "./memory";
 
 type ServerEnv = Env & {
@@ -18,6 +22,7 @@ type ServerEnv = Env & {
 export default {
   async fetch(request: Request, env: ServerEnv, ctx: ExecutionContext) {
     const url = new URL(request.url);
+
     try {
       if (url.pathname === "/" && request.method === "GET") {
         return Response.json({
@@ -39,6 +44,7 @@ export default {
         method: request.method,
         path: url.pathname
       });
+
       return Response.json({ error: "Internal server error" }, { status: 500 });
     }
   }

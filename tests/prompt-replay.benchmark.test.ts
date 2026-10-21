@@ -37,6 +37,7 @@ const DEFAULT_RUNS = 10;
 const DEFAULT_SCORING: PromptReplayScoring = {};
 const PROMPT_REPLAY_ENABLED = process.env.STURM_RUN_PROMPT_REPLAY === "true";
 const describePromptReplay = PROMPT_REPLAY_ENABLED ? describe : describe.skip;
+
 const localFixtureModules = (
   import.meta as ImportMeta & {
     glob: (
@@ -86,6 +87,7 @@ async function runPromptReplayBenchmark(
 
   for (let run = 1; run <= runs; run++) {
     const input = createReplayInput(fixture.request, variant);
+
     const result = await (env.AI as AiBinding).run(model, input, {
       gateway: {
         id: "default",
@@ -97,6 +99,7 @@ async function runPromptReplayBenchmark(
         }
       }
     });
+
     const text = extractAssistantText(result);
     results.push({
       run,
@@ -108,6 +111,7 @@ async function runPromptReplayBenchmark(
   }
 
   const textRuns = results.filter((result) => result.text.length > 0);
+
   return {
     model,
     variant: variant.name,
@@ -128,12 +132,14 @@ function createReplayInput(
 ) {
   const input = structuredClone(request);
   input.stream = false;
+
   if (variant.disableTools) {
     delete input.tools;
     delete input.tool_choice;
   }
 
   const appendSystem = variant.appendSystem;
+
   if (appendSystem) {
     input.messages = input.messages.map((message, index) =>
       index === 0 ? appendMessageContent(message, appendSystem) : message
@@ -151,6 +157,7 @@ function createReplayInput(
 
 function appendMessageContent(message: unknown, suffix: string) {
   if (!isRecord(message) || typeof message.content !== "string") return message;
+
   return {
     ...message,
     content: `${message.content}\n${suffix}`
@@ -162,6 +169,7 @@ function replaceMessageContent(
   replacement: { find: string; replace: string }
 ) {
   if (!isRecord(message) || typeof message.content !== "string") return message;
+
   return {
     ...message,
     content: message.content.replace(replacement.find, replacement.replace)
@@ -172,24 +180,28 @@ function extractAssistantText(result: unknown) {
   const firstChoice = getFirstChoice(result);
   const message = isRecord(firstChoice?.message) ? firstChoice.message : {};
   const content = message.content;
+
   return typeof content === "string" ? content : "";
 }
 
 function extractFinishReason(result: unknown) {
   const firstChoice = getFirstChoice(result);
   const finishReason = firstChoice?.finish_reason;
+
   return typeof finishReason === "string" ? finishReason : undefined;
 }
 
 function hasToolCalls(result: unknown) {
   const firstChoice = getFirstChoice(result);
   const message = isRecord(firstChoice?.message) ? firstChoice.message : {};
+
   return Array.isArray(message.tool_calls) && message.tool_calls.length > 0;
 }
 
 function getFirstChoice(result: unknown) {
   if (!isRecord(result) || !Array.isArray(result.choices)) return undefined;
   const firstChoice = result.choices[0];
+
   return isRecord(firstChoice) ? firstChoice : undefined;
 }
 
@@ -197,9 +209,11 @@ function scoreAssistantText(text: string, scoring: PromptReplayScoring) {
   const normalized = text.toLowerCase();
   const includeAny = scoring.includeAny ?? [];
   const excludeAny = scoring.excludeAny ?? [];
+
   const includeMiss =
     includeAny.length > 0 &&
     !includeAny.some((needle) => normalized.includes(needle.toLowerCase()));
+
   const excludeHit = excludeAny.some((needle) =>
     normalized.includes(needle.toLowerCase())
   );
@@ -216,15 +230,19 @@ function expectPromptReplayFixture(
   path: string
 ): PromptReplayFixture {
   if (!isRecord(value)) throw new Error(`${path} must export a JSON object`);
+
   if (!isRecord(value.request)) {
     throw new Error(`${path} must include a request object`);
   }
+
   if (!Array.isArray(value.request.messages)) {
     throw new Error(`${path} request.messages must be an array`);
   }
+
   if (typeof value.model !== "string" || value.model.length === 0) {
     throw new Error(`${path} must include a model`);
   }
+
   return value as PromptReplayFixture;
 }
 

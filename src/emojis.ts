@@ -52,6 +52,7 @@ export async function createGuildEmojiFromArtifact(
     targetName: "emoji",
     targetNamePlural: "emojis"
   });
+
   const baseResponse = {
     ok: false,
     action: "created_emoji",
@@ -66,6 +67,7 @@ export async function createGuildEmojiFromArtifact(
   }
 
   const name = sanitizeEmojiName(input.name);
+
   if (!name) {
     return {
       ...baseResponse,
@@ -79,6 +81,7 @@ export async function createGuildEmojiFromArtifact(
     sizePx: EMOJI_SIZE_PX,
     maxBytes: MAX_EMOJI_BYTES
   });
+
   if (!processed.ok) {
     return {
       ...baseResponse,
@@ -93,6 +96,7 @@ export async function createGuildEmojiFromArtifact(
       image: createDataUri(STATIC_EXPRESSION_MIME_TYPE, processed.image.base64),
       reason: `Emoji created by ${context.userId ?? "unknown user"} through Sturm`
     })) as APIEmoji;
+
     const createdName = emoji.name ?? name;
 
     return {

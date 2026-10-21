@@ -4,6 +4,7 @@ import { formatGuildMemoryContext } from "./guild-memory-formatter";
 const GUILD_MEMORY_CATALOG_ID = 1;
 
 export type GuildMemoryKind = "guild" | "user" | "relationship";
+
 export type GuildMemorySource =
   | "discord_turn"
   | "ambient_channel"
@@ -108,6 +109,7 @@ export class GuildMemoryProvider {
 
   async get(): Promise<string | null> {
     const catalog = await this.getCatalog();
+
     return formatGuildMemoryContext(catalog.records);
   }
 
@@ -115,11 +117,13 @@ export class GuildMemoryProvider {
     const guildId = this.requireGuildId();
     const catalog = await this.getObject(guildId).getMemoryCatalog();
     this.lastRead = catalog;
+
     return catalog;
   }
 
   async getCurrentRevision() {
     const guildId = this.requireGuildId();
+
     return this.getObject(guildId).getMemoryRevision();
   }
 
@@ -129,6 +133,7 @@ export class GuildMemoryProvider {
 
   async commit(input: GuildMemoryCommitInput) {
     const guildId = this.requireGuildId();
+
     return this.getObject(guildId).commitMemoryChanges(input);
   }
 
@@ -138,9 +143,11 @@ export class GuildMemoryProvider {
 
   private requireGuildId() {
     const guildId = this.getGuildId();
+
     if (!guildId) {
       throw new Error("Guild memory requires a guild-scoped Agent.");
     }
+
     return guildId;
   }
 }
@@ -172,11 +179,13 @@ export class GuildMemoryObject extends DurableObject<Env> {
         input.correlationId
       )
       .toArray()[0];
+
     if (existingCommit) {
       return parseStoredCommitResult(existingCommit.result_json);
     }
 
     const catalog = this.readCatalogRow();
+
     if (catalog.epoch !== input.baseEpoch) {
       return { status: "conflict", reason: "reset" };
     }
@@ -191,9 +200,11 @@ export class GuildMemoryObject extends DurableObject<Env> {
           .map((mutation) => mutation.memoryId)
       )
     ];
+
     const missingMemoryIds = deleteIds.filter(
       (memoryId) => !this.getStoredMemoryRow(memoryId)
     );
+
     if (missingMemoryIds.length > 0) {
       return {
         status: "conflict",
@@ -203,6 +214,7 @@ export class GuildMemoryObject extends DurableObject<Env> {
     }
 
     let deletedCount = 0;
+
     for (const memoryId of deleteIds) {
       deletedCount += this.ctx.storage.sql.exec(
         "DELETE FROM guild_memory_records WHERE memory_id = ?",
@@ -213,9 +225,11 @@ export class GuildMemoryObject extends DurableObject<Env> {
     let nextOrdinal = catalog.next_ordinal;
     let addedCount = 0;
     const now = new Date().toISOString();
+
     for (const mutation of input.mutations) {
       if (mutation.type !== "add") continue;
       const prepared = prepareAddMutation(mutation);
+
       const result = this.ctx.storage.sql.exec(
         `INSERT OR IGNORE INTO guild_memory_records (
           memory_id,
@@ -240,6 +254,7 @@ export class GuildMemoryObject extends DurableObject<Env> {
         now,
         createMemoryDedupeKey(prepared)
       );
+
       if (result.rowsWritten > 0) {
         nextOrdinal += 1;
         addedCount += 1;
@@ -249,6 +264,7 @@ export class GuildMemoryObject extends DurableObject<Env> {
     const changed = addedCount > 0 || deletedCount > 0;
     const nextRevision = changed ? catalog.revision + 1 : catalog.revision;
     const updatedAt = changed ? now : catalog.updated_at;
+
     if (changed) {
       this.ctx.storage.sql.exec(
         `UPDATE guild_memory_catalog
@@ -267,6 +283,7 @@ export class GuildMemoryObject extends DurableObject<Env> {
       addedCount,
       deletedCount
     } satisfies GuildMemoryCommitResult;
+
     this.ctx.storage.sql.exec(
       `INSERT INTO guild_memory_commits (
         correlation_id,
@@ -277,6 +294,7 @@ export class GuildMemoryObject extends DurableObject<Env> {
       JSON.stringify(result),
       now
     );
+
     return result;
   }
 
@@ -284,6 +302,7 @@ export class GuildMemoryObject extends DurableObject<Env> {
     const requestedMemoryId = memoryId.trim();
     const current = this.readCatalogRow();
     const stored = this.getStoredMemoryRow(requestedMemoryId);
+
     if (!stored) {
       return {
         ...(await this.readCatalog()),
@@ -317,11 +336,13 @@ export class GuildMemoryObject extends DurableObject<Env> {
 
   async resetMemory(): Promise<GuildMemoryResetResult> {
     const current = this.readCatalogRow();
+
     const deletedCount = this.ctx.storage.sql
       .exec<{ count: number }>(
         "SELECT COUNT(*) AS count FROM guild_memory_records"
       )
       .one().count;
+
     this.ctx.storage.sql.exec("DELETE FROM guild_memory_records");
 
     const changed = deletedCount > 0;
@@ -462,6 +483,7 @@ export class GuildMemoryObject extends DurableObject<Env> {
 
   private readCatalog(): GuildMemoryCatalog {
     const catalog = this.readCatalogRow();
+
     const records = this.ctx.storage.sql
       .exec<StoredMemoryRow>(
         `SELECT
@@ -478,6 +500,7 @@ export class GuildMemoryObject extends DurableObject<Env> {
       )
       .toArray()
       .map(parseStoredMemoryRow);
+
     return {
       records,
       revision: catalog.revision,
@@ -519,7 +542,9 @@ export class GuildMemoryObject extends DurableObject<Env> {
 
 function prepareAddMutation(mutation: GuildMemoryAddMutation) {
   const content = mutation.content.trim();
+
   if (!content) throw new Error("Guild memory content cannot be empty.");
+
   const subjectUserIds = [
     ...new Set(mutation.subjectUserIds.map((userId) => userId.trim()))
   ].filter(Boolean);
@@ -527,9 +552,11 @@ function prepareAddMutation(mutation: GuildMemoryAddMutation) {
   if (mutation.kind === "guild" && subjectUserIds.length !== 0) {
     throw new Error("Guild memory cannot have subject user IDs.");
   }
+
   if (mutation.kind === "user" && subjectUserIds.length !== 1) {
     throw new Error("User memory requires exactly one subject user ID.");
   }
+
   if (mutation.kind === "relationship" && subjectUserIds.length < 2) {
     throw new Error(
       "Relationship memory requires at least two subject user IDs."
@@ -559,7 +586,9 @@ function parseStoredMemoryRow(row: StoredMemoryRow): GuildMemoryRecord {
   if (!isGuildMemorySource(row.source)) {
     throw new Error(`Invalid source for guild memory ${row.memory_id}.`);
   }
+
   const parsedSubjectUserIds = JSON.parse(row.subject_user_ids) as unknown;
+
   if (
     !Array.isArray(parsedSubjectUserIds) ||
     !parsedSubjectUserIds.every((value) => typeof value === "string")
@@ -593,6 +622,7 @@ function isGuildMemorySource(value: string): value is GuildMemorySource {
 
 function parseStoredCommitResult(resultJson: string): GuildMemoryCommitResult {
   const stored = JSON.parse(resultJson) as Partial<GuildMemoryCommitResult>;
+
   if (
     stored.status !== "committed" ||
     typeof stored.changed !== "boolean" ||
@@ -619,6 +649,7 @@ export function getGuildMemoryObject(
   guildId: string
 ) {
   const id = namespace.idFromName(getGuildMemoryObjectName(guildId));
+
   return namespace.get(id);
 }
 

@@ -50,12 +50,15 @@ export function createBrowserAutomationTools(
           session: { mode: "dynamic" },
           timeout: BROWSER_EXECUTION_TIMEOUT_MS
         });
+
         const browserExecute = runtime.tool({
           connectorHints: { cdp: BROWSER_CONNECTOR_HINT }
         });
+
         if (!browserExecute.execute) {
           throw new Error("browser_execute tool is not executable.");
         }
+
         return browserExecute.execute(input, options);
       }
     })

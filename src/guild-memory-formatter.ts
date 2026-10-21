@@ -45,6 +45,7 @@ export function formatGuildMemoryReflectionContext(
 
 function formatRecordGroup(title: string, records: GuildMemoryRecord[]) {
   if (records.length === 0) return "";
+
   return [title, ...records.map((record) => `- ${formatRecord(record)}`)].join(
     "\n"
   );

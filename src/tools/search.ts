@@ -27,6 +27,7 @@ const urlSummaryResponseSchema = z.object({
 });
 
 type SearchToolResponse = z.infer<typeof searchResponseSchema>;
+
 type UrlSummaryToolResponse = z.infer<typeof urlSummaryResponseSchema>;
 
 export function createSearchTools(env: SearchEnv) {
@@ -74,9 +75,12 @@ function formatSearchOutput(output: SearchToolResponse) {
   }
 
   const lines = [`Web search query: ${output.query}`];
+
   if (output.answer) lines.push(`Answer: ${output.answer}`);
+
   if (output.results.length > 0) {
     lines.push("Sources:");
+
     for (const result of output.results) {
       lines.push(
         [
@@ -89,9 +93,11 @@ function formatSearchOutput(output: SearchToolResponse) {
       );
     }
   }
+
   lines.push(
     "Final response guidance: answer from the search result and include source URLs when useful or requested."
   );
+
   return lines.join("\n");
 }
 

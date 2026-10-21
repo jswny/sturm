@@ -45,6 +45,7 @@ function createDiscordChannelContext(
   interaction: DiscordRuntimeInteraction
 ): DiscordChannelContext {
   const channel = interaction.channel as UnknownRecord | undefined;
+
   return omitUndefined({
     id: interaction.channel_id,
     guildId: interaction.guild_id ?? getString(channel, "guild_id"),
@@ -113,6 +114,7 @@ function formatUnstoredDiscordAttachmentContext(
   attachments: DiscordChatRequest["attachments"]
 ) {
   const unstored = attachments?.filter((attachment) => !attachment.artifactKey);
+
   if (!unstored?.length) return "";
 
   const lines = [
@@ -168,11 +170,13 @@ function formatChannelType(type: number | undefined) {
 
 function getString(record: UnknownRecord | undefined, key: string) {
   const value = record?.[key];
+
   return typeof value === "string" && value.trim() ? value : undefined;
 }
 
 function getNumber(record: UnknownRecord | undefined, key: string) {
   const value = record?.[key];
+
   return typeof value === "number" && Number.isFinite(value)
     ? value
     : undefined;
@@ -180,11 +184,13 @@ function getNumber(record: UnknownRecord | undefined, key: string) {
 
 function getBoolean(record: UnknownRecord | undefined, key: string) {
   const value = record?.[key];
+
   return typeof value === "boolean" ? value : undefined;
 }
 
 function formatBoolean(value: boolean | undefined) {
   if (value === undefined) return undefined;
+
   return value ? "true" : "false";
 }
 

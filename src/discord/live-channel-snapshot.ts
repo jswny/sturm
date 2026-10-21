@@ -30,6 +30,7 @@ export async function createLiveDiscordChannelSnapshot(
     limit: LIVE_CHANNEL_MESSAGE_LIMIT,
     maxWaitMs: LIVE_CHANNEL_SNAPSHOT_MAX_WAIT_MS
   });
+
   const memberDisplayNames = await resolveDiscordMessageAuthorDisplayNames(
     env,
     request.guildId,

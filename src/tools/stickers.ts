@@ -104,11 +104,15 @@ function formatCreateStickerOutput(output: CreateStickerToolResponse) {
   }
 
   const lines = ["Discord sticker created."];
+
   if (output.name) lines.push(`name: ${output.name}`);
+
   if (output.description) lines.push(`description: ${output.description}`);
+
   if (output.tags?.length) lines.push(`tags: ${output.tags.join(", ")}`);
   lines.push(
     "Final response guidance: mention the sticker by name when useful. Do not expose source artifact IDs, internal IDs, processed sizes, or diagnostics unless the user explicitly asks."
   );
+
   return lines.join("\n");
 }

@@ -64,6 +64,7 @@ export async function searchGuildMembers(
   limit = GUILD_MEMBER_SEARCH_DEFAULT_LIMIT
 ): Promise<GuildMemberSearchResult> {
   const preparedQuery = query.trim();
+
   if (!preparedQuery) {
     return {
       ok: false,
@@ -110,6 +111,7 @@ export async function searchGuildMembers(
       results: members.map((member) => {
         const globalName = member.user.global_name ?? undefined;
         const nickname = member.nick ?? undefined;
+
         return {
           id: member.user.id,
           username: member.user.username,
@@ -122,6 +124,7 @@ export async function searchGuildMembers(
     };
   } catch (error) {
     logGuildMemberSearchFailure(error, context, preparedQuery);
+
     return {
       ok: false,
       guildId: context.guildId,
@@ -138,6 +141,7 @@ export async function setNicknamePostfix(
   postfix: string
 ): Promise<NicknameResponse> {
   const preparedPostfix = postfix.trim();
+
   if (!preparedPostfix) {
     return failure(
       "set",
@@ -148,16 +152,20 @@ export async function setNicknamePostfix(
   }
 
   const guard = validateNicknameContext(env, context, targetUserId);
+
   if (guard.error)
     return failure("set", context, guard.targetUserId, guard.error);
 
   try {
     const guildId = context.guildId ?? "";
+
     const member = await getGuildMember(env, guildId, guard.targetUserId, {
       cache: "reload"
     });
+
     const oldNickname = resolveDiscordMemberDisplayName(member);
     const baseNickname = parseBaseNickname(oldNickname);
+
     if (!baseNickname) {
       return failure(
         "set",
@@ -191,6 +199,7 @@ export async function setNicknamePostfix(
     };
   } catch (error) {
     logNicknameOperationFailure("set", error, context, guard.targetUserId);
+
     return failure(
       "set",
       context,
@@ -206,16 +215,20 @@ export async function clearNicknamePostfix(
   targetUserId: string
 ): Promise<NicknameResponse> {
   const guard = validateNicknameContext(env, context, targetUserId);
+
   if (guard.error)
     return failure("cleared", context, guard.targetUserId, guard.error);
 
   try {
     const guildId = context.guildId ?? "";
+
     const member = await getGuildMember(env, guildId, guard.targetUserId, {
       cache: "reload"
     });
+
     const oldNickname = resolveDiscordMemberDisplayName(member);
     const baseNickname = parseBaseNickname(oldNickname);
+
     if (!baseNickname) {
       return failure(
         "cleared",
@@ -259,6 +272,7 @@ export async function clearNicknamePostfix(
     };
   } catch (error) {
     logNicknameOperationFailure("cleared", error, context, guard.targetUserId);
+
     return failure(
       "cleared",
       context,
@@ -293,14 +307,19 @@ function convertPostfix(postfix: string) {
   return Array.from(postfix)
     .map((char) => {
       const codepoint = char.codePointAt(0);
+
       if (codepoint === undefined) return char;
+
       if (codepoint === 104) return "ℎ";
+
       if (codepoint >= 65 && codepoint <= 90) {
         return String.fromCodePoint(codepoint - 65 + 0x1d434);
       }
+
       if (codepoint >= 97 && codepoint <= 122) {
         return String.fromCodePoint(codepoint - 97 + 0x1d44e);
       }
+
       return char;
     })
     .join("");
@@ -355,6 +374,7 @@ function logGuildMemberSearchFailure(
       discordCode: error.code,
       error: formatGuildMemberSearchError(error)
     });
+
     return;
   }
 

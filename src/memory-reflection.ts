@@ -152,9 +152,11 @@ export class GuildMemoryReflectionStore {
 
   async markRunning(correlationId: string, discordInteractionId?: string) {
     const now = new Date().toISOString();
+
     return this.storage.transaction(async (txn) => {
       const key = getMemoryReflectionRecordKey(correlationId);
       const existing = await txn.get<GuildMemoryReflectionRecord>(key);
+
       if (existing?.status === "completed") {
         return { started: false, record: existing };
       }
@@ -167,7 +169,9 @@ export class GuildMemoryReflectionStore {
         createdAt: existing?.createdAt ?? now,
         updatedAt: now
       } satisfies GuildMemoryReflectionRecord;
+
       await txn.put(key, record);
+
       return { started: true, record };
     });
   }
@@ -203,6 +207,7 @@ export class GuildMemoryReflectionStore {
 
   async pruneTerminalRecords(retentionMs: number) {
     const cutoffMs = Date.now() - retentionMs;
+
     return pruneDurableStorageRecords<GuildMemoryReflectionRecord>(
       this.storage,
       {
@@ -243,6 +248,7 @@ export async function reflectGuildMemory(
   ) {
     try {
       const plan = await generateMemoryReflectionPlan(input);
+
       return { ...plan, attempts: attempt };
     } catch (error) {
       lastError = error;
@@ -284,6 +290,7 @@ export function getGuildMemoryReflectionFiberName(correlationId: string) {
 export function getGuildMemoryReflectionCorrelationId(name: string) {
   if (!name.startsWith(GUILD_MEMORY_REFLECTION_PREFIX)) return undefined;
   const correlationId = name.slice(GUILD_MEMORY_REFLECTION_PREFIX.length);
+
   return correlationId || undefined;
 }
 
@@ -334,8 +341,11 @@ export function parseGuildMemoryReflectionSnapshot(
   value: unknown
 ): GuildMemoryReflectionSnapshot | null {
   if (!isObject(value)) return null;
+
   if (value.kind !== "guild_memory_reflection") return null;
+
   if (!isGuildMemoryReflectionPhase(value.phase)) return null;
+
   if (typeof value.correlationId !== "string") return null;
 
   const evidence =
@@ -344,9 +354,11 @@ export function parseGuildMemoryReflectionSnapshot(
       : value.version === 1
         ? parseLegacyCompletedTurnMemoryEvidence(value)
         : null;
+
   if (!evidence) return null;
 
   const reflection = parseGuildMemoryReflectionSummary(value.reflection);
+
   if (value.reflection !== undefined && !reflection) return null;
 
   return {
@@ -366,9 +378,11 @@ export function parseGuildMemoryReflectionSnapshot(
 async function generateMemoryReflectionPlan(input: ReflectGuildMemoryInput) {
   const mutations: GuildMemoryMutation[] = [];
   const terminalDecisions: GuildMemoryReflectionOperation[] = [];
+
   const currentRecordsById = new Map(
     input.currentCatalog.records.map((record) => [record.memoryId, record])
   );
+
   const knownUserIds = getKnownUserIds(input);
 
   await generateText({
@@ -399,11 +413,13 @@ async function generateMemoryReflectionPlan(input: ReflectGuildMemoryInput) {
 
   const normalizedMutations = normalizeMutations(mutations);
   const decision = terminalDecisions[0];
+
   if (decision === "commit" && normalizedMutations.length === 0) {
     throw new Error(
       "Guild memory reflection committed without proposing any memory changes."
     );
   }
+
   if (decision === "no_change" && normalizedMutations.length > 0) {
     throw new Error(
       "Guild memory reflection proposed memory changes and then selected noMemoryUpdate."
@@ -440,8 +456,10 @@ function createMemoryReflectionTools(context: {
         const result = await context.input.searchGuildMembers(query);
         const matches = result.results ?? [];
         const resolved = getUnambiguousMemberMatch(query, matches);
+
         if (result.ok && resolved) {
           context.knownUserIds.add(resolved.id);
+
           return {
             ok: true,
             query: result.query,
@@ -477,6 +495,7 @@ function createMemoryReflectionTools(context: {
           content,
           subjectUserIds: []
         });
+
         return "Guild memory proposal staged.";
       }
     }),
@@ -497,6 +516,7 @@ function createMemoryReflectionTools(context: {
           content,
           subjectUserIds: [subjectUserId]
         });
+
         return "User memory proposal staged.";
       }
     }),
@@ -506,11 +526,13 @@ function createMemoryReflectionTools(context: {
       inputSchema: rememberRelationshipFactInputSchema,
       execute: ({ subjectUserIds, content }) => {
         const distinctUserIds = [...new Set(subjectUserIds)];
+
         if (distinctUserIds.length < 2) {
           throw new Error(
             "Relationship memory requires at least two distinct Discord user IDs."
           );
         }
+
         requireKnownUserIds(distinctUserIds, context.knownUserIds);
         requireChannelBatchSubjectAuthor(
           context.input,
@@ -523,6 +545,7 @@ function createMemoryReflectionTools(context: {
           content,
           subjectUserIds: distinctUserIds
         });
+
         return "Relationship memory proposal staged.";
       }
     }),
@@ -534,7 +557,9 @@ function createMemoryReflectionTools(context: {
         if (!context.currentRecordsById.has(memoryId)) {
           throw new Error(`No current guild memory has memoryId ${memoryId}.`);
         }
+
         context.mutations.push({ type: "delete", memoryId });
+
         return "Guild memory deletion proposal staged.";
       }
     }),
@@ -544,6 +569,7 @@ function createMemoryReflectionTools(context: {
       inputSchema: terminalInputSchema,
       execute: () => {
         context.terminalDecisions.push("commit");
+
         return "Guild memory proposals ready for atomic commit.";
       }
     }),
@@ -553,6 +579,7 @@ function createMemoryReflectionTools(context: {
       inputSchema: terminalInputSchema,
       execute: () => {
         context.terminalDecisions.push("no_change");
+
         return "No guild memory update recorded.";
       }
     })
@@ -575,14 +602,17 @@ function createMemoryReflectionPrompt(input: ReflectGuildMemoryInput) {
 
 function getKnownUserIds(input: ReflectGuildMemoryInput) {
   const knownUserIds = new Set<string>();
+
   for (const record of input.currentCatalog.records) {
     for (const userId of record.subjectUserIds) knownUserIds.add(userId);
+
     if (record.assertedByUserId) knownUserIds.add(record.assertedByUserId);
   }
 
   if (input.evidence.kind === "completed_turn") {
     const request = input.evidence.request;
     const callerUserId = request.user?.id ?? request.userId;
+
     if (callerUserId) knownUserIds.add(callerUserId);
     addMentionedUserIds(knownUserIds, request.text);
   } else {
@@ -591,6 +621,7 @@ function getKnownUserIds(input: ReflectGuildMemoryInput) {
       addMentionedUserIds(knownUserIds, message.content);
     }
   }
+
   return knownUserIds;
 }
 
@@ -602,6 +633,7 @@ function addMentionedUserIds(knownUserIds: Set<string>, content: string) {
 
 function requireKnownUserIds(userIds: string[], knownUserIds: Set<string>) {
   const unknownUserIds = userIds.filter((userId) => !knownUserIds.has(userId));
+
   if (unknownUserIds.length === 0) return;
   throw new Error(
     `Unknown Discord user IDs: ${unknownUserIds.join(", ")}. Resolve names before proposing memory.`
@@ -614,9 +646,11 @@ function requireChannelBatchSubjectAuthor(
   kind: "user" | "relationship"
 ) {
   if (input.evidence.kind === "completed_turn") return;
+
   const authorUserIds = new Set(
     input.evidence.messages.map((message) => message.authorUserId)
   );
+
   if (subjectUserIds.some((userId) => authorUserIds.has(userId))) return;
   throw new Error(
     `Channel-batch ${kind} memory requires at least one subject to be an author in the evidence batch.`
@@ -629,17 +663,20 @@ function getUnambiguousMemberMatch(
 ) {
   if (matches.length === 1) return matches[0];
   const normalizedQuery = query.trim().toLocaleLowerCase();
+
   const exactMatches = matches.filter((match) =>
     [match.username, match.globalName, match.nickname, match.displayName].some(
       (label) => label?.trim().toLocaleLowerCase() === normalizedQuery
     )
   );
+
   return exactMatches.length === 1 ? exactMatches[0] : undefined;
 }
 
 function normalizeMutations(mutations: GuildMemoryMutation[]) {
   const seen = new Set<string>();
   const normalized: GuildMemoryMutation[] = [];
+
   for (const mutation of mutations) {
     const key =
       mutation.type === "delete"
@@ -650,6 +687,7 @@ function normalizeMutations(mutations: GuildMemoryMutation[]) {
             [...mutation.subjectUserIds].sort(),
             mutation.content.trim().toLocaleLowerCase()
           ]);
+
     if (seen.has(key)) continue;
     seen.add(key);
     normalized.push(
@@ -662,6 +700,7 @@ function normalizeMutations(mutations: GuildMemoryMutation[]) {
           }
     );
   }
+
   return normalized;
 }
 
@@ -675,23 +714,30 @@ function getMemoryReflectionRecordKey(correlationId: string) {
 
 function parseGuildMemoryReflectionSummary(value: unknown) {
   if (value === undefined) return undefined;
+
   if (!isObject(value)) return null;
+
   if (typeof value.changed !== "boolean") return null;
 
   const operation = parseGuildMemoryReflectionOperation(value.operation);
+
   if (!operation) return null;
+
   if (value.attempts !== undefined && typeof value.attempts !== "number") {
     return null;
   }
+
   if (value.addedCount !== undefined && typeof value.addedCount !== "number") {
     return null;
   }
+
   if (
     value.deletedCount !== undefined &&
     typeof value.deletedCount !== "number"
   ) {
     return null;
   }
+
   if (value.reason !== undefined && typeof value.reason !== "string") {
     return null;
   }
@@ -714,9 +760,11 @@ function parseGuildMemoryReflectionOperation(
   value: unknown
 ): GuildMemoryReflectionOperation | null {
   if (value === "no_change") return "no_change";
+
   if (value === "commit" || value === "append" || value === "replace") {
     return "commit";
   }
+
   return null;
 }
 

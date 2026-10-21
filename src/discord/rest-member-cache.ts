@@ -31,10 +31,12 @@ export class DiscordGuildMemberCacheStore {
   async get(target: DiscordGuildMemberTarget) {
     const key = getGuildMemberCacheKey(target.guildId, target.userId);
     const cached = await this.storage.get<DiscordGuildMemberCacheState>(key);
+
     if (!cached) return undefined;
 
     if (cached.expiresAt <= Date.now()) {
       await this.storage.delete(key);
+
       return undefined;
     }
 
@@ -50,11 +52,13 @@ export class DiscordGuildMemberCacheStore {
     if (cacheMode === "no-store") return undefined;
 
     const target = getDiscordGuildMemberTarget(method, path);
+
     if (target) {
       return this.storeGuildMemberResponse(target.guildId, target.userId, body);
     }
 
     const searchGuildId = getDiscordGuildMemberSearchGuildId(method, path);
+
     if (!searchGuildId) return undefined;
 
     return this.storeGuildMemberSearchResponse(searchGuildId, body);
@@ -74,6 +78,7 @@ export class DiscordGuildMemberCacheStore {
     const entries = await this.storage.list<DiscordGuildMemberCacheState>({
       prefix: DISCORD_GUILD_MEMBER_CACHE_PREFIX
     });
+
     let next: number | undefined;
 
     for (const entry of entries.values()) {
@@ -85,22 +90,28 @@ export class DiscordGuildMemberCacheStore {
 
   private async storeGuildMemberSearchResponse(guildId: string, body: string) {
     const members = parseGuildMemberSearchResponse(body);
+
     if (!members) return undefined;
 
     const writes: Promise<number>[] = [];
+
     for (const member of members) {
       const userId = getGuildMemberResponseUserId(member);
+
       if (userId) {
         writes.push(
           this.storeGuildMember(guildId, userId, JSON.stringify(member))
         );
       }
     }
+
     const expiresAts = await Promise.all(writes);
     let next: number | undefined;
+
     for (const expiresAt of expiresAts) {
       next = minTimestamp(next, expiresAt);
     }
+
     return next;
   }
 
@@ -110,8 +121,10 @@ export class DiscordGuildMemberCacheStore {
     body: string
   ) {
     const member = parseGuildMemberResponse(body);
+
     if (!member || getGuildMemberResponseUserId(member) !== userId) {
       await this.storage.delete(getGuildMemberCacheKey(guildId, userId));
+
       return undefined;
     }
 
@@ -124,12 +137,15 @@ export class DiscordGuildMemberCacheStore {
     body: string
   ) {
     const now = Date.now();
+
     const entry = {
       body,
       updatedAt: now,
       expiresAt: now + this.ttlMs
     } satisfies DiscordGuildMemberCacheState;
+
     await this.storage.put(getGuildMemberCacheKey(guildId, userId), entry);
+
     return entry.expiresAt;
   }
 }
@@ -141,13 +157,17 @@ function getGuildMemberCacheKey(guildId: string, userId: string) {
 function parseGuildMemberSearchResponse(body: string) {
   try {
     const parsed = JSON.parse(body) as unknown;
+
     if (!Array.isArray(parsed)) return undefined;
 
     const members: DiscordGuildMemberResponse[] = [];
+
     for (const value of parsed) {
       const member = parseGuildMember(value);
+
       if (member) members.push(member);
     }
+
     return members;
   } catch {
     return undefined;
@@ -168,11 +188,13 @@ function parseGuildMember(
   if (!value || typeof value !== "object") return undefined;
 
   const member = value as DiscordGuildMemberResponse;
+
   return getGuildMemberResponseUserId(member) ? member : undefined;
 }
 
 function getGuildMemberResponseUserId(member: DiscordGuildMemberResponse) {
   const userId = member.user?.id;
+
   return typeof userId === "string" && isDiscordSnowflake(userId)
     ? userId
     : undefined;

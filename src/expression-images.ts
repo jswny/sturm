@@ -73,9 +73,11 @@ export function prepareStaticExpressionArtifact(
   const storedArtifact = context.artifacts?.find((item) =>
     matchesArtifactId(item, artifactId)
   );
+
   const artifact = storedArtifact
     ? toStaticExpressionSource(storedArtifact)
     : undefined;
+
   const baseFields = {
     guildId: context.guildId,
     callerUserId: context.userId,
@@ -99,6 +101,7 @@ export function prepareStaticExpressionArtifact(
       deniedMessage: `You need Discord's Create Guild Expressions permission to create ${options.targetNamePlural}.`
     }
   );
+
   if (!permission.ok) {
     return {
       ok: false,
@@ -140,6 +143,7 @@ export function isSupportedStaticImageArtifact(
   artifact: StaticExpressionSource
 ) {
   const mimeType = artifact.mimeType?.toLowerCase();
+
   if (
     mimeType === "image/png" ||
     mimeType === "image/jpeg" ||
@@ -164,12 +168,14 @@ export async function transformStaticArtifactImage(
   { ok: true; image: StaticExpressionImage } | { ok: false; error: string }
 > {
   let lastSizeBytes: number | undefined;
+
   for (const quality of TRANSFORM_QUALITIES) {
     const source = await openStaticArtifactImageSource(
       env,
       artifact,
       options.targetName
     );
+
     if (!source.ok) {
       return {
         ok: false,
@@ -178,6 +184,7 @@ export async function transformStaticArtifactImage(
     }
 
     let transformed: ImageTransformationResult;
+
     try {
       transformed = await env.IMAGES.input(source.body)
         .transform({
@@ -199,6 +206,7 @@ export async function transformStaticArtifactImage(
         filename: artifact.filename,
         error: error instanceof Error ? error.message : String(error)
       });
+
       return {
         ok: false,
         error: `Cloudflare could not transform that image into a ${options.targetName}.`
@@ -209,6 +217,7 @@ export async function transformStaticArtifactImage(
     const bytes = new Uint8Array(buffer);
     const contentType = transformed.contentType();
     lastSizeBytes = bytes.byteLength;
+
     if (!isPng(bytes, contentType)) {
       logWarn("Discord expression image transform returned non-PNG bytes", {
         targetName: options.targetName,
@@ -219,6 +228,7 @@ export async function transformStaticArtifactImage(
         sizeBytes: bytes.byteLength,
         signature: getByteSignature(bytes)
       });
+
       return {
         ok: false,
         error: `Cloudflare did not return a valid PNG for that ${options.targetName}.`
@@ -255,6 +265,7 @@ function toStaticExpressionSource(
   artifact: StoredResponseArtifact
 ): StaticExpressionSource {
   const dimensions = getArtifactDimensions(artifact);
+
   return {
     artifactId: artifact.id,
     source: artifact.source,
@@ -296,6 +307,7 @@ async function openStaticArtifactImageSource(
 > {
   if (artifact.artifactKey) {
     const object = await env.ARTIFACTS_BUCKET.get(artifact.artifactKey);
+
     if (object?.body) return { ok: true, body: object.body };
 
     logWarn("Discord expression image artifact was missing", {
@@ -320,9 +332,11 @@ export function createDataUri(mimeType: string, base64: string) {
 function bytesToBase64(bytes: Uint8Array) {
   const chunkSize = 0x8000;
   let binary = "";
+
   for (let index = 0; index < bytes.length; index += chunkSize) {
     binary += String.fromCharCode(...bytes.slice(index, index + chunkSize));
   }
+
   return btoa(binary);
 }
 

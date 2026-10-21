@@ -49,6 +49,7 @@ export class ChannelContextStore {
     const stored = await this.storage.get<ChannelContextSnapshot>(
       CHANNEL_CONTEXT_STORAGE_KEY
     );
+
     return normalizeSnapshot(stored);
   }
 
@@ -57,12 +58,15 @@ export class ChannelContextStore {
       const current = normalizeSnapshot(
         await txn.get<ChannelContextSnapshot>(CHANNEL_CONTEXT_STORAGE_KEY)
       );
+
       if (current.epoch !== input.baseEpoch) {
         throw new ChannelContextEpochChangedError();
       }
+
       if (current.lastReflectionCorrelationId === input.correlationId) {
         return { changed: false, duplicate: true, snapshot: current };
       }
+
       if (
         isChannelContextReflectionStale(
           current.lastProcessedMessageId,
@@ -71,16 +75,19 @@ export class ChannelContextStore {
       ) {
         throw new ChannelContextStaleReflectionError();
       }
+
       if (current.version !== input.baseVersion) {
         throw new ChannelContextVersionConflictError();
       }
 
       const content = normalizeContent(input.content);
+
       if (input.content.trim() && !content) {
         throw new Error(
           "Channel context was empty after model-output sanitization."
         );
       }
+
       if (content.length > CHANNEL_CONTEXT_MAX_CHARS) {
         throw new Error(
           `Channel context exceeds ${CHANNEL_CONTEXT_MAX_CHARS} characters.`
@@ -88,6 +95,7 @@ export class ChannelContextStore {
       }
 
       const changed = content !== current.content;
+
       const snapshot = {
         content,
         epoch: current.epoch,
@@ -99,7 +107,9 @@ export class ChannelContextStore {
         ),
         lastReflectionCorrelationId: input.correlationId
       } satisfies ChannelContextSnapshot;
+
       await txn.put(CHANNEL_CONTEXT_STORAGE_KEY, snapshot);
+
       return { changed, duplicate: false, snapshot };
     });
   }
@@ -109,14 +119,18 @@ export class ChannelContextStore {
       const current = normalizeSnapshot(
         await txn.get<ChannelContextSnapshot>(CHANNEL_CONTEXT_STORAGE_KEY)
       );
+
       const changed = Boolean(current.content);
+
       const snapshot = {
         content: "",
         epoch: current.epoch + 1,
         version: 0,
         updatedAt: new Date().toISOString()
       } satisfies ChannelContextSnapshot;
+
       await txn.put(CHANNEL_CONTEXT_STORAGE_KEY, snapshot);
+
       return changed;
     });
   }
@@ -187,6 +201,7 @@ function newestDiscordMessageId(
   candidate: string | undefined
 ) {
   if (!current) return candidate;
+
   if (!candidate) return current;
 
   try {

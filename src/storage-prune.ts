@@ -11,6 +11,7 @@ export async function pruneDurableStorageRecords<T>(
       ? { prefix: options.prefix }
       : { prefix: options.prefix, limit: options.limit }
   );
+
   const keysToDelete: string[] = [];
 
   for (const [key, record] of records) {
@@ -26,5 +27,6 @@ export async function pruneDurableStorageRecords<T>(
 
 export function isTimestampBefore(value: string, cutoffMs: number) {
   const timestampMs = Date.parse(value);
+
   return Number.isFinite(timestampMs) && timestampMs < cutoffMs;
 }

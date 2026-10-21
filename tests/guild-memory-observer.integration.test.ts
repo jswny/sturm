@@ -61,6 +61,7 @@ describe("guild memory observer", () => {
             "SELECT generation FROM guild_memory_observer_metadata WHERE id = 1"
           )
           .one();
+
         const job = state.storage.sql
           .exec<{ generation: number; failure_count: number }>(
             `SELECT generation, failure_count
@@ -69,6 +70,7 @@ describe("guild memory observer", () => {
             backfillId
           )
           .one();
+
         const spool = state.storage.sql
           .exec<{ generation: number }>(
             `SELECT generation
@@ -77,6 +79,7 @@ describe("guild memory observer", () => {
             backfillId
           )
           .one();
+
         const retry = state.storage.sql
           .exec<{ generation: number; failure_count: number }>(
             `SELECT generation, failure_count
@@ -85,6 +88,7 @@ describe("guild memory observer", () => {
             survivingChannelId
           )
           .one();
+
         const removedSourceCount = state.storage.sql
           .exec<{ count: number }>(
             `SELECT COUNT(*) AS count
@@ -93,6 +97,7 @@ describe("guild memory observer", () => {
             removedChannelId
           )
           .one().count;
+
         return { metadata, job, spool, retry, removedSourceCount };
       }
     );
@@ -119,6 +124,7 @@ describe("guild memory observer", () => {
         seedBackfill(state, { backfillId, channelId, generation: 0 });
         const internals = instance as unknown as ObserverInternals;
         const observedAtUtc = new Date().toISOString();
+
         const evidence: GuildMemoryChannelMessageEvidence = {
           messageId: "51",
           channelId,
@@ -182,11 +188,14 @@ describe("guild memory observer", () => {
         const calls: string[] = [];
         internals.reflectChannelEvidence = async (input) => {
           const channelId = input.evidence[0]?.channelId;
+
           if (!channelId) throw new Error("Missing ambient test evidence.");
           calls.push(channelId);
+
           if (channelId === failingChannelId) {
             throw new Error("Permanent ambient test failure.");
           }
+
           return { status: "completed", reflection: null };
         };
 
@@ -201,6 +210,7 @@ describe("guild memory observer", () => {
             failingChannelId
           )
           .one();
+
         const pending = state.storage.sql
           .exec<{ channel_id: string; count: number }>(
             `SELECT channel_id, COUNT(*) AS count
@@ -209,6 +219,7 @@ describe("guild memory observer", () => {
              ORDER BY channel_id`
           )
           .toArray();
+
         return { calls, retry, pending };
       }
     );
@@ -247,6 +258,7 @@ describe("guild memory observer", () => {
 
         for (let attempt = 1; attempt <= 3; attempt++) {
           await internals.reflectNextReadyAmbientChannel(guildId);
+
           if (attempt < 3) {
             state.storage.sql.exec(
               `UPDATE guild_memory_ambient_retries
@@ -263,11 +275,13 @@ describe("guild memory observer", () => {
             "SELECT COUNT(*) AS count FROM guild_memory_observer_messages"
           )
           .one().count;
+
         const retryCount = state.storage.sql
           .exec<{ count: number }>(
             "SELECT COUNT(*) AS count FROM guild_memory_ambient_retries"
           )
           .one().count;
+
         return { callCount, pendingCount, retryCount };
       }
     );
@@ -305,6 +319,7 @@ describe("guild memory observer", () => {
       observer,
       async (instance: GuildMemoryObserverAgent) => {
         const schedules = await instance.listSchedules({ type: "delayed" });
+
         return schedules.filter(
           (schedule) =>
             schedule.type === "delayed" &&
@@ -313,6 +328,7 @@ describe("guild memory observer", () => {
         ).length;
       }
     );
+
     expect(continuationCount).toBe(1);
   });
 });
@@ -322,7 +338,9 @@ async function createObserver(guildId: string) {
     env.GuildMemoryObserver,
     getGuildMemoryObserverName(guildId)
   );
+
   await observer.listSources(guildId);
+
   return observer;
 }
 

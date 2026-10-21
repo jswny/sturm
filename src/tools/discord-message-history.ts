@@ -66,6 +66,7 @@ function formatDiscordMessageHistoryOutput(
   }
 
   const messages = output.messages ?? [];
+
   return [
     `Earlier Discord messages: ${messages.length} (oldest to newest)`,
     ...messages.map(formatDiscordRetrievedMessageOutput),

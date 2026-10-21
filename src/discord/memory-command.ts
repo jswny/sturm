@@ -51,6 +51,7 @@ export async function runMemoryCommand(
       responseTarget,
       "You need Manage Server permission to use /memory."
     );
+
     return;
   }
 
@@ -60,46 +61,56 @@ export async function runMemoryCommand(
   if (subcommandGroup === "source") {
     const sourceCommand = getNestedSubcommandName(interaction);
     const observer = await getGuildMemoryObserver(env, guildId);
+
     if (sourceCommand === "view") {
       const sources = await observer.listSources(guildId);
       await deliverMemorySourceView(responseTarget, sources);
+
       return;
     }
 
     if (sourceCommand === "enable" || sourceCommand === "disable") {
       const channel = getSourceChannelOption(interaction, currentChannelId);
+
       const input = {
         guildId,
         channelId: channel.id,
         ...(channel.name ? { channelName: channel.name } : {}),
         boundarySnowflake: interaction.id
       };
+
       const result =
         sourceCommand === "enable"
           ? await observer.enableSource(input)
           : await observer.disableSource(input);
+
       await editOriginalInteractionResponse(
         responseTarget,
         formatMemorySourceMutationResult(result)
       );
+
       return;
     }
 
     if (sourceCommand === "backfill") {
       const channel = getSourceChannelOption(interaction, currentChannelId);
+
       const messageLimit =
         getNestedIntegerOption(interaction, "messages") ??
         MEMORY_BACKFILL_DEFAULT_MESSAGE_LIMIT;
+
       const result = await observer.startBackfill({
         guildId,
         channelId: channel.id,
         ...(channel.name ? { channelName: channel.name } : {}),
         messageLimit
       });
+
       await editOriginalInteractionResponse(
         responseTarget,
         formatMemoryBackfillResult(result)
       );
+
       return;
     }
 
@@ -107,22 +118,26 @@ export async function runMemoryCommand(
       responseTarget,
       "Unknown memory source subcommand."
     );
+
     return;
   }
 
   if (subcommand === "view") {
     const result = await listGuildMemory(env.GuildMemory, guildId);
     await deliverMemoryCommandResult(responseTarget, formatMemoryView(result));
+
     return;
   }
 
   if (subcommand === "delete") {
     const memoryId = getStringSubcommandOption(interaction, "id");
+
     if (!memoryId) {
       await editOriginalInteractionResponse(
         responseTarget,
         "Missing memory ID."
       );
+
       return;
     }
 
@@ -131,10 +146,12 @@ export async function runMemoryCommand(
       guildId,
       memoryId
     );
+
     await deliverMemoryCommandResult(
       responseTarget,
       formatMemoryDeleteResult(result)
     );
+
     return;
   }
 
@@ -149,6 +166,7 @@ export async function runMemoryCommand(
       responseTarget,
       formatMemoryResetResult(result)
     );
+
     return;
   }
 
@@ -168,6 +186,7 @@ function getSubcommandGroupName(
   interaction: APIChatInputApplicationCommandInteraction
 ) {
   const option = interaction.data.options?.[0];
+
   return option?.type === ApplicationCommandOptionType.SubcommandGroup
     ? option.name
     : "";
@@ -186,7 +205,9 @@ function getStringSubcommandOption(
   const option = getSubcommandOption(interaction)?.options?.find(
     (item) => item.name === name
   );
+
   if (option?.type !== ApplicationCommandOptionType.String) return undefined;
+
   return option.value;
 }
 
@@ -194,6 +215,7 @@ function getSubcommandOption(
   interaction: APIChatInputApplicationCommandInteraction
 ) {
   const option = interaction.data.options?.[0];
+
   if (option?.type !== ApplicationCommandOptionType.Subcommand) {
     return undefined;
   }
@@ -205,10 +227,13 @@ function getNestedSubcommandOption(
   interaction: APIChatInputApplicationCommandInteraction
 ) {
   const group = interaction.data.options?.[0];
+
   if (group?.type !== ApplicationCommandOptionType.SubcommandGroup) {
     return undefined;
   }
+
   const option = group.options?.[0];
+
   return option?.type === ApplicationCommandOptionType.Subcommand
     ? option
     : undefined;
@@ -221,14 +246,17 @@ function getSourceChannelOption(
   const option = getNestedSubcommandOption(interaction)?.options?.find(
     (item) => item.name === "channel"
   );
+
   if (option?.type !== ApplicationCommandOptionType.Channel) {
     return {
       id: currentChannelId,
       ...(interaction.channel?.name ? { name: interaction.channel.name } : {})
     };
   }
+
   const id = String(option.value);
   const resolved = interaction.data.resolved?.channels?.[id];
+
   return {
     id,
     ...(resolved?.name ? { name: resolved.name } : {})
@@ -242,7 +270,9 @@ function getNestedIntegerOption(
   const option = getNestedSubcommandOption(interaction)?.options?.find(
     (item) => item.name === name
   );
+
   if (option?.type !== ApplicationCommandOptionType.Integer) return undefined;
+
   return option.value;
 }
 
@@ -269,6 +299,7 @@ async function deliverMemoryCommandResult(
 ) {
   if (content.length <= 1900) {
     await editOriginalInteractionResponse(target, content);
+
     return;
   }
 
@@ -291,8 +322,10 @@ async function deliverMemorySourceView(
   sources: GuildMemorySourceStatus[]
 ) {
   const embed = formatMemorySourceViewEmbed(sources);
+
   if ((embed.fields?.length ?? 0) <= 25 && getEmbedTextLength(embed) <= 6000) {
     await editOriginalInteractionResponseWithEmbeds(target, [embed]);
+
     return;
   }
 
@@ -319,6 +352,7 @@ function formatMemoryView(result: GuildMemoryCatalog) {
 
   if (result.records.length === 0) {
     lines.push("", "No guild memory records.");
+
     return lines.join("\n");
   }
 
@@ -326,6 +360,7 @@ function formatMemoryView(result: GuildMemoryCatalog) {
     "",
     ...result.records.map((record, index) => formatMemoryRecord(record, index))
   );
+
   return lines.join("\n");
 }
 
@@ -370,6 +405,7 @@ function formatMemorySourceMutationResult(
   result: GuildMemorySourceMutationResult
 ) {
   const channel = `<#${result.channelId}>`;
+
   switch (result.status) {
     case "enabled":
       return `${channel} is now an ambient memory source. Sturm will observe only new human messages.`;
@@ -421,7 +457,9 @@ function formatMemorySourceViewText(sources: GuildMemorySourceStatus[]) {
         `  pending: ${source.pendingMessageCount}`,
         `  last poll: ${source.lastPolledAtUtc ?? "never"}`
       ];
+
       if (source.lastError) lines.push(`  observer error: ${source.lastError}`);
+
       if (source.latestBackfill) {
         const backfill = source.latestBackfill;
         lines.push(
@@ -430,10 +468,12 @@ function formatMemorySourceViewText(sources: GuildMemorySourceStatus[]) {
           `  eligible: ${backfill.collectedMessageCount}`,
           `  reflected: ${backfill.reflectedMessageCount}`
         );
+
         if (backfill.lastError) {
           lines.push(`  backfill error: ${backfill.lastError}`);
         }
       }
+
       return lines;
     })
   ].join("\n");
@@ -462,11 +502,13 @@ function formatMemorySourceField(source: GuildMemorySourceStatus) {
   }
 
   const backfill = source.latestBackfill;
+
   if (backfill) {
     lines.push(
       `**Backfill** · ${formatBackfillStatus(backfill.status)} · Scanned **${formatCount(backfill.scannedMessageCount)} / ${formatCount(backfill.messageLimit)}**`,
       `Eligible **${formatCount(backfill.collectedMessageCount)}** · Reflected **${formatCount(backfill.reflectedMessageCount)}**`
     );
+
     if (backfill.lastError) {
       lines.push(`⚠️ ${truncateEmbedFieldLine(backfill.lastError)}`);
     }
@@ -477,6 +519,7 @@ function formatMemorySourceField(source: GuildMemorySourceStatus) {
 
 function formatBackfillStatus(status: string) {
   const label = status.charAt(0).toUpperCase() + status.slice(1);
+
   switch (status) {
     case "completed":
       return `✅ ${label}`;
@@ -492,7 +535,9 @@ function formatBackfillStatus(status: string) {
 function formatDiscordRelativeTimestamp(timestamp: string | undefined) {
   if (!timestamp) return "never";
   const milliseconds = Date.parse(timestamp);
+
   if (!Number.isFinite(milliseconds)) return "unknown";
+
   return `<t:${Math.floor(milliseconds / 1000)}:R>`;
 }
 
@@ -502,18 +547,23 @@ function formatCount(value: number) {
 
 function truncateEmbedFieldLine(value: string) {
   const normalized = value.replace(/\s+/g, " ").trim();
+
   return normalized.length <= 240 ? normalized : `${normalized.slice(0, 237)}…`;
 }
 
 function formatMemoryBackfillResult(result: StartGuildMemoryBackfillResult) {
   const channel = `<#${result.channelId}>`;
+
   if (result.status === "source_not_enabled") {
     return `${channel} is not an ambient memory source. Enable it first with /memory source enable.`;
   }
+
   const backfill = result.backfill;
+
   if (!backfill) {
     return `${channel} backfill status is unavailable.`;
   }
+
   if (result.status === "already_running") {
     return [
       `${channel} already has a memory backfill in progress.`,
@@ -523,6 +573,7 @@ function formatMemoryBackfillResult(result: StartGuildMemoryBackfillResult) {
       `reflected_messages: ${backfill.reflectedMessageCount}`
     ].join("\n");
   }
+
   return [
     `Started a memory backfill for ${channel}.`,
     `message_cap: ${backfill.messageLimit}`,
@@ -533,13 +584,16 @@ function formatMemoryBackfillResult(result: StartGuildMemoryBackfillResult) {
 
 function formatMemoryRecord(record: GuildMemoryRecord, index?: number) {
   const prefix = index === undefined ? "" : `${index + 1}. `;
+
   const subjects =
     record.subjectUserIds.length > 0
       ? ` subjects=${record.subjectUserIds.join(",")}`
       : "";
+
   const assertedBy = record.assertedByUserId
     ? ` assertedBy=${record.assertedByUserId}`
     : "";
+
   return `${prefix}[${record.memoryId}] [${record.kind} source=${record.source}${subjects}${assertedBy}] ${record.content}`;
 }
 
@@ -550,6 +604,8 @@ function createMemoryAttachmentSummary() {
 function utf8ToBase64(content: string) {
   const bytes = new TextEncoder().encode(content);
   let binary = "";
+
   for (const byte of bytes) binary += String.fromCharCode(byte);
+
   return btoa(binary);
 }

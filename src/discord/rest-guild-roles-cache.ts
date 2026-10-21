@@ -19,10 +19,12 @@ export class DiscordGuildRolesCacheStore {
   async get(guildId: string) {
     const key = getGuildRolesCacheKey(guildId);
     const cached = await this.storage.get<DiscordGuildRolesCacheState>(key);
+
     if (!cached) return undefined;
 
     if (cached.expiresAt <= Date.now()) {
       await this.storage.delete(key);
+
       return undefined;
     }
 
@@ -38,15 +40,19 @@ export class DiscordGuildRolesCacheStore {
     if (cacheMode === "no-store") return undefined;
 
     const guildId = getDiscordGuildRolesGuildId(method, path);
+
     if (!guildId || !isDiscordGuildRolesResponse(body)) return undefined;
 
     const now = Date.now();
+
     const entry = {
       body,
       updatedAt: now,
       expiresAt: now + this.ttlMs
     } satisfies DiscordGuildRolesCacheState;
+
     await this.storage.put(getGuildRolesCacheKey(guildId), entry);
+
     return entry.expiresAt;
   }
 
@@ -64,6 +70,7 @@ export class DiscordGuildRolesCacheStore {
     const entries = await this.storage.list<DiscordGuildRolesCacheState>({
       prefix: DISCORD_GUILD_ROLES_CACHE_PREFIX
     });
+
     let next: number | undefined;
 
     for (const entry of entries.values()) {
@@ -74,6 +81,7 @@ export class DiscordGuildRolesCacheStore {
             : Math.min(next, entry.expiresAt);
       }
     }
+
     return next;
   }
 }
@@ -85,6 +93,7 @@ function getGuildRolesCacheKey(guildId: string) {
 function isDiscordGuildRolesResponse(body: string) {
   try {
     const roles = JSON.parse(body) as unknown;
+
     if (!Array.isArray(roles)) return false;
 
     return roles.every(

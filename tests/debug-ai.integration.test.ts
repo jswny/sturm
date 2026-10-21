@@ -7,7 +7,7 @@ type WorkerFetch = {
 
 type JsonRecord = Record<string, unknown>;
 
-const worker = exports.default as unknown as WorkerFetch;
+const worker = exports.default as WorkerFetch;
 
 const surface = {
   type: "guild_channel",
@@ -36,6 +36,7 @@ describe("debug AI integration", () => {
       surface,
       correlationId: `${correlationId}-missing`
     });
+
     expect(missingStatus.status).toBe(200);
     expect(missingStatus.body).toMatchObject({
       ok: true,
@@ -50,6 +51,7 @@ describe("debug AI integration", () => {
       correlationId,
       text: "Integration health check. Reply with exactly: integration ok. No tools are needed."
     });
+
     expect(chat.status).toBe(200);
     expect(chat.body).toMatchObject({
       ok: true,
@@ -65,6 +67,7 @@ describe("debug AI integration", () => {
       const delivery = getOptionalRecord(status, "delivery");
       const submission = getOptionalRecord(status, "submission");
       const memoryReflection = getOptionalRecord(status, "memoryReflection");
+
       const fiber = memoryReflection
         ? getOptionalRecord(memoryReflection, "fiber")
         : null;
@@ -104,6 +107,7 @@ describe("debug AI integration", () => {
       surface,
       correlationId: resetCorrelationId
     });
+
     expect(reset.status).toBe(200);
     expect(reset.body).toMatchObject({
       ok: true,
@@ -118,6 +122,7 @@ describe("debug AI integration", () => {
       resetCorrelationId,
       (status) => getOptionalRecord(status, "delivery")?.status === "delivered"
     );
+
     expect(getRecord(resetStatus, "delivery")).toMatchObject({
       type: "reset",
       correlationId: resetCorrelationId,
@@ -141,6 +146,7 @@ async function waitForDebugStatus(
       surface,
       correlationId
     });
+
     expect(status.status).toBe(200);
     lastStatus = status.body;
 
@@ -172,6 +178,7 @@ async function requestJson(method: string, path: string, body?: unknown) {
       body: body === undefined ? undefined : JSON.stringify(body)
     })
   );
+
   const text = await response.text();
   const parsed = text ? (JSON.parse(text) as unknown) : null;
 
@@ -187,7 +194,9 @@ function getRecord(source: JsonRecord, key: string) {
 
 function getOptionalRecord(source: JsonRecord, key: string) {
   const value = source[key];
+
   if (value === null || value === undefined) return null;
+
   return expectRecord(value, key);
 }
 
@@ -195,11 +204,13 @@ function expectRecord(value: unknown, label: string): JsonRecord {
   expect(value, label).toBeTypeOf("object");
   expect(value, label).not.toBeNull();
   expect(Array.isArray(value), label).toBe(false);
+
   return value as JsonRecord;
 }
 
 function expectString(value: unknown, label: string) {
   expect(value, label).toBeTypeOf("string");
+
   return value as string;
 }
 

@@ -76,6 +76,7 @@ export async function runChannelContextReflection(
   ) {
     assertNotAborted(input.fiber);
     const current = await input.store.get();
+
     if (current.epoch !== input.snapshot.channelContextEpoch) {
       return {
         changed: false,
@@ -84,6 +85,7 @@ export async function runChannelContextReflection(
         skippedAfterReset: true
       };
     }
+
     if (current.lastReflectionCorrelationId === input.snapshot.correlationId) {
       return {
         changed: false,
@@ -92,6 +94,7 @@ export async function runChannelContextReflection(
         duplicate: true
       };
     }
+
     if (
       isChannelContextReflectionStale(
         current.lastProcessedMessageId,
@@ -113,11 +116,14 @@ export async function runChannelContextReflection(
         snapshot: input.snapshot,
         providerOptions: input.providerOptions
       });
+
       assertNotAborted(input.fiber);
+
       const nextContent =
         decision.operation === "replace" && decision.content
           ? decision.content
           : current.content;
+
       const completed = await input.store.completeReflection({
         baseEpoch: current.epoch,
         baseVersion: current.version,
@@ -125,6 +131,7 @@ export async function runChannelContextReflection(
         correlationId: input.snapshot.correlationId,
         lastProcessedMessageId: input.snapshot.lastProcessedMessageId
       });
+
       return {
         changed: completed.changed,
         operation: decision.operation,
@@ -140,6 +147,7 @@ export async function runChannelContextReflection(
           skippedAfterReset: true
         };
       }
+
       if (error instanceof ChannelContextStaleReflectionError) {
         return {
           changed: false,
@@ -148,6 +156,7 @@ export async function runChannelContextReflection(
           skippedAsStale: true
         };
       }
+
       lastError = error;
       assertNotAborted(input.fiber);
     }
@@ -180,20 +189,28 @@ export function parseChannelContextReflectionSnapshot(
   value: unknown
 ): ChannelContextReflectionSnapshot | null {
   if (!isObject(value)) return null;
+
   if (value.kind !== "channel_context_reflection" || value.version !== 1) {
     return null;
   }
+
   if (typeof value.correlationId !== "string") return null;
+
   if (
     typeof value.channelContextEpoch !== "number" ||
     !Number.isInteger(value.channelContextEpoch)
   ) {
     return null;
   }
+
   if (!isObject(value.request)) return null;
+
   if (typeof value.request.correlationId !== "string") return null;
+
   if (typeof value.request.text !== "string") return null;
+
   if (typeof value.assistantText !== "string") return null;
+
   if (typeof value.recentChannelContext !== "string") return null;
 
   return {
@@ -222,6 +239,7 @@ export function getChannelContextReflectionFiberName(correlationId: string) {
 export function getChannelContextReflectionCorrelationId(name: string) {
   if (!name.startsWith(CHANNEL_CONTEXT_REFLECTION_PREFIX)) return undefined;
   const correlationId = name.slice(CHANNEL_CONTEXT_REFLECTION_PREFIX.length);
+
   return correlationId || undefined;
 }
 
@@ -243,6 +261,7 @@ async function generateChannelContextDecision(input: {
         inputSchema: replaceChannelContextInputSchema,
         execute: ({ content }) => {
           decisions.push({ operation: "replace", content });
+
           return "Channel context replacement proposal recorded.";
         }
       }),
@@ -252,6 +271,7 @@ async function generateChannelContextDecision(input: {
         inputSchema: noChannelContextUpdateInputSchema,
         execute: () => {
           decisions.push({ operation: "no_change" });
+
           return "No channel context update recorded.";
         }
       })
@@ -265,6 +285,7 @@ async function generateChannelContextDecision(input: {
       `Channel context reflection expected exactly one tool call, received ${decisions.length}.`
     );
   }
+
   return decisions[0];
 }
 
@@ -273,6 +294,7 @@ function createChannelContextReflectionPrompt(input: {
   snapshot: ChannelContextReflectionSnapshot;
 }) {
   const request = input.snapshot.request;
+
   return [
     "Current channel metadata:",
     `guild_id: ${request.guildId ?? "unknown"}`,
@@ -312,7 +334,9 @@ function fence(content: string) {
 
 function truncate(content: string, maxLength = 4_000) {
   const trimmed = content.trim();
+
   if (trimmed.length <= maxLength) return trimmed;
+
   return `${trimmed.slice(0, maxLength)}\n[truncated]`;
 }
 

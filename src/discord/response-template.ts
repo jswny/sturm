@@ -39,6 +39,7 @@ export function renderDiscordResponseTemplate(
     const rendered = String(
       discordResponseRenderer.parseAndRenderSync(content)
     );
+
     return { content: rendered, rendered: rendered !== content };
   } catch (error) {
     return {
@@ -70,6 +71,7 @@ function createDiscordResponseRenderer() {
     (timestamp: unknown, style: unknown = "R") => {
       const timestampText =
         typeof timestamp === "string" ? timestamp : String(timestamp);
+
       if (!hasExplicitIsoTimezone(timestampText)) {
         throw new Error(
           "discordTimestamp requires an ISO 8601 timestamp with explicit timezone."
@@ -77,6 +79,7 @@ function createDiscordResponseRenderer() {
       }
 
       const unixTimestampSeconds = toUnixTimestampSeconds(timestampText);
+
       if (unixTimestampSeconds === undefined) {
         throw new Error("discordTimestamp received an invalid timestamp.");
       }
@@ -90,9 +93,11 @@ function createDiscordResponseRenderer() {
 
 function normalizeDiscordTimestampStyle(style: unknown) {
   const styleText = typeof style === "string" ? style : String(style);
+
   if (!DISCORD_TIMESTAMP_STYLES.has(styleText)) {
     throw new Error(`Unsupported Discord timestamp style: ${styleText}`);
   }
+
   return styleText;
 }
 

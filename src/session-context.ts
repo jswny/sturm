@@ -11,6 +11,7 @@ export const GUILD_MEMORY_CONTEXT_DESCRIPTION =
 export const GUILD_MEMORY_CONTEXT_MAX_TOKENS = 2000;
 
 const SESSION_CONTEXT_PROMPT_RENDERER_NAME = "sturm-session-context-prompt";
+
 const SESSION_CONTEXT_PROMPT_STORAGE_KEY = `session-context-prompt:${stableHash(
   JSON.stringify({
     rendererName: SESSION_CONTEXT_PROMPT_RENDERER_NAME,
@@ -25,6 +26,7 @@ const SESSION_CONTEXT_PROMPT_STORAGE_KEY = `session-context-prompt:${stableHash(
     ]
   })
 )}`;
+
 const GUILD_MEMORY_PROMPT_REVISION_KEY = `guild-memory-prompt-revision:${GUILD_MEMORY_CONTEXT_FORMAT_REVISION}`;
 
 type RevisionedMemoryProvider = {
@@ -44,9 +46,11 @@ export async function getFreshSessionContextPrompt(
   if (!provider) return session.freezeSystemPrompt();
 
   const currentRevision = await provider.getCurrentRevision();
+
   const cachedRevision = await storage.get<number>(
     GUILD_MEMORY_PROMPT_REVISION_KEY
   );
+
   if (cachedRevision === currentRevision) {
     return session.freezeSystemPrompt();
   }
@@ -56,6 +60,7 @@ export async function getFreshSessionContextPrompt(
     GUILD_MEMORY_PROMPT_REVISION_KEY,
     provider.getLastReadRevision() ?? currentRevision
   );
+
   return prompt;
 }
 
@@ -65,8 +70,10 @@ export function createDiscordThinkSystemPrompt(
 ) {
   const sections = [createBaseSystemPrompt()];
   const trimmedSessionContext = sessionContext.trim();
+
   if (trimmedSessionContext) sections.push(trimmedSessionContext);
   const trimmedRuntimeContext = runtimeContext?.trim();
+
   if (trimmedRuntimeContext) sections.push(trimmedRuntimeContext);
   sections.push(createRuntimeSystemPrompt());
 
@@ -75,9 +82,11 @@ export function createDiscordThinkSystemPrompt(
 
 function stableHash(input: string) {
   let hash = 0x811c9dc5;
+
   for (let index = 0; index < input.length; index++) {
     hash ^= input.charCodeAt(index);
     hash = Math.imul(hash, 0x01000193);
   }
+
   return (hash >>> 0).toString(36);
 }

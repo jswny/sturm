@@ -21,7 +21,9 @@ import { pruneDurableStorageRecords } from "../storage-prune";
 import { applyDiscordSourceTurnContext } from "./source-context";
 
 export type ComponentPromptKind = "confirm" | "select";
+
 export type ComponentPromptPresentation = "buttons" | "select";
+
 export type ComponentPromptStatus = "pending" | "consumed" | "expired";
 
 export type ComponentPromptOptionStyle =
@@ -136,8 +138,10 @@ export type ParsedComponentPromptCustomId = {
 };
 
 const COMPONENT_PROMPT_KEY_PREFIX = "discord:component-prompt:";
+
 const PENDING_COMPONENT_CONTINUATION_KEY_PREFIX =
   "discord:component-continuation:pending:";
+
 const CUSTOM_ID_PREFIX = "sturm:prompt";
 const DEFAULT_PROMPT_TTL_MS = 15 * 60 * 1000;
 const COMPONENT_PROMPT_RETENTION_MS = 24 * 60 * 60 * 1000;
@@ -156,6 +160,7 @@ export class DiscordComponentPromptStore {
   async create(input: CreateComponentPromptInput) {
     const now = new Date();
     const nowIso = now.toISOString();
+
     const prompt: StoredComponentPrompt = {
       id: crypto.randomUUID(),
       kind: input.kind,
@@ -196,6 +201,7 @@ export class DiscordComponentPromptStore {
     };
 
     await this.storage.put(getComponentPromptKey(prompt.id), prompt);
+
     return prompt;
   }
 
@@ -211,6 +217,7 @@ export class DiscordComponentPromptStore {
     await this.storage.transaction(async (txn) => {
       const key = getComponentPromptKey(promptId);
       const prompt = await txn.get<StoredComponentPrompt>(key);
+
       if (!prompt || prompt.messageId) return;
 
       await txn.put<StoredComponentPrompt>(key, {
@@ -227,6 +234,7 @@ export class DiscordComponentPromptStore {
     return this.storage.transaction(async (txn) => {
       const key = getComponentPromptKey(input.promptId);
       const prompt = await txn.get<StoredComponentPrompt>(key);
+
       if (!prompt) return { status: "not_found" };
 
       if (prompt.status !== "pending") {
@@ -234,13 +242,16 @@ export class DiscordComponentPromptStore {
       }
 
       const now = new Date();
+
       if (Date.parse(prompt.expiresAt) <= now.getTime()) {
         const expired = {
           ...prompt,
           status: "expired",
           updatedAt: now.toISOString()
         } satisfies StoredComponentPrompt;
+
         await txn.put<StoredComponentPrompt>(key, expired);
+
         return { status: "expired", prompt: expired };
       }
 
@@ -257,6 +268,7 @@ export class DiscordComponentPromptStore {
       }
 
       const option = prompt.options.find((item) => item.id === input.optionId);
+
       if (!option) return { status: "invalid_option", prompt };
 
       const consumed = {
@@ -272,7 +284,9 @@ export class DiscordComponentPromptStore {
         ),
         updatedAt: now.toISOString()
       } satisfies StoredComponentPrompt;
+
       await txn.put<StoredComponentPrompt>(key, consumed);
+
       if (consumed.continuation) {
         await txn.put(getPendingComponentContinuationKey(prompt.id), true);
       }
@@ -288,21 +302,26 @@ export class DiscordComponentPromptStore {
       prefix: PENDING_COMPONENT_CONTINUATION_KEY_PREFIX,
       limit
     });
+
     const pendingKeys = [...pendingEntries.keys()];
+
     const promptKeys = pendingKeys.map((key) =>
       getComponentPromptKey(
         key.slice(PENDING_COMPONENT_CONTINUATION_KEY_PREFIX.length)
       )
     );
+
     const prompts =
       promptKeys.length > 0
         ? await this.storage.get<StoredComponentPrompt>(promptKeys)
         : new Map<string, StoredComponentPrompt>();
+
     const pending: StoredComponentPrompt[] = [];
     const staleKeys: string[] = [];
 
     for (let index = 0; index < pendingKeys.length; index++) {
       const prompt = prompts.get(promptKeys[index]);
+
       if (prompt?.continuation?.status === "pending") {
         pending.push(prompt);
       } else {
@@ -311,6 +330,7 @@ export class DiscordComponentPromptStore {
     }
 
     if (staleKeys.length > 0) await this.storage.delete(staleKeys);
+
     return pending;
   }
 
@@ -339,6 +359,7 @@ export class DiscordComponentPromptStore {
 
   async pruneStalePrompts(retentionMs = COMPONENT_PROMPT_RETENTION_MS) {
     const cutoffMs = Date.now() - retentionMs;
+
     return pruneDurableStorageRecords<StoredComponentPrompt>(this.storage, {
       prefix: COMPONENT_PROMPT_KEY_PREFIX,
       limit: COMPONENT_PROMPT_PRUNE_BATCH_SIZE,
@@ -356,6 +377,7 @@ export class DiscordComponentPromptStore {
     await this.storage.transaction(async (txn) => {
       const key = getComponentPromptKey(promptId);
       const prompt = await txn.get<StoredComponentPrompt>(key);
+
       if (prompt?.continuation?.correlationId !== correlationId) return;
 
       const continuation = update(prompt.continuation);
@@ -364,6 +386,7 @@ export class DiscordComponentPromptStore {
         continuation,
         updatedAt: continuation.updatedAt
       });
+
       if (continuation.status === "submitted") {
         await txn.delete(getPendingComponentContinuationKey(promptId));
       }
@@ -379,6 +402,7 @@ function createStoredComponentPromptContinuation(
 ): StoredComponentPromptContinuation | undefined {
   if (!option.pendingAction) return undefined;
   const channelId = prompt.channelId ?? input.channelId;
+
   if (!channelId) return undefined;
 
   return {
@@ -424,11 +448,13 @@ export function parseComponentPromptCustomId(
   customId: string
 ): ParsedComponentPromptCustomId | undefined {
   const parts = customId.split(":");
+
   if (parts.length !== 4 || `${parts[0]}:${parts[1]}` !== CUSTOM_ID_PREFIX) {
     return undefined;
   }
 
   const [, , promptId, optionOrMode] = parts;
+
   if (!promptId) return undefined;
 
   if (optionOrMode === "select") {
@@ -436,6 +462,7 @@ export function parseComponentPromptCustomId(
   }
 
   if (!optionOrMode) return undefined;
+
   return { promptId, optionId: optionOrMode, mode: "button" };
 }
 
@@ -471,6 +498,7 @@ export function formatComponentPromptText(prompt: StoredComponentPrompt) {
     "",
     `Only <@${prompt.allowedUserId}> can answer.`
   ];
+
   const selected = prompt.options.find(
     (option) => option.id === prompt.selectedOptionId
   );
@@ -521,6 +549,7 @@ export function formatComponentPromptContinuationText(
           "Use the selected option as the user's answer and complete the next step.",
           "If you cannot continue, explain why."
         ];
+
   const lines = [
     "Discord component prompt result:",
     `prompt_id: ${prompt.id}`,
@@ -561,6 +590,7 @@ function renderButtonPrompt(prompt: StoredComponentPrompt) {
 
 function renderSelectPrompt(prompt: StoredComponentPrompt) {
   const disabled = prompt.status !== "pending";
+
   const selected = prompt.options.find(
     (option) => option.id === prompt.selectedOptionId
   );
@@ -609,14 +639,18 @@ function shouldPruneComponentPrompt(
   cutoffMs: number
 ) {
   if (prompt.continuation?.status === "pending") return false;
+
   const timestamp =
     prompt.status === "pending" ? prompt.expiresAt : prompt.updatedAt;
+
   const timestampMs = Date.parse(timestamp);
+
   return Number.isFinite(timestampMs) && timestampMs < cutoffMs;
 }
 
 function truncate(value: string, maxLength: number) {
   if (value.length <= maxLength) return value;
+
   return value.slice(0, maxLength - 1).trimEnd() + "...";
 }
 

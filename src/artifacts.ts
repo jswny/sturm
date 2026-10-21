@@ -87,8 +87,10 @@ export async function storeResponseArtifact<
 ): Promise<ResponseArtifact<Source>> {
   const id = input.id ?? crypto.randomUUID();
   const filename = sanitizeArtifactFilename(input.filename, `${id}.bin`);
+
   const artifactKey =
     input.artifactKey ?? createDatedArtifactKey(input.keyPrefix, id, filename);
+
   const sha256 = await hashSha256(input.bytes);
 
   await env.ARTIFACTS_BUCKET.put(artifactKey, input.bytes, {
@@ -127,13 +129,16 @@ export async function hydrateStoredArtifacts(
 
   const artifacts: ResponseArtifact[] = [];
   let totalBytes = 0;
+
   for (const stored of storedArtifacts) {
     const object = await env.ARTIFACTS_BUCKET.get(stored.artifactKey);
+
     if (!object) {
       throw new Error(`Missing response artifact ${stored.artifactKey}.`);
     }
 
     totalBytes += object.size;
+
     if (
       options.maxTotalBytes !== undefined &&
       totalBytes > options.maxTotalBytes
@@ -148,6 +153,7 @@ export async function hydrateStoredArtifacts(
       base64: bytesToBase64(new Uint8Array(await object.arrayBuffer()))
     });
   }
+
   return artifacts;
 }
 
@@ -155,11 +161,13 @@ export function toStoredResponseArtifact(
   artifact: ResponseArtifact
 ): StoredResponseArtifact {
   const { base64: _base64, ...stored } = artifact;
+
   return stored;
 }
 
 export function sanitizeArtifactFilename(filename: string, fallback: string) {
   const basename = getBasename(filename.trim()) || fallback;
+
   const sanitized = basename
     .replace(/[^\w.()+@ -]/g, "_")
     .replace(/\s+/g, "-")
@@ -176,9 +184,11 @@ export function getBasename(path: string) {
 export function bytesToBase64(bytes: Uint8Array) {
   let binary = "";
   const chunkSize = 0x8000;
+
   for (let index = 0; index < bytes.length; index += chunkSize) {
     binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
   }
+
   return btoa(binary);
 }
 
@@ -188,10 +198,12 @@ export function base64ToBytes(base64: string) {
 
 async function hashSha256(bytes: Uint8Array) {
   const digestInput = Uint8Array.from(bytes);
+
   const digest = await crypto.subtle.digest(
     "SHA-256",
     digestInput.buffer as ArrayBuffer
   );
+
   return Array.from(new Uint8Array(digest))
     .map((byte) => byte.toString(16).padStart(2, "0"))
     .join("");
@@ -199,5 +211,6 @@ async function hashSha256(bytes: Uint8Array) {
 
 function createDatedArtifactKey(prefix: string, id: string, filename: string) {
   const date = new Date().toISOString().slice(0, 10);
+
   return `${prefix}/${date}/${id}-${filename}`;
 }

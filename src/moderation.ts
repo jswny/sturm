@@ -19,6 +19,12 @@ export const MODERATION_REASON_MAX_CHARS = 200;
 
 type ModerationAction = "muted" | "unmuted";
 
+type PreparedModerationContext = {
+  targetUserId: string;
+  reason: string;
+  error?: string;
+};
+
 type ModerationResponse<Action extends ModerationAction> = {
   ok: boolean;
   action: Action;
@@ -76,6 +82,7 @@ export async function muteGuildMember(
     targetUserId,
     reason
   );
+
   if (guard.error) {
     return moderationFailure("muted", context, guard.targetUserId, guard.error);
   }
@@ -108,6 +115,7 @@ export async function unmuteGuildMember(
   reason: string
 ): Promise<UnmuteResponse> {
   const guard = validateUnmuteContext(env, context, targetUserId, reason);
+
   if (guard.error) {
     return moderationFailure(
       "unmuted",
@@ -134,12 +142,9 @@ function validateTemporaryMuteContext(
   context: ModerationRequestContext,
   targetUserId: string | undefined,
   reason: string
-): {
-  targetUserId: string;
-  reason: string;
-  error?: string;
-} {
+): PreparedModerationContext {
   const preparedReason = reason.trim();
+
   const targetGuard = validateModerationTarget(env, context, targetUserId, {
     missingGuildError: "Temporary mutes require a server context.",
     permissionError:
@@ -157,6 +162,7 @@ function validateTemporaryMuteContext(
     preparedReason,
     "A short reason is required for the temporary mute."
   );
+
   if (reasonGuard.error) {
     return {
       targetUserId: targetGuard.targetUserId,
@@ -176,16 +182,13 @@ function validateUnmuteContext(
   context: ModerationRequestContext,
   targetUserId: string | undefined,
   reason: string
-): {
-  targetUserId: string;
-  reason: string;
-  error?: string;
-} {
+): PreparedModerationContext {
   const targetGuard = validateModerationTarget(env, context, targetUserId, {
     missingGuildError: "Unmutes require a server context.",
     permissionError:
       "You need Discord's Moderate Members permission to request an unmute."
   });
+
   const reasonGuard = validateModerationReason(
     reason,
     "A short reason is required for the unmute."
@@ -197,6 +200,7 @@ function validateUnmuteContext(
       reason: reasonGuard.reason,
       error: targetGuard.error
     };
+
   if (reasonGuard.error)
     return {
       targetUserId: targetGuard.targetUserId,
@@ -230,6 +234,7 @@ function validateModerationReason(
   emptyReasonError: string
 ): PreparedModerationReason {
   const preparedReason = reason.trim();
+
   if (!preparedReason) {
     return { reason: preparedReason, error: emptyReasonError };
   }
@@ -265,6 +270,7 @@ async function applyGuildMemberTimeoutChange<Action extends ModerationAction>(
     } as ModerationResponseFor<Action>;
   } catch (error) {
     logModerationFailure(error, context, operation);
+
     return moderationFailure(
       operation.action,
       context,

@@ -23,6 +23,7 @@ export function formatLiveDiscordChannelSnapshot(
         message,
         snapshot.formatContext
       );
+
       return entry
         ? {
             ...entry,
@@ -43,8 +44,10 @@ export function formatLiveDiscordChannelSnapshot(
     "Sturm markers correspond chronologically to prior assistant responses in persisted assistant history",
     "the current Discord user message appears after this snapshot as the final user message in the model input"
   ].join("\n");
+
   const transcriptHeader = "Recent messages:";
   let keptEntries = entries;
+
   while (
     [header, transcriptHeader, ...keptEntries.map((entry) => entry.text)].join(
       "\n"
@@ -59,6 +62,7 @@ export function formatLiveDiscordChannelSnapshot(
     transcriptHeader,
     ...keptEntries.map((entry) => entry.text)
   ].join("\n");
+
   return {
     text: limitText(block, LIVE_CHANNEL_SNAPSHOT_MAX_CHARS),
     oldestVisibleMessageId: keptEntries[0]?.id,
@@ -71,12 +75,15 @@ function findNewestNonSturmMessageId(
 ) {
   for (let index = entries.length - 1; index >= 0; index--) {
     const entry = entries[index];
+
     if (entry && !entry.isSturm) return entry.id;
   }
+
   return undefined;
 }
 
 function limitText(text: string, maxLength: number) {
   if (text.length <= maxLength) return text;
+
   return `${text.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
 }

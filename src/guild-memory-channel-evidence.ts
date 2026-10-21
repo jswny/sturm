@@ -23,9 +23,12 @@ export function createChannelMessageEvidence(
   channel: { channelId: string; channelName?: string }
 ): GuildMemoryChannelMessageEvidence | null {
   const content = message.content.trim();
+
   if (!content || message.author.bot || message.webhook_id) return null;
+
   const authorDisplayName =
     message.author.global_name?.trim() || message.author.username.trim();
+
   return {
     messageId: message.id,
     channelId: channel.channelId,
@@ -42,12 +45,15 @@ export function selectChannelReflectionEvidence(
 ) {
   const evidence: GuildMemoryChannelMessageEvidence[] = [];
   let contentChars = 0;
+
   for (const row of rows) {
     if (evidence.length >= CHANNEL_REFLECTION_CHUNK_POLICY.maxMessages) break;
+
     const content = truncateContent(
       row.content,
       CHANNEL_REFLECTION_CHUNK_POLICY.maxMessageChars
     );
+
     if (
       evidence.length > 0 &&
       contentChars + content.length >
@@ -55,6 +61,7 @@ export function selectChannelReflectionEvidence(
     ) {
       break;
     }
+
     evidence.push({
       messageId: row.message_id,
       channelId: row.channel_id,
@@ -68,6 +75,7 @@ export function selectChannelReflectionEvidence(
     });
     contentChars += content.length;
   }
+
   return evidence;
 }
 
@@ -78,14 +86,17 @@ export function createChannelReflectionCorrelationId(
 ) {
   const first = messages[0];
   const last = messages.at(-1);
+
   if (!first || !last) {
     throw new Error("Channel memory reflection requires at least one message.");
   }
+
   return `${prefix}:${scopeId}:${first.messageId}:${last.messageId}:${messages.length}`;
 }
 
 function truncateContent(content: string, maxLength: number) {
   const trimmed = content.trim();
+
   return trimmed.length <= maxLength
     ? trimmed
     : `${trimmed.slice(0, maxLength)}${CHANNEL_REFLECTION_CHUNK_POLICY.truncationMarker}`;

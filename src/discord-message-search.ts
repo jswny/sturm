@@ -22,6 +22,11 @@ export const DISCORD_MESSAGE_SEARCH_DEFAULT_LIMIT = 10;
 
 const DISCORD_MESSAGE_SEARCH_MAX_WAIT_MS = 5_000;
 
+type PreparedDiscordSearchInput = {
+  input: DiscordMessageSearchInput;
+  error?: string;
+};
+
 export type DiscordMessageSearchEnv = DiscordApiEnv;
 
 export type DiscordMessageSearchContext = DiscordMessageToolContext;
@@ -71,6 +76,7 @@ export async function searchDiscordMessages(
   input: DiscordMessageSearchInput
 ): Promise<DiscordMessageSearchResponse> {
   const prepared = prepareSearchInput(input);
+
   if (prepared.error) {
     return failure(context, input, prepared.error);
   }
@@ -136,6 +142,7 @@ export async function searchDiscordMessages(
     }
 
     const messages = result.messages.flat();
+
     const authorDisplayNames = await resolveDiscordMessageAuthorDisplayNames(
       env,
       context.guildId,
@@ -159,6 +166,7 @@ export async function searchDiscordMessages(
     };
   } catch (error) {
     logDiscordMessageSearchFailure(error, context, prepared.input);
+
     return failure(
       context,
       prepared.input,
@@ -167,10 +175,9 @@ export async function searchDiscordMessages(
   }
 }
 
-function prepareSearchInput(input: DiscordMessageSearchInput): {
-  input: DiscordMessageSearchInput;
-  error?: string;
-} {
+function prepareSearchInput(
+  input: DiscordMessageSearchInput
+): PreparedDiscordSearchInput {
   const prepared: DiscordMessageSearchInput = {
     content:
       input.content
@@ -230,6 +237,7 @@ function toDiscordSearchHasType(has: DiscordMessageSearchHas) {
     poll: MessageSearchHasType.Poll,
     snapshot: MessageSearchHasType.Snapshot
   } satisfies Record<DiscordMessageSearchHas, MessageSearchHasType>;
+
   return values[has];
 }
 
@@ -275,6 +283,7 @@ function logDiscordMessageSearchFailure(
       discordCode: error.code,
       error: formatDiscordMessageSearchError(error)
     });
+
     return;
   }
 
@@ -299,6 +308,7 @@ function formatDiscordMessageSearchError(error: unknown) {
 
 function clampSearchLimit(limit: number) {
   if (!Number.isFinite(limit)) return DISCORD_MESSAGE_SEARCH_DEFAULT_LIMIT;
+
   return Math.min(
     DISCORD_MESSAGE_SEARCH_MAX_LIMIT,
     Math.max(DISCORD_MESSAGE_SEARCH_MIN_LIMIT, Math.trunc(limit))
