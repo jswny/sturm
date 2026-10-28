@@ -50,5 +50,6 @@ export const PermissionFlagsBits = {
   ManageGuild: 32n,
   ManageMessages: 8192n,
   ManageNicknames: 134217728n,
+  CreateGuildExpressions: 8796093022208n,
   ModerateMembers: 1099511627776n
 } as const;

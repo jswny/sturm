@@ -1,5 +1,5 @@
 import { PermissionFlagsBits } from "discord-api-types/v10";
-import type { StoredResponseArtifact } from "./artifacts";
+import type { ArtifactResolver, StoredResponseArtifact } from "./artifacts";
 import { requireDiscordPermission } from "./discord/permissions";
 import type { DiscordChatRequest } from "./discord/types";
 import { logWarn } from "./logging";
@@ -26,8 +26,10 @@ export type StaticExpressionImageEnv = {
 
 export type StaticExpressionRequestContext = Pick<
   DiscordChatRequest,
-  "guildId" | "userId" | "userPermissions" | "artifacts"
->;
+  "guildId" | "userId" | "userPermissions"
+> & {
+  resolveArtifact?: ArtifactResolver;
+};
 
 export type StaticExpressionBaseFields = {
   guildId?: string;
@@ -54,11 +56,11 @@ type PrepareStaticExpressionArtifactOptions = {
   targetNamePlural: string;
 };
 
-export function prepareStaticExpressionArtifact(
+export async function prepareStaticExpressionArtifact(
   context: StaticExpressionRequestContext,
   artifactId: string,
   options: PrepareStaticExpressionArtifactOptions
-):
+): Promise<
   | {
       ok: true;
       guildId: string;
@@ -69,22 +71,13 @@ export function prepareStaticExpressionArtifact(
       ok: false;
       baseFields: StaticExpressionBaseFields;
       error: string;
-    } {
-  const storedArtifact = context.artifacts?.find((item) =>
-    matchesArtifactId(item, artifactId)
-  );
-
-  const artifact = storedArtifact
-    ? toStaticExpressionSource(storedArtifact)
-    : undefined;
-
-  const baseFields = {
+    }
+> {
+  const baseFields: StaticExpressionBaseFields = {
     guildId: context.guildId,
     callerUserId: context.userId,
-    sourceArtifactId: artifactId,
-    sourceArtifactSource: artifact?.source,
-    sourceFilename: artifact?.filename
-  } satisfies StaticExpressionBaseFields;
+    sourceArtifactId: artifactId
+  };
 
   if (!context.guildId) {
     return {
@@ -109,6 +102,15 @@ export function prepareStaticExpressionArtifact(
       error: permission.error
     };
   }
+
+  const storedArtifact = await context.resolveArtifact?.(artifactId);
+
+  const artifact = storedArtifact
+    ? toStaticExpressionSource(storedArtifact)
+    : undefined;
+
+  baseFields.sourceArtifactSource = artifact?.source;
+  baseFields.sourceFilename = artifact?.filename;
 
   if (!artifact) {
     return {
@@ -252,13 +254,6 @@ export async function transformStaticArtifactImage(
       lastSizeBytes ? ` (${lastSizeBytes} bytes)` : ""
     }. Discord ${options.targetName}s must be at most ${options.maxBytes} bytes.`
   };
-}
-
-function matchesArtifactId(
-  artifact: StoredResponseArtifact,
-  artifactId: string
-) {
-  return artifact.id === artifactId;
 }
 
 function toStaticExpressionSource(

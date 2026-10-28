@@ -48,10 +48,14 @@ export async function createGuildEmojiFromArtifact(
   context: EmojiRequestContext,
   input: CreateEmojiInput
 ): Promise<CreateEmojiFromArtifactResponse> {
-  const prepared = prepareStaticExpressionArtifact(context, input.artifactId, {
-    targetName: "emoji",
-    targetNamePlural: "emojis"
-  });
+  const prepared = await prepareStaticExpressionArtifact(
+    context,
+    input.artifactId,
+    {
+      targetName: "emoji",
+      targetNamePlural: "emojis"
+    }
+  );
 
   const baseResponse = {
     ok: false,

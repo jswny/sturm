@@ -72,10 +72,14 @@ export async function createGuildStickerFromArtifact(
   context: StickerRequestContext,
   input: CreateStickerInput
 ): Promise<CreateStickerFromArtifactResponse> {
-  const prepared = prepareStaticExpressionArtifact(context, input.artifactId, {
-    targetName: "sticker",
-    targetNamePlural: "stickers"
-  });
+  const prepared = await prepareStaticExpressionArtifact(
+    context,
+    input.artifactId,
+    {
+      targetName: "sticker",
+      targetNamePlural: "stickers"
+    }
+  );
 
   const baseResponse = {
     ok: false,

@@ -62,6 +62,10 @@ export type ResponseArtifact<
     }
   : never;
 
+export type ArtifactResolver = (
+  artifactId: string
+) => Promise<StoredResponseArtifact | undefined>;
+
 export type StoreResponseArtifactInput<
   Source extends ResponseArtifactSource = ResponseArtifactSource
 > = Source extends ResponseArtifactSource

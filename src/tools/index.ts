@@ -1,5 +1,9 @@
 import type { WorkspaceFsLike } from "@cloudflare/shell";
-import type { ArtifactEnv, ResponseArtifact } from "../artifacts";
+import type {
+  ArtifactEnv,
+  ArtifactResolver,
+  ResponseArtifact
+} from "../artifacts";
 import type { ConsensusEnv } from "../consensus";
 import type { DiscordMessageHistoryEnv } from "../discord-message-history";
 import type { DiscordMessageSearchEnv } from "../discord-message-search";
@@ -51,6 +55,7 @@ export type ToolOptions = {
   scheduledTasks?: ScheduledTaskController;
   userPrompts?: UserPromptController;
   workspace?: WorkspaceFsLike;
+  resolveArtifact?: ArtifactResolver;
   onArtifactCreated?: (artifact: ResponseArtifact) => void | Promise<void>;
 };
 
@@ -64,6 +69,11 @@ export function createDiscordTools(env: ToolEnv, options: ToolOptions = {}) {
     }
   };
 
+  const expressionContext = {
+    ...(options.discordRequest ?? {}),
+    resolveArtifact: options.resolveArtifact
+  };
+
   return {
     ...createArchiveTools(),
     ...createSearchTools(env),
@@ -75,8 +85,8 @@ export function createDiscordTools(env: ToolEnv, options: ToolOptions = {}) {
     ...createDiscordMessageSearchTools(env, discordToolContext),
     ...createNicknameTools(env, options.discordRequest ?? {}),
     ...createModerationTools(env, options.discordRequest ?? {}),
-    ...createEmojiTools(env, options.discordRequest ?? {}),
-    ...createStickerTools(env, options.discordRequest ?? {}),
+    ...createEmojiTools(env, expressionContext),
+    ...createStickerTools(env, expressionContext),
     ...createScheduledTaskTools(options.scheduledTasks),
     ...createUserPromptTools(options.userPrompts),
     ...createImageTools(env, options),

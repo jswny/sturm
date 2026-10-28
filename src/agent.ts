@@ -1244,16 +1244,15 @@ export class ChatAgent extends Think<Env> {
     recentChannelBeforeMessageId?: string,
     discordBotUserId?: string
   ): Promise<ToolSet> {
-    const toolTurn = turn
-      ? this.createDiscordToolRequestContext(turn)
-      : undefined;
-
     const tools = {
       ...createDiscordTools(this.env, {
-        discordRequest: toolTurn,
+        discordRequest: turn,
         recentChannelBeforeMessageId,
         discordBotUserId,
         workspace: this.workspace,
+        resolveArtifact: turn
+          ? (artifactId) => this.resolveDiscordArtifact(turn, artifactId)
+          : undefined,
         scheduledTasks: turn
           ? this.createScheduledTaskController(turn)
           : undefined,
@@ -1270,18 +1269,6 @@ export class ChatAgent extends Think<Env> {
     };
 
     return withProgressTools(tools, progress);
-  }
-
-  private createDiscordToolRequestContext(
-    turn: DiscordChatRequest
-  ): DiscordChatRequest {
-    return {
-      ...turn,
-      artifacts: mergeStoredArtifacts([
-        ...(turn.artifacts ?? []),
-        ...this.getConversationDiscordArtifacts()
-      ])
-    };
   }
 
   private startArtifactSummaries(turn: DiscordChatRequest) {
@@ -1340,23 +1327,49 @@ export class ChatAgent extends Think<Env> {
     return nextRecord;
   }
 
-  private getConversationDiscordArtifacts() {
-    const artifacts: StoredResponseArtifact[] = [];
+  private async resolveDiscordArtifact(
+    turn: DiscordChatRequest,
+    artifactId: string
+  ): Promise<StoredResponseArtifact | undefined> {
+    // Read the delivery on every call so tools can consume artifacts persisted
+    // earlier in this turn, including after Think reconstructs tools on recovery.
+    const record = await this.discordDeliveries.getDelivery(turn.correlationId);
+
+    if (
+      record?.type !== "chat" ||
+      record.request.guildId !== turn.guildId ||
+      record.request.channelId !== turn.channelId
+    ) {
+      return undefined;
+    }
+
+    const currentArtifact =
+      record.artifacts?.find((artifact) => artifact.id === artifactId) ??
+      record.request.artifacts?.find((artifact) => artifact.id === artifactId);
+
+    if (currentArtifact) return currentArtifact;
 
     for (const message of this.messages) {
-      const turn = getDiscordTurnFromUserMessage(message);
+      const messageTurn = getDiscordTurnFromUserMessage(message);
 
-      if (turn) {
-        artifacts.push(...(turn.artifacts ?? []));
+      if (
+        messageTurn &&
+        (messageTurn.guildId !== turn.guildId ||
+          messageTurn.channelId !== turn.channelId)
+      ) {
         continue;
       }
 
-      artifacts.push(
-        ...(getDiscordArtifactsFromAssistantMessage(message) ?? [])
-      );
+      const artifacts = messageTurn
+        ? messageTurn.artifacts
+        : getDiscordArtifactsFromAssistantMessage(message);
+
+      const artifact = artifacts?.find((item) => item.id === artifactId);
+
+      if (artifact) return artifact;
     }
 
-    return artifacts;
+    return undefined;
   }
 
   private createScheduledTaskController(turn: DiscordChatRequest) {
@@ -2008,17 +2021,6 @@ export class ChatAgent extends Think<Env> {
 
     return undefined;
   }
-}
-
-function mergeStoredArtifacts(artifacts: StoredResponseArtifact[]) {
-  const seen = new Set<string>();
-
-  return artifacts.filter((artifact) => {
-    if (seen.has(artifact.id)) return false;
-    seen.add(artifact.id);
-
-    return true;
-  });
 }
 
 function createEmptyDiscordAdmissionReconciliationResult(): DiscordAdmissionReconciliationResult {
