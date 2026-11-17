@@ -37,11 +37,11 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@cloudflare/vite-plugin": "2.0.0-beta.v.17",
+    "@cloudflare/vite-plugin": "2.0.0-rc.0",
     "@cloudflare/vitest-plugin": "1.4.6",
     "@oxlint/plugins": "1.77.0",
     "@types/node": "^26.1.2",
-    "cf": "1.0.0-beta.32",
+    "cf": "1.0.0-rc.0",
     "oxfmt": "^0.62.0",
     "oxlint": "1.77.0",
     "typescript": "^7.0.2",
